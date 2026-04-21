@@ -1,5 +1,7 @@
 "use client";
+export const dynamic = 'force-dynamic';
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { auth, db } from "@/lib/firebase";
 import {
   signInWithEmailAndPassword, createUserWithEmailAndPassword,
@@ -19,6 +21,8 @@ export default function DeliveryPage() {
   const [riderName, setRiderName] = useState("");
   const [vehicle, setVehicle] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  const [agreedTerms, setAgreedTerms] = useState(false);
+  const [showTermsModal, setShowTermsModal] = useState(false);
 
   const [isOnline, setIsOnline] = useState(false);
   const [tab, setTab] = useState("jobs");
@@ -34,11 +38,21 @@ export default function DeliveryPage() {
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
       if (u) {
-        const snap = await getDoc(doc(db, "delivery_profile", u.uid));
+        let snap = await getDoc(doc(db, "delivery_profile", u.uid));
+        
+        // Race condition fix
+        if (!snap.exists()) {
+          await new Promise(r => setTimeout(r, 2000));
+          snap = await getDoc(doc(db, "delivery_profile", u.uid));
+        }
+
         if (snap.exists() && snap.data().role === "delivery") {
           setUser(u);
           setRiderData(snap.data());
-        } else { await signOut(auth); alert("Not a Delivery Agent"); }
+        } else if (snap.exists()) { 
+          await signOut(auth); 
+          alert("Not a Delivery Agent"); 
+        }
       } else { setUser(null); setRiderData(null); }
     });
     return () => unsub();
@@ -122,15 +136,18 @@ export default function DeliveryPage() {
   if (!user) {
     return (
       <>
-        <div className="aurora-bg" />
-        <div className="page-content" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 20, position: "relative", zIndex: 1 }}>
-          <div className="animate-scale-in" style={s.authCard}>
+        <div className="luxury-bg"><div className="grain" /></div>
+        <div className="page-content lp-light" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 20, position: "relative", zIndex: 1 }}>
+          <Link href="/" style={{ position: "fixed", top: 20, left: 20, zIndex: 100, width: 42, height: 42, borderRadius: 12, background: "rgba(255,255,255,0.85)", border: "1px solid rgba(0,0,0,0.08)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "var(--blue-vivid)", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", transition: "all 0.3s ease" }}>
+            <i className="fas fa-house" style={{ fontSize: 16 }} />
+          </Link>
+          <div className="animate-scale-in premium-card" style={s.authCard}>
             <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-              <div style={{ ...s.authLogo, background: "rgba(20,184,166,0.15)", border: "1px solid rgba(20,184,166,0.2)" }}>
-                <i className="fas fa-motorcycle" style={{ fontSize: 28, color: "#2dd4bf" }} />
+              <div style={{ ...s.authLogo, background: "var(--blue-subtle)", border: "1px solid var(--border-blue)" }}>
+                <i className="fas fa-motorcycle" style={{ fontSize: 28, color: "var(--blue-electric)" }} />
               </div>
               <h1 style={{ fontSize: 24, fontWeight: 900 }}>Rider Login</h1>
-              <p style={{ color: "var(--text-tertiary)", fontSize: 13 }}>Join the DRĀP Delivery Fleet</p>
+              <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Join the Dresho Delivery Fleet ⚡</p>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               {!isLogin && (
@@ -141,15 +158,54 @@ export default function DeliveryPage() {
               )}
               <input className="glass-input" type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
               <input className="glass-input" type="password" placeholder="Password" value={pass} onChange={(e) => setPass(e.target.value)} />
-              <button className="btn-primary" onClick={handleAuth} disabled={authLoading}
-                style={{ background: "linear-gradient(135deg, #14b8a6, #0d9488)" }}>
+              {!isLogin && (
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginTop: 4 }}>
+                  <input type="checkbox" checked={agreedTerms} onChange={(e) => setAgreedTerms(e.target.checked)} style={{ marginTop: 3, accentColor: "var(--blue-vivid)", width: 18, height: 18, cursor: "pointer" }} />
+                  <p style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
+                    I agree to Dresho&apos;s{" "}
+                    <span onClick={() => setShowTermsModal(true)} style={{ color: "var(--blue-vivid)", fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Delivery Partner Agreement</span>
+                  </p>
+                </div>
+              )}
+              <button className="btn-primary" onClick={handleAuth} disabled={authLoading || (!isLogin && !agreedTerms)} style={{ opacity: (!isLogin && !agreedTerms) ? 0.5 : 1 }}>
                 {authLoading ? "..." : isLogin ? "Sign In" : "Register as Rider"}
               </button>
-              <button className="btn-ghost" onClick={() => setIsLogin(!isLogin)} style={{ textAlign: "center", color: "#2dd4bf" }}>
+              <button className="btn-ghost" onClick={() => setIsLogin(!isLogin)} style={{ textAlign: "center", color: "var(--blue-electric)" }}>
                 {isLogin ? "Need to Register?" : "Already a Rider?"}
               </button>
             </div>
           </div>
+          {showTermsModal && (
+            <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setShowTermsModal(false)}>
+              <div onClick={(e) => e.stopPropagation()} style={{ background: "white", borderRadius: 24, padding: "28px 24px", maxWidth: 480, width: "100%", maxHeight: "80vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }}>
+                <h3 style={{ fontSize: 20, fontWeight: 900, marginBottom: 16, color: "var(--blue-vivid)" }}>Delivery Partner Agreement</h3>
+                <div style={{ fontSize: 13, color: "#444", lineHeight: 1.7 }}>
+                  <p><strong>1. Role</strong> — The Rider agrees to pick up and deliver orders assigned via the Dresho platform.</p>
+                  <p><strong>2. Independent Contractor</strong> — The Rider is not an employee. No salary, PF, or employment benefits are applicable.</p>
+                  <p><strong>3. Payment</strong> — Payment per delivery will be communicated in-app. Payments will be settled weekly. Incentives may be provided based on performance.</p>
+                  <p><strong>4. Responsibilities</strong> — Deliver orders within assigned time. Maintain professional behavior. Handle products safely. Collect COD payments (if applicable).</p>
+                  <p><strong>5. Cash Handling (COD)</strong> — Rider must deposit collected cash within 24 hours. Any shortage will be recovered from rider.</p>
+                  <p><strong>6. Penalties</strong> — Late delivery / misconduct may result in penalties or suspension.</p>
+                  <p><strong>7. Termination</strong> — Dresho can suspend or terminate rider access anytime for misconduct or poor performance.</p>
+                </div>
+                <h3 style={{ fontSize: 20, fontWeight: 900, margin: "20px 0 16px", color: "var(--blue-vivid)" }}>Privacy Policy</h3>
+                <div style={{ fontSize: 13, color: "#444", lineHeight: 1.7 }}>
+                  <p><strong>1. Information Collected</strong> — Name, phone number, address, payment details (via secure gateways), app usage data.</p>
+                  <p><strong>2. Use of Information</strong> — To process orders, improve user experience, and provide customer support.</p>
+                  <p><strong>3. Data Sharing</strong> — Shared with delivery partners & sellers for order fulfillment. Not sold to third parties.</p>
+                  <p><strong>4. Security</strong> — We use secure systems to protect user data.</p>
+                  <p><strong>5. Consent</strong> — By using Dresho, users agree to this policy.</p>
+                </div>
+                <h3 style={{ fontSize: 20, fontWeight: 900, margin: "20px 0 16px", color: "var(--blue-vivid)" }}>Contact & Support</h3>
+                <div style={{ fontSize: 13, color: "#444", lineHeight: 1.7 }}>
+                  <p>📧 Email: <strong>dresho.business@gmail.com</strong></p>
+                  <p>💬 WhatsApp: <strong>+91 9128926837</strong> (10 AM – 8 PM, All Days)</p>
+                  <p>📍 Service Area: <strong>Hazaribagh, Jharkhand</strong></p>
+                </div>
+                <button className="btn-primary" style={{ width: "100%", marginTop: 20 }} onClick={() => { setAgreedTerms(true); setShowTermsModal(false); }}>I Agree</button>
+              </div>
+            </div>
+          )}
         </div>
       </>
     );
@@ -158,15 +214,20 @@ export default function DeliveryPage() {
   // MAIN RIDER APP
   return (
     <>
-      <div className="aurora-bg" />
-      <div className="page-content" style={{ paddingBottom: 40, position: "relative", zIndex: 1 }}>
+      <div className="luxury-bg"><div className="grain" /></div>
+      <div className="page-content lp-light" style={{ paddingBottom: 40, position: "relative", zIndex: 1 }}>
         {/* Top Nav */}
-        <nav style={s.topNav}>
-          <div>
-            <h2 style={{ fontSize: 18, fontWeight: 900, color: "#2dd4bf", letterSpacing: 2 }}>DRĀP RIDER</h2>
-            <p style={{ fontSize: 10, fontWeight: 700, color: isOnline ? "#2dd4bf" : "var(--text-tertiary)", letterSpacing: 2, textTransform: "uppercase" }}>
-              {isOnline ? "Online" : "Offline"}
-            </p>
+        <nav style={s.topNav} className="premium-nav">
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <Link href="/" style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(26,13,220,0.06)", border: "1px solid rgba(26,13,220,0.12)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "var(--blue-vivid)", transition: "all 0.3s ease", flexShrink: 0 }}>
+              <i className="fas fa-house" style={{ fontSize: 13 }} />
+            </Link>
+            <div>
+              <h2 style={{ fontSize: 18, fontWeight: 900, color: "var(--blue-vivid)", letterSpacing: 2 }}>DRESHO RIDER</h2>
+              <p style={{ fontSize: 10, fontWeight: 700, color: isOnline ? "var(--blue-electric)" : "var(--text-muted)", letterSpacing: 2, textTransform: "uppercase" }}>
+                {isOnline ? "Online" : "Offline"}
+              </p>
+            </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             {/* Online Toggle */}
@@ -197,26 +258,26 @@ export default function DeliveryPage() {
             <div style={s.earningsGlow} />
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", position: "relative" }}>
               <div>
-                <p style={{ fontSize: 11, fontWeight: 700, opacity: 0.8, letterSpacing: 1 }}>TODAY&apos;S EARNINGS</p>
+                <p style={{ fontSize: 11, fontWeight: 700, opacity: 0.9, letterSpacing: 1 }}>TODAY&apos;S EARNINGS</p>
                 <h3 style={{ fontSize: 36, fontWeight: 900, marginTop: 6 }}>₹{riderData?.earnings || 0}</h3>
               </div>
-              <div style={{ width: 48, height: 48, borderRadius: 16, background: "rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <div style={{ width: 48, height: 48, borderRadius: 16, background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <i className="fas fa-wallet" style={{ fontSize: 20 }} />
               </div>
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.1)", fontSize: 12, fontWeight: 700 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.15)", fontSize: 12, fontWeight: 700 }}>
               <span>Deliveries: {riderData?.deliveryCount || 0}</span>
               <span>Rating: 4.9 ★</span>
             </div>
           </div>
 
           {/* Tab Switcher */}
-          <div style={{ display: "flex", background: "rgba(255,255,255,0.03)", borderRadius: 16, padding: 4, gap: 4, marginTop: 20, marginBottom: 20 }}>
+          <div style={{ display: "flex", background: "rgba(0,0,0,0.04)", borderRadius: 16, padding: 4, gap: 4, marginTop: 20, marginBottom: 20 }}>
             {["jobs", "active"].map((t) => (
               <button key={t} onClick={() => setTab(t)} style={{
                 flex: 1, padding: "12px", borderRadius: 12, fontSize: 14, fontWeight: 700,
-                background: tab === t ? "rgba(255,255,255,0.06)" : "transparent",
-                color: tab === t ? "var(--text-primary)" : "var(--text-tertiary)",
+                background: tab === t ? "white" : "transparent",
+                color: tab === t ? "var(--blue-electric)" : "var(--text-muted)",
                 border: "none", cursor: "pointer", fontFamily: "Inter, sans-serif",
                 transition: "all 0.3s ease",
                 boxShadow: tab === t ? "0 2px 10px rgba(0,0,0,0.2)" : "none",
@@ -243,16 +304,16 @@ export default function DeliveryPage() {
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                   {availableOrders.map((o) => (
-                    <div key={o.id} className="glass-card animate-fade-in-up" style={{ padding: "20px 22px", borderRadius: 24, cursor: "default" }}>
+                    <div key={o.id} className="premium-card animate-fade-in-up" style={{ padding: "20px 22px", borderRadius: 24, cursor: "default" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                        <span className="badge badge-cyan">New Job</span>
-                        <span style={{ fontWeight: 800, color: "var(--aurora-emerald)" }}>₹40 Earning</span>
+                        <span className="badge badge-purple">New Job</span>
+                        <span style={{ fontWeight: 800, color: "var(--blue-electric)" }}>₹40 Earning</span>
                       </div>
                       <h5 style={{ fontWeight: 700, marginBottom: 4 }}>{o.userName}</h5>
-                      <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 16, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         <i className="fas fa-location-dot" style={{ marginRight: 6 }} />{o.userAddress}
                       </p>
-                      <button className="btn-primary" style={{ borderRadius: 14, background: "linear-gradient(135deg, #0f172a, #1e293b)" }} onClick={() => acceptOrder(o.id)}>
+                      <button className="btn-primary" style={{ borderRadius: 14 }} onClick={() => acceptOrder(o.id)}>
                         Accept Delivery
                       </button>
                     </div>
@@ -331,28 +392,29 @@ export default function DeliveryPage() {
 
 const s = {
   authCard: {
-    width: "100%", maxWidth: 420, background: "rgba(20, 20, 50, 0.9)", backdropFilter: "blur(40px)",
-    border: "1px solid rgba(255,255,255,0.06)", borderRadius: 36, padding: 40,
+    width: "100%", maxWidth: 420, background: "rgba(255, 255, 255, 0.9)", backdropFilter: "blur(40px)",
+    border: "1px solid rgba(0,0,0,0.06)", borderRadius: 36, padding: 40,
     display: "flex", flexDirection: "column", gap: 28,
   },
   authLogo: {
     width: 72, height: 72, borderRadius: 24, display: "flex", alignItems: "center", justifyContent: "center",
-    marginBottom: 8, boxShadow: "0 0 40px rgba(20,184,166,0.2)",
+    marginBottom: 8, boxShadow: "0 0 40px rgba(26, 13, 220, 0.1)",
   },
   topNav: {
     display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px",
     position: "sticky", top: 0, zIndex: 40,
-    background: "rgba(15, 15, 35, 0.8)", backdropFilter: "blur(40px)", WebkitBackdropFilter: "blur(40px)",
-    borderBottom: "1px solid rgba(255,255,255,0.04)",
+    background: "rgba(248, 247, 244, 0.8)", backdropFilter: "blur(40px)", WebkitBackdropFilter: "blur(40px)",
+    borderBottom: "1px solid rgba(0,0,0,0.05)",
   },
   earningsCard: {
-    background: "linear-gradient(135deg, #0d9488, #14b8a6, #0f766e)",
+    background: "linear-gradient(135deg, var(--blue-vivid), var(--blue-electric), var(--blue-bright))",
     padding: "28px 24px",
     borderRadius: 28,
     color: "white",
     position: "relative",
     overflow: "hidden",
     marginTop: 16,
+    boxShadow: "0 12px 30px rgba(26, 13, 220, 0.25)",
   },
   earningsGlow: {
     position: "absolute", top: -40, right: -40, width: 140, height: 140,

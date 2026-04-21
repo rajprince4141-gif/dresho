@@ -1,11 +1,13 @@
 "use client";
+export const dynamic = 'force-dynamic';
 import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import { auth, db } from "@/lib/firebase";
 import {
   signInWithEmailAndPassword, onAuthStateChanged, signOut,
 } from "firebase/auth";
 import {
-  doc, getDoc, collection, onSnapshot, updateDoc,
+  doc, getDoc, collection, onSnapshot, updateDoc, deleteDoc,
 } from "firebase/firestore";
 
 export default function AdminPage() {
@@ -21,12 +23,33 @@ export default function AdminPage() {
   const [deliveryAgents, setDeliveryAgents] = useState([]);
 
   useEffect(() => {
+    const AUTHORIZED = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "")
+      .split(",")
+      .map((e) => e.trim().toLowerCase());
+
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        const snap = await getDoc(doc(db, "admin_roles", user.uid));
+        // 1️⃣ Email whitelist — first line of defence
+        if (!AUTHORIZED.includes(user.email?.toLowerCase())) {
+          await signOut(auth);
+          alert("Unauthorized: this email is not an admin.");
+          return;
+        }
+        // 2️⃣ Firestore role check — second line of defence
+        let snap = await getDoc(doc(db, "admin_roles", user.uid));
+        
+        // Race condition fix
+        if (!snap.exists()) {
+          await new Promise(r => setTimeout(r, 2000));
+          snap = await getDoc(doc(db, "admin_roles", user.uid));
+        }
+
         if (snap.exists() && snap.data().role === "admin") {
           setAuthenticated(true);
-        } else { await signOut(auth); alert("Unauthorized access"); }
+        } else if (snap.exists()) { 
+          await signOut(auth); 
+          alert("Unauthorized access"); 
+        }
       } else { setAuthenticated(false); }
     });
     return () => unsub();
@@ -76,7 +99,18 @@ export default function AdminPage() {
 
   const approveSeller = async (id) => {
     await updateDoc(doc(db, "sellers_profile", id), { approved: true });
-    alert("Seller Approved!");
+    alert("Seller Approved! ✅");
+  };
+
+  const removeSeller = async (id, name) => {
+    if (!confirm(`Remove "${name}" from Dresho? This cannot be undone.`)) return;
+    await deleteDoc(doc(db, "sellers_profile", id));
+    alert("Seller removed.");
+  };
+
+  const suspendSeller = async (id, current) => {
+    await updateDoc(doc(db, "sellers_profile", id), { approved: !current });
+    alert(current ? "Seller suspended." : "Seller reactivated! ✅");
   };
 
   const getStatusStyle = (status) => {
@@ -100,21 +134,23 @@ export default function AdminPage() {
   if (!authenticated) {
     return (
       <>
-        <div className="aurora-bg" />
-        <div className="page-content" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 20, position: "relative", zIndex: 1 }}>
-          <div className="animate-scale-in" style={s.authCard}>
+        <div className="luxury-bg"><div className="grain" /></div>
+        <div className="page-content lp-light" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 20, position: "relative", zIndex: 1 }}>
+          <Link href="/" style={{ position: "fixed", top: 20, left: 20, zIndex: 100, width: 42, height: 42, borderRadius: 12, background: "rgba(255,255,255,0.85)", border: "1px solid rgba(0,0,0,0.08)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "var(--blue-vivid)", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", transition: "all 0.3s ease" }}>
+            <i className="fas fa-house" style={{ fontSize: 16 }} />
+          </Link>
+          <div className="animate-scale-in premium-card" style={s.authCard}>
             <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-              <div style={{ ...s.authLogo, background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.2)" }}>
-                <i className="fas fa-shield-halved" style={{ fontSize: 28, color: "#818cf8" }} />
+              <div style={{ ...s.authLogo, background: "var(--blue-subtle)", border: "1px solid var(--border-blue)" }}>
+                <i className="fas fa-shield-halved" style={{ fontSize: 28, color: "var(--blue-electric)" }} />
               </div>
-              <h1 style={{ fontSize: 28, fontWeight: 900, letterSpacing: 2 }}>DRĀP</h1>
-              <p style={{ color: "var(--text-tertiary)", fontSize: 13 }}>Admin Control Center</p>
+              <h1 style={{ fontSize: 28, fontWeight: 900, letterSpacing: 2 }}>Dresho</h1>
+              <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Admin Control Center</p>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <input className="glass-input" type="email" placeholder="Admin Email" value={email} onChange={(e) => setEmail(e.target.value)} />
               <input className="glass-input" type="password" placeholder="Password" value={pass} onChange={(e) => setPass(e.target.value)} />
-              <button className="btn-primary" onClick={async () => { try { await signInWithEmailAndPassword(auth, email, pass); } catch { alert("Invalid credentials"); } }}
-                style={{ background: "linear-gradient(135deg, #6366f1, #4f46e5)" }}>
+                <button className="btn-primary" onClick={async () => { try { await signInWithEmailAndPassword(auth, email, pass); } catch (err) { alert("Login failed: " + (err.code || err.message)); } }}>
                 Verify Identity
               </button>
             </div>
@@ -127,14 +163,20 @@ export default function AdminPage() {
   // MAIN ADMIN PANEL
   return (
     <>
-      <div className="aurora-bg" />
-      <div className="page-content" style={{ display: "flex", minHeight: "100vh", position: "relative", zIndex: 1 }}>
+      <div className="luxury-bg"><div className="grain" /></div>
+      <div className="page-content lp-light" style={{ display: "flex", minHeight: "100vh", position: "relative", zIndex: 1 }}>
         {/* SIDEBAR */}
-        <nav style={s.sidebar} className="glass-panel">
+        <nav style={s.sidebar} className="premium-sidebar">
           <div style={{ padding: "24px 16px 32px", textAlign: "center" }}>
-            <h2 style={{ fontSize: 20, fontWeight: 900, color: "var(--aurora-8)", letterSpacing: 3 }}>DRĀP</h2>
+            <Link href="/" style={{ textDecoration: "none" }}>
+              <h2 style={{ fontSize: 20, fontWeight: 900, color: "var(--blue-vivid)", letterSpacing: 3, cursor: "pointer" }}>Dresho</h2>
+            </Link>
             <p className="section-label" style={{ marginTop: 4, marginBottom: 0 }}>ADMIN</p>
           </div>
+          <Link href="/" style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", margin: "0 8px 6px", borderRadius: 14, background: "transparent", textDecoration: "none", color: "var(--text-secondary)", fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 600, transition: "all 0.3s ease" }}>
+            <i className="fas fa-house" style={{ fontSize: 16, width: 24, textAlign: "center" }} />
+            <span style={{ fontSize: 14, fontWeight: 600 }}>Homepage</span>
+          </Link>
           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6, padding: "0 8px" }}>
             {sidebarItems.map((item) => (
               <button key={item.id} onClick={() => setTab(item.id)} style={{
@@ -172,14 +214,14 @@ export default function AdminPage() {
                 </span>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 20, marginBottom: 32 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 20, marginBottom: 32 }}>
                 {[
-                  { label: "Total Revenue", value: `₹${stats.revenue.toLocaleString("en-IN")}`, color: "#a855f7", icon: "fa-indian-rupee-sign" },
+                  { label: "Total Revenue", value: `₹${stats.revenue.toLocaleString("en-IN")}`, color: "var(--blue-electric)", icon: "fa-indian-rupee-sign" },
                   { label: "Active Orders", value: stats.active, color: "#06b6d4", icon: "fa-clock" },
                   { label: "Sellers", value: stats.sellers, color: "#10b981", icon: "fa-store" },
                   { label: "Delivery Fleet", value: stats.fleet, color: "#f59e0b", icon: "fa-motorcycle" },
                 ].map((card, i) => (
-                  <div key={i} className="glass-card" style={{ padding: 28, borderRadius: 24, cursor: "default" }}>
+                  <div key={i} className="premium-card" style={{ padding: 28, borderRadius: 24, cursor: "default" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                       <div>
                         <p className="section-label">{card.label}</p>
@@ -212,34 +254,43 @@ export default function AdminPage() {
           {/* SELLERS */}
           {tab === "sellers" && (
             <div className="animate-fade-in">
-              <h1 style={{ fontSize: 28, fontWeight: 900, marginBottom: 24 }}>Seller Approvals</h1>
+              <h1 style={{ fontSize: 28, fontWeight: 900, marginBottom: 8 }}>Seller Management</h1>
+              <p style={{ color: "var(--text-tertiary)", fontSize: 13, marginBottom: 24 }}>Approve, suspend, or remove sellers from the Dresho platform.</p>
               <div className="glass-card" style={{ borderRadius: 24, overflow: "hidden", cursor: "default" }}>
                 <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                      {["Store Name", "Owner", "Status", "Action"].map((h) => (
-                        <th key={h} style={{ padding: "18px 24px", fontSize: 11, fontWeight: 800, color: "var(--text-tertiary)", letterSpacing: 1.5, textTransform: "uppercase" }}>{h}</th>
+                      {["Store Name", "Owner", "Email", "Status", "Actions"].map((h) => (
+                        <th key={h} style={{ padding: "18px 20px", fontSize: 11, fontWeight: 800, color: "var(--text-tertiary)", letterSpacing: 1.5, textTransform: "uppercase" }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {sellers.map((s) => (
-                      <tr key={s.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)", transition: "background 0.2s" }}>
-                        <td style={{ padding: "16px 24px", fontWeight: 700 }}>{s.storeName}</td>
-                        <td style={{ padding: "16px 24px", color: "var(--text-secondary)" }}>{s.name}</td>
-                        <td style={{ padding: "16px 24px" }}>
+                      <tr key={s.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
+                        <td style={{ padding: "16px 20px", fontWeight: 700 }}>{s.storeName}</td>
+                        <td style={{ padding: "16px 20px", color: "var(--text-secondary)" }}>{s.name}</td>
+                        <td style={{ padding: "16px 20px", color: "var(--text-tertiary)", fontSize: 12 }}>{s.email}</td>
+                        <td style={{ padding: "16px 20px" }}>
                           <span className={`badge ${s.approved ? "badge-emerald" : "badge-amber"}`}>
-                            {s.approved ? "Approved" : "Pending"}
+                            {s.approved ? "✓ Active" : "Pending"}
                           </span>
                         </td>
-                        <td style={{ padding: "16px 24px" }}>
-                          {!s.approved ? (
-                            <button className="btn-primary" style={{ width: "auto", padding: "8px 20px", borderRadius: 10, fontSize: 12, background: "linear-gradient(135deg, #6366f1, #4f46e5)" }} onClick={() => approveSeller(s.id)}>
-                              Approve
+                        <td style={{ padding: "16px 20px" }}>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            {!s.approved ? (
+                              <button className="btn-primary" style={{ width: "auto", padding: "7px 16px", borderRadius: 8, fontSize: 11, background: "linear-gradient(135deg, #6366f1, #4f46e5)" }} onClick={() => approveSeller(s.id)}>
+                                ✓ Approve
+                              </button>
+                            ) : (
+                              <button style={{ padding: "7px 16px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: "rgba(245,158,11,0.1)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.2)", cursor: "pointer" }} onClick={() => suspendSeller(s.id, true)}>
+                                ⏸ Suspend
+                              </button>
+                            )}
+                            <button style={{ padding: "7px 16px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: "rgba(251,113,133,0.1)", color: "#fb7185", border: "1px solid rgba(251,113,133,0.2)", cursor: "pointer" }} onClick={() => removeSeller(s.id, s.storeName)}>
+                              ✕ Remove
                             </button>
-                          ) : (
-                            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--aurora-emerald)" }}>✓ Active</span>
-                          )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -354,13 +405,13 @@ export default function AdminPage() {
 
 const s = {
   authCard: {
-    width: "100%", maxWidth: 420, background: "rgba(20, 20, 50, 0.9)", backdropFilter: "blur(40px)",
-    border: "1px solid rgba(255,255,255,0.06)", borderRadius: 36, padding: 40,
+    width: "100%", maxWidth: 420, background: "rgba(255, 255, 255, 0.9)", backdropFilter: "blur(40px)",
+    border: "1px solid rgba(0,0,0,0.06)", borderRadius: 36, padding: 40,
     display: "flex", flexDirection: "column", gap: 28,
   },
   authLogo: {
     width: 72, height: 72, borderRadius: 24, display: "flex", alignItems: "center", justifyContent: "center",
-    marginBottom: 8, boxShadow: "0 0 40px rgba(99,102,241,0.2)",
+    marginBottom: 8, boxShadow: "0 0 40px rgba(26,13,220,0.1)",
   },
   sidebar: {
     width: 240, position: "fixed", top: 0, left: 0, bottom: 0, zIndex: 40,
@@ -373,8 +424,8 @@ const s = {
     fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 600, width: "100%", textAlign: "left",
   },
   sidebarBtnActive: {
-    background: "linear-gradient(135deg, #6366f1, #4f46e5)", color: "white",
-    boxShadow: "0 4px 20px rgba(99, 102, 241, 0.3)",
+    background: "linear-gradient(135deg, var(--blue-electric), var(--blue-vivid))", color: "white",
+    boxShadow: "0 4px 20px rgba(26, 13, 220, 0.3)",
   },
   sidebarLabel: { fontSize: 14, fontWeight: 600 },
 };

@@ -1,5 +1,7 @@
 "use client";
+export const dynamic = 'force-dynamic';
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { auth, db, IMGBB_API_KEY } from "@/lib/firebase";
 import {
   signInWithEmailAndPassword, createUserWithEmailAndPassword,
@@ -20,6 +22,8 @@ export default function SellerPage() {
   const [storeName, setStoreName] = useState("");
   const [isPending, setIsPending] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
+  const [agreedTerms, setAgreedTerms] = useState(false);
+  const [showTermsModal, setShowTermsModal] = useState(false);
 
   const [tab, setTab] = useState("inventory");
   const [products, setProducts] = useState([]);
@@ -42,7 +46,14 @@ export default function SellerPage() {
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
       if (u) {
-        const snap = await getDoc(doc(db, "sellers_profile", u.uid));
+        let snap = await getDoc(doc(db, "sellers_profile", u.uid));
+        
+        // Race condition fix
+        if (!snap.exists()) {
+          await new Promise(r => setTimeout(r, 2000));
+          snap = await getDoc(doc(db, "sellers_profile", u.uid));
+        }
+
         if (snap.exists() && snap.data().role === "seller") {
           if (snap.data().approved) {
             setUser(u);
@@ -51,7 +62,10 @@ export default function SellerPage() {
           } else {
             setIsPending(true);
           }
-        } else { await signOut(auth); alert("Unauthorized Role"); }
+        } else if (snap.exists()) { 
+          await signOut(auth); 
+          alert("Unauthorized Role"); 
+        }
       } else { setUser(null); setSellerData(null); setIsPending(false); }
     });
     return () => unsub();
@@ -113,6 +127,7 @@ export default function SellerPage() {
       formData.append("image", pImageFile);
       const imgRes = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`, { method: "POST", body: formData });
       const imgData = await imgRes.json();
+      if (!imgData.success) throw new Error(imgData.error?.message || "Image upload failed. Check your ImgBB API key.");
       await addDoc(collection(db, "products"), {
         sellerId: user.uid, storeName: sellerData.storeName, name: pName,
         price: parseFloat(pPrice), stock: parseInt(pStock) || 0, category: pCategory,
@@ -131,15 +146,18 @@ export default function SellerPage() {
   if (!user && !isPending) {
     return (
       <>
-        <div className="aurora-bg" />
-        <div className="page-content" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 20, position: "relative", zIndex: 1 }}>
-          <div className="animate-scale-in" style={s.authCard}>
+        <div className="luxury-bg"><div className="grain" /></div>
+        <div className="page-content lp-light" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 20, position: "relative", zIndex: 1 }}>
+          <Link href="/" style={{ position: "fixed", top: 20, left: 20, zIndex: 100, width: 42, height: 42, borderRadius: 12, background: "rgba(255,255,255,0.85)", border: "1px solid rgba(0,0,0,0.08)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "var(--blue-vivid)", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", transition: "all 0.3s ease" }}>
+            <i className="fas fa-house" style={{ fontSize: 16 }} />
+          </Link>
+          <div className="animate-scale-in premium-card" style={s.authCard}>
             <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-              <div style={{ ...s.authLogo, background: "rgba(139, 92, 246, 0.15)", borderColor: "rgba(139, 92, 246, 0.2)" }}>
-                <i className="fas fa-store" style={{ fontSize: 28, color: "#a78bfa" }} />
+              <div style={{ ...s.authLogo, background: "var(--blue-subtle)", borderColor: "var(--border-blue)" }}>
+                <i className="fas fa-store" style={{ fontSize: 28, color: "var(--blue-electric)" }} />
               </div>
-              <h1 style={{ fontSize: 24, fontWeight: 900 }}>Seller Studio</h1>
-              <p style={{ color: "var(--text-tertiary)", fontSize: 13 }}>Launch your store in seconds</p>
+              <h1 style={{ fontSize: 24, fontWeight: 900 }}>Dresho Seller</h1>
+              <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Launch your store in seconds ⚡</p>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               {!isLogin && (
@@ -150,7 +168,16 @@ export default function SellerPage() {
               )}
               <input className="glass-input" type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
               <input className="glass-input" type="password" placeholder="Password" value={pass} onChange={(e) => setPass(e.target.value)} />
-              <button className="btn-primary" onClick={handleAuth} disabled={authLoading}>
+              {!isLogin && (
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginTop: 4 }}>
+                  <input type="checkbox" checked={agreedTerms} onChange={(e) => setAgreedTerms(e.target.checked)} style={{ marginTop: 3, accentColor: "var(--blue-vivid)", width: 18, height: 18, cursor: "pointer" }} />
+                  <p style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
+                    I agree to Dresho&apos;s{" "}
+                    <span onClick={() => setShowTermsModal(true)} style={{ color: "var(--blue-vivid)", fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Seller Terms & Conditions</span>
+                  </p>
+                </div>
+              )}
+              <button className="btn-primary" onClick={handleAuth} disabled={authLoading || (!isLogin && !agreedTerms)} style={{ opacity: (!isLogin && !agreedTerms) ? 0.5 : 1 }}>
                 {authLoading ? "..." : isLogin ? "Access Dashboard" : "Create Store"}
               </button>
               <button className="btn-ghost" onClick={() => setIsLogin(!isLogin)} style={{ textAlign: "center" }}>
@@ -158,6 +185,38 @@ export default function SellerPage() {
               </button>
             </div>
           </div>
+          {showTermsModal && (
+            <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setShowTermsModal(false)}>
+              <div onClick={(e) => e.stopPropagation()} style={{ background: "white", borderRadius: 24, padding: "28px 24px", maxWidth: 480, width: "100%", maxHeight: "80vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }}>
+                <h3 style={{ fontSize: 20, fontWeight: 900, marginBottom: 16, color: "var(--blue-vivid)" }}>Seller Terms & Conditions</h3>
+                <div style={{ fontSize: 13, color: "#444", lineHeight: 1.7 }}>
+                  <p><strong>1. Onboarding</strong> — Seller agrees to provide accurate business details and product information.</p>
+                  <p><strong>2. Product Responsibility</strong> — Seller is responsible for product quality, authenticity, and availability. No counterfeit or illegal products allowed.</p>
+                  <p><strong>3. Order Fulfillment</strong> — Orders must be packed and ready within agreed time. Delays may result in penalties.</p>
+                  <p><strong>4. Pricing & Commission</strong> — Seller sets product price. Dresho charges a commission (as agreed).</p>
+                  <p><strong>5. Returns / Replacement</strong> — Seller must accept replacement requests for defective/wrong items. No refund policy (replacement only).</p>
+                  <p><strong>6. Cancellation</strong> — High cancellation rates may lead to suspension.</p>
+                  <p><strong>7. Payment Settlement</strong> — Payments will be settled after successful delivery. COD orders will be settled after cash reconciliation.</p>
+                  <p><strong>8. Termination</strong> — Dresho reserves the right to suspend sellers for poor performance or violations.</p>
+                </div>
+                <h3 style={{ fontSize: 20, fontWeight: 900, margin: "20px 0 16px", color: "var(--blue-vivid)" }}>Privacy Policy</h3>
+                <div style={{ fontSize: 13, color: "#444", lineHeight: 1.7 }}>
+                  <p><strong>1. Information Collected</strong> — Name, phone number, address, payment details (via secure gateways), app usage data.</p>
+                  <p><strong>2. Use of Information</strong> — To process orders, improve user experience, and provide customer support.</p>
+                  <p><strong>3. Data Sharing</strong> — Shared with delivery partners & sellers for order fulfillment. Not sold to third parties.</p>
+                  <p><strong>4. Security</strong> — We use secure systems to protect user data.</p>
+                  <p><strong>5. Consent</strong> — By using Dresho, users agree to this policy.</p>
+                </div>
+                <h3 style={{ fontSize: 20, fontWeight: 900, margin: "20px 0 16px", color: "var(--blue-vivid)" }}>Contact & Support</h3>
+                <div style={{ fontSize: 13, color: "#444", lineHeight: 1.7 }}>
+                  <p>📧 Email: <strong>dresho.business@gmail.com</strong></p>
+                  <p>💬 WhatsApp: <strong>+91 9128926837</strong> (10 AM – 8 PM, All Days)</p>
+                  <p>📍 Service Area: <strong>Hazaribagh, Jharkhand</strong></p>
+                </div>
+                <button className="btn-primary" style={{ width: "100%", marginTop: 20 }} onClick={() => { setAgreedTerms(true); setShowTermsModal(false); }}>I Agree</button>
+              </div>
+            </div>
+          )}
         </div>
       </>
     );
@@ -167,9 +226,12 @@ export default function SellerPage() {
   if (isPending) {
     return (
       <>
-        <div className="aurora-bg" />
-        <div className="page-content" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 20, position: "relative", zIndex: 1 }}>
-          <div className="animate-scale-in" style={{ ...s.authCard, textAlign: "center" }}>
+        <div className="luxury-bg"><div className="grain" /></div>
+        <div className="page-content lp-light" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 20, position: "relative", zIndex: 1 }}>
+          <Link href="/" style={{ position: "fixed", top: 20, left: 20, zIndex: 100, width: 42, height: 42, borderRadius: 12, background: "rgba(255,255,255,0.85)", border: "1px solid rgba(0,0,0,0.08)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "var(--blue-vivid)", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", transition: "all 0.3s ease" }}>
+            <i className="fas fa-house" style={{ fontSize: 16 }} />
+          </Link>
+          <div className="animate-scale-in premium-card" style={{ ...s.authCard, textAlign: "center" }}>
             <div style={{ fontSize: 64 }}>⏳</div>
             <h2 style={{ fontSize: 24, fontWeight: 900 }}>Application Pending</h2>
             <p style={{ color: "var(--text-secondary)", lineHeight: 1.7 }}>
@@ -185,13 +247,18 @@ export default function SellerPage() {
   // MAIN DASHBOARD
   return (
     <>
-      <div className="aurora-bg" />
-      <div className="page-content" style={{ position: "relative", zIndex: 1 }}>
+      <div className="luxury-bg"><div className="grain" /></div>
+      <div className="page-content lp-light" style={{ position: "relative", zIndex: 1 }}>
         {/* Top Nav */}
-        <nav style={s.topNav} className="glass-panel">
-          <div>
-            <h2 style={{ fontSize: 18, fontWeight: 900, color: "var(--aurora-8)", letterSpacing: 1 }}>{sellerData?.storeName}</h2>
-            <p style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: 2, textTransform: "uppercase" }}>Seller Partner</p>
+        <nav style={s.topNav} className="premium-nav">
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <Link href="/" style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(26,13,220,0.06)", border: "1px solid rgba(26,13,220,0.12)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "var(--blue-vivid)", transition: "all 0.3s ease", flexShrink: 0 }}>
+              <i className="fas fa-house" style={{ fontSize: 13 }} />
+            </Link>
+            <div>
+              <h2 style={{ fontSize: 18, fontWeight: 900, color: "var(--blue-vivid)", letterSpacing: 1 }}>{sellerData?.storeName} · Dresho</h2>
+              <p style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)", letterSpacing: 2, textTransform: "uppercase" }}>Seller Partner</p>
+            </div>
           </div>
           <button className="btn-icon" onClick={() => signOut(auth)}>
             <i className="fas fa-power-off" style={{ fontSize: 14 }} />
@@ -201,13 +268,13 @@ export default function SellerPage() {
         <main style={{ padding: "16px 20px 40px" }}>
           {/* Stats */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 20 }}>
-            <div className="glass-card" style={{ padding: 22, borderRadius: 22, cursor: "default" }}>
+            <div className="premium-card" style={{ padding: 22, borderRadius: 22, cursor: "default" }}>
               <p className="section-label">MY SALES</p>
               <h3 style={{ fontSize: 26, fontWeight: 900, marginTop: 6 }}>₹{salesTotal.toLocaleString("en-IN")}</h3>
             </div>
-            <div className="glass-card" style={{ padding: 22, borderRadius: 22, cursor: "default" }}>
+            <div className="premium-card" style={{ padding: 22, borderRadius: 22, cursor: "default" }}>
               <p className="section-label">LIVE ORDERS</p>
-              <h3 style={{ fontSize: 26, fontWeight: 900, marginTop: 6, color: "var(--aurora-7)" }}>{pendingCount}</h3>
+              <h3 style={{ fontSize: 26, fontWeight: 900, marginTop: 6, color: "var(--blue-vivid)" }}>{pendingCount}</h3>
             </div>
           </div>
 
@@ -322,7 +389,7 @@ export default function SellerPage() {
                 </div>
 
                 <select className="glass-input" value={pCategory} onChange={(e) => setPCategory(e.target.value)} style={{ cursor: "pointer" }}>
-                  {categories.map((c) => <option key={c} value={c} style={{ background: "#1a1a3e", color: "white" }}>{c}</option>)}
+                  {categories.map((c) => <option key={c} value={c} style={{ background: "white", color: "#333" }}>{c}</option>)}
                 </select>
 
                 {/* Size toggles */}
@@ -332,9 +399,9 @@ export default function SellerPage() {
                     {["XS", "S", "M", "L", "XL", "XXL"].map((size) => (
                       <button key={size} onClick={() => toggleSize(size)} style={{
                         width: 42, height: 42, borderRadius: 12, fontSize: 12, fontWeight: 700,
-                        background: pSizes.includes(size) ? "linear-gradient(135deg, #7c3aed, #6d28d9)" : "rgba(255,255,255,0.04)",
-                        color: pSizes.includes(size) ? "white" : "var(--text-secondary)",
-                        border: pSizes.includes(size) ? "none" : "1px solid rgba(255,255,255,0.08)",
+                        background: pSizes.includes(size) ? "linear-gradient(135deg, #7c3aed, #6d28d9)" : "rgba(0,0,0,0.04)",
+                        color: pSizes.includes(size) ? "white" : "#555",
+                        border: pSizes.includes(size) ? "none" : "1px solid rgba(0,0,0,0.12)",
                         cursor: "pointer", transition: "all 0.3s ease", fontFamily: "Inter, sans-serif",
                       }}>
                         {size}
@@ -359,13 +426,13 @@ export default function SellerPage() {
 
 const s = {
   authCard: {
-    width: "100%", maxWidth: 420, background: "rgba(20, 20, 50, 0.9)", backdropFilter: "blur(40px)",
-    border: "1px solid rgba(255,255,255,0.06)", borderRadius: 36, padding: 40,
+    width: "100%", maxWidth: 420, background: "rgba(255, 255, 255, 0.9)", backdropFilter: "blur(40px)",
+    border: "1px solid rgba(0,0,0,0.06)", borderRadius: 36, padding: 40,
     display: "flex", flexDirection: "column", gap: 28,
   },
   authLogo: {
     width: 72, height: 72, borderRadius: 24, display: "flex", alignItems: "center", justifyContent: "center",
-    marginBottom: 8, boxShadow: "0 0 40px rgba(139, 92, 246, 0.2)", border: "1px solid",
+    marginBottom: 8, boxShadow: "0 0 40px rgba(26, 13, 220, 0.1)", border: "1px solid",
   },
   topNav: {
     display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px",
@@ -373,17 +440,17 @@ const s = {
   },
   tabBtn: {
     flex: 1, padding: "14px", borderRadius: 16, fontSize: 14, fontWeight: 700,
-    background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
-    color: "var(--text-secondary)", cursor: "pointer", transition: "all 0.3s ease", fontFamily: "Inter, sans-serif",
+    background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.08)",
+    color: "#555", cursor: "pointer", transition: "all 0.3s ease", fontFamily: "Inter, sans-serif",
   },
   tabBtnActive: {
-    background: "linear-gradient(135deg, #7c3aed, #6d28d9)", color: "white",
-    border: "1px solid transparent", boxShadow: "0 4px 20px rgba(124, 58, 237, 0.3)",
+    background: "linear-gradient(135deg, var(--blue-electric), var(--blue-vivid))", color: "white",
+    border: "1px solid transparent", boxShadow: "0 4px 20px rgba(26, 13, 220, 0.3)",
   },
   emptyState: { textAlign: "center", padding: 60, display: "flex", flexDirection: "column", alignItems: "center" },
   imageUpload: {
     width: "100%", height: 180, borderRadius: 20, overflow: "hidden",
-    background: "rgba(255,255,255,0.03)", border: "2px dashed rgba(255,255,255,0.08)",
+    background: "rgba(0,0,0,0.03)", border: "2px dashed rgba(0,0,0,0.15)",
     display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", transition: "all 0.3s ease",
   },
 };

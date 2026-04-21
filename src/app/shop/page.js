@@ -1,5 +1,7 @@
 "use client";
+export const dynamic = 'force-dynamic';
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { auth, db } from "@/lib/firebase";
 import {
   signInWithEmailAndPassword,
@@ -13,10 +15,16 @@ import {
 } from "firebase/firestore";
 
 /* ═══════════════════════════════════════
-   DRĀP — Customer Shopping Experience
+   Dresho — Customer Shopping Experience
+   Fashion, Delivered instantly.
    ═══════════════════════════════════════ */
 export default function ShopPage() {
   // ── Auth State ──
+  const [showAbout, setShowAbout] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [agreedTerms, setAgreedTerms] = useState(false);
+  const [showTermsModal, setShowTermsModal] = useState(false);
   const [user, setUser] = useState(null);
   const [userData, setUserData] = useState(null);
   const [isLogin, setIsLogin] = useState(true);
@@ -38,6 +46,7 @@ export default function ShopPage() {
   const [showCheckout, setShowCheckout] = useState(false);
   const [checkoutAddress, setCheckoutAddress] = useState("");
   const [checkoutPhone, setCheckoutPhone] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("COD"); // COD | UPI
   const [placing, setPlacing] = useState(false);
 
   const [loaded, setLoaded] = useState(false);
@@ -46,11 +55,18 @@ export default function ShopPage() {
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
       if (u) {
-        const snap = await getDoc(doc(db, "users", u.uid));
+        let snap = await getDoc(doc(db, "users", u.uid));
+        
+        // If document doesn't exist immediately, wait and retry (fixes signup race condition)
+        if (!snap.exists()) {
+          await new Promise(r => setTimeout(r, 2000));
+          snap = await getDoc(doc(db, "users", u.uid));
+        }
+
         if (snap.exists() && snap.data().role === "user") {
           setUser(u);
           setUserData(snap.data());
-        } else {
+        } else if (snap.exists()) {
           await signOut(auth);
           alert("Unauthorized role for this panel.");
         }
@@ -139,6 +155,75 @@ export default function ShopPage() {
       const otp = Math.floor(1000 + Math.random() * 9000);
       const trackingId = "DR" + Date.now().toString().slice(-6);
       const sellerId = cart[0]?.sellerId || "";
+
+      if (paymentMethod === "UPI") {
+        // ── Razorpay UPI / Card flow ──
+        await new Promise((resolve, reject) => {
+          const existingScript = document.getElementById("razorpay-script");
+          if (existingScript) { resolve(); return; }
+          const script = document.createElement("script");
+          script.id = "razorpay-script";
+          script.src = "https://checkout.razorpay.com/v1/checkout.js";
+          script.onload = resolve;
+          script.onerror = () => reject(new Error("Razorpay SDK failed to load"));
+          document.body.appendChild(script);
+        });
+
+        await new Promise((resolve, reject) => {
+          const options = {
+            key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+            amount: cartTotal * 100, // paise
+            currency: "INR",
+            name: "Dresho",
+            description: `Order — ${cart.length} item(s)`,
+            image: "/favicon.ico",
+            prefill: {
+              name: userData?.name || "",
+              email: user?.email || "",
+              contact: checkoutPhone,
+            },
+            theme: { color: "#6366f1" },
+            handler: async (response) => {
+              try {
+                await addDoc(collection(db, "orders"), {
+                  userId: user.uid,
+                  userName: userData.name,
+                  userAddress: checkoutAddress,
+                  userPhone: checkoutPhone,
+                  sellerId,
+                  items: cart.map((i) => ({
+                    name: i.name, qty: i.qty, price: i.price, size: i.selectedSize,
+                  })),
+                  total: cartTotal,
+                  status: "Pending",
+                  paymentMethod: "UPI",
+                  paymentStatus: "Paid",
+                  paymentId: response.razorpay_payment_id,
+                  trackingId,
+                  deliveryOtp: otp,
+                  riderId: null,
+                  createdAt: new Date(),
+                });
+                await setDoc(doc(db, "users", user.uid), { address: checkoutAddress, phone: checkoutPhone }, { merge: true });
+                setUserData((prev) => ({ ...prev, address: checkoutAddress, phone: checkoutPhone }));
+                setCart([]);
+                setShowCheckout(false);
+                setCurrentSection("orders");
+                alert(`✅ Payment successful!\nOrder placed. Payment ID: ${response.razorpay_payment_id}`);
+                resolve();
+              } catch (e) { reject(e); }
+            },
+            modal: { ondismiss: () => reject(new Error("Payment cancelled")) },
+          };
+          const rzp = new window.Razorpay(options);
+          rzp.on("payment.failed", (resp) => reject(new Error(resp.error?.description || "Payment failed")));
+          rzp.open();
+        });
+
+        setPlacing(false);
+        return;
+      }
+
       await addDoc(collection(db, "orders"), {
         userId: user.uid,
         userName: userData.name,
@@ -150,6 +235,8 @@ export default function ShopPage() {
         })),
         total: cartTotal,
         status: "Pending",
+        paymentMethod,
+        paymentStatus: "Pending",
         trackingId,
         deliveryOtp: otp,
         riderId: null,
@@ -160,7 +247,7 @@ export default function ShopPage() {
       setCart([]);
       setShowCheckout(false);
       setCurrentSection("orders");
-      alert(`Order placed! OTP: ${otp}`);
+      alert(`✅ Order placed! Your OTP: ${otp}\nPayment: Cash on Delivery`);
     } catch (e) { alert("Order failed: " + e.message); }
     setPlacing(false);
   };
@@ -184,16 +271,19 @@ export default function ShopPage() {
   if (!user) {
     return (
       <>
-        <div className="aurora-bg" />
-        <div className="page-content" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 20, position: "relative", zIndex: 1 }}>
-          <div className={`animate-scale-in`} style={s.authCard}>
+        <div className="luxury-bg"><div className="grain" /></div>
+        <div className="page-content lp-light" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 20, position: "relative", zIndex: 1 }}>
+          <Link href="/" style={{ position: "fixed", top: 20, left: 20, zIndex: 100, width: 42, height: 42, borderRadius: 12, background: "rgba(255,255,255,0.85)", border: "1px solid rgba(0,0,0,0.08)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "var(--blue-vivid)", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", transition: "all 0.3s ease" }}>
+            <i className="fas fa-house" style={{ fontSize: 16 }} />
+          </Link>
+          <div className={`animate-scale-in premium-card`} style={s.authCard}>
             <div style={s.authHeader}>
               <div style={s.authLogo}>
-                <i className="fas fa-fire" style={{ fontSize: 28, color: "#c084fc" }} />
+                <i className="fas fa-bolt" style={{ fontSize: 28, color: "var(--blue-electric)" }} />
               </div>
-              <h1 style={{ fontSize: 28, fontWeight: 900, letterSpacing: 2 }}>DRĀP</h1>
+              <h1 style={{ fontSize: 28, fontWeight: 900, letterSpacing: 2 }}>Dresho</h1>
               <p style={{ color: "var(--text-tertiary)", fontSize: 13, fontWeight: 500 }}>
-                Fashion in 30 Minutes
+                Fashion in 30 Minutes ⚡
               </p>
             </div>
 
@@ -221,7 +311,16 @@ export default function ShopPage() {
                 value={authPass}
                 onChange={(e) => setAuthPass(e.target.value)}
               />
-              <button className="btn-primary" onClick={handleAuth} disabled={authLoading} style={{ marginTop: 4 }}>
+              {!isLogin && (
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginTop: 4 }}>
+                  <input type="checkbox" checked={agreedTerms} onChange={(e) => setAgreedTerms(e.target.checked)} style={{ marginTop: 3, accentColor: "var(--blue-vivid)", width: 18, height: 18, cursor: "pointer" }} />
+                  <p style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
+                    I agree to Dresho&apos;s{" "}
+                    <span onClick={() => setShowTermsModal(true)} style={{ color: "var(--blue-vivid)", fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Terms of Use, Privacy Policy & Replacement Policy</span>
+                  </p>
+                </div>
+              )}
+              <button className="btn-primary" onClick={handleAuth} disabled={authLoading || (!isLogin && !agreedTerms)} style={{ marginTop: 4, opacity: (!isLogin && !agreedTerms) ? 0.5 : 1 }}>
                 {authLoading ? "..." : isLogin ? "Sign In" : "Create Account"}
               </button>
               <button className="btn-ghost" onClick={() => setIsLogin(!isLogin)} style={{ textAlign: "center" }}>
@@ -229,6 +328,44 @@ export default function ShopPage() {
               </button>
             </div>
           </div>
+          {showTermsModal && (
+            <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setShowTermsModal(false)}>
+              <div onClick={(e) => e.stopPropagation()} style={{ background: "white", borderRadius: 24, padding: "28px 24px", maxWidth: 480, width: "100%", maxHeight: "80vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }}>
+                <h3 style={{ fontSize: 20, fontWeight: 900, marginBottom: 16, color: "var(--blue-vivid)" }}>Terms of Use</h3>
+                <div style={{ fontSize: 13, color: "#444", lineHeight: 1.7 }}>
+                  <p><strong>1. Orders</strong> — Orders once placed cannot be cancelled after dispatch.</p>
+                  <p><strong>2. Pricing</strong> — Prices are set by sellers and may vary.</p>
+                  <p><strong>3. Delivery</strong> — Delivery time is estimated, not guaranteed.</p>
+                  <p><strong>4. COD Orders</strong> — Users must be available to receive orders. Repeated refusal may lead to account restriction.</p>
+                  <p><strong>5. Liability</strong> — Dresho acts as a platform connecting buyers and sellers.</p>
+                </div>
+                <h3 style={{ fontSize: 20, fontWeight: 900, margin: "20px 0 16px", color: "var(--blue-vivid)" }}>Privacy Policy</h3>
+                <div style={{ fontSize: 13, color: "#444", lineHeight: 1.7 }}>
+                  <p><strong>1. Information Collected</strong> — Name, phone number, address, payment details (via secure gateways), app usage data.</p>
+                  <p><strong>2. Use of Information</strong> — To process orders, improve user experience, and provide customer support.</p>
+                  <p><strong>3. Data Sharing</strong> — Shared with delivery partners & sellers for order fulfillment. Not sold to third parties.</p>
+                  <p><strong>4. Security</strong> — We use secure systems to protect user data.</p>
+                  <p><strong>5. Consent</strong> — By using Dresho, users agree to this policy.</p>
+                </div>
+                <h3 style={{ fontSize: 20, fontWeight: 900, margin: "20px 0 16px", color: "var(--blue-vivid)" }}>Replacement Policy</h3>
+                <div style={{ fontSize: 13, color: "#444", lineHeight: 1.7 }}>
+                  <p>✅ We offer <strong>Replacement only</strong> (No refunds).</p>
+                  <p>🔁 <strong>Eligible cases:</strong> Wrong item delivered, Damaged product, Size issue (if applicable).</p>
+                  <p>⏱ <strong>Time:</strong> Request within 24 hours of delivery.</p>
+                  <p>📦 <strong>Conditions:</strong> Product must be unused, original packaging required.</p>
+                  <p>❌ <strong>Not eligible:</strong> Change of mind, Used products.</p>
+                  <p>🔄 <strong>Process:</strong> User raises request → Product picked up → Replacement delivered.</p>
+                </div>
+                <h3 style={{ fontSize: 20, fontWeight: 900, margin: "20px 0 16px", color: "var(--blue-vivid)" }}>Contact & Support</h3>
+                <div style={{ fontSize: 13, color: "#444", lineHeight: 1.7 }}>
+                  <p>📧 Email: <strong>dresho.business@gmail.com</strong></p>
+                  <p>💬 WhatsApp: <strong>+91 9128926837</strong> (10 AM – 8 PM, All Days)</p>
+                  <p>📍 Service Area: <strong>Hazaribagh, Jharkhand</strong></p>
+                </div>
+                <button className="btn-primary" style={{ width: "100%", marginTop: 20 }} onClick={() => { setAgreedTerms(true); setShowTermsModal(false); }}>I Agree</button>
+              </div>
+            </div>
+          )}
         </div>
       </>
     );
@@ -239,16 +376,21 @@ export default function ShopPage() {
   // ══════════════════════════
   return (
     <>
-      <div className="aurora-bg" />
-      <div className="page-content" style={{ paddingBottom: 90, position: "relative", zIndex: 1 }}>
+      <div className="luxury-bg"><div className="grain" /></div>
+      <div className="page-content lp-light" style={{ paddingBottom: 90, position: "relative", zIndex: 1 }}>
 
         {/* ── Top Nav ── */}
-        <nav style={s.topNav} className="glass-panel">
-          <div>
-            <h2 style={{ fontSize: 18, fontWeight: 900, color: "var(--aurora-8)", letterSpacing: 2 }}>DRĀP</h2>
-            <p style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: 2, textTransform: "uppercase" }}>
-              Hi, {userData?.name}
-            </p>
+        <nav style={s.topNav} className="premium-nav">
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <Link href="/" style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(26,13,220,0.06)", border: "1px solid rgba(26,13,220,0.12)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "var(--blue-vivid)", transition: "all 0.3s ease", flexShrink: 0 }}>
+              <i className="fas fa-house" style={{ fontSize: 13 }} />
+            </Link>
+            <div>
+              <h2 style={{ fontSize: 18, fontWeight: 900, color: "var(--blue-vivid)", letterSpacing: 2 }}>Dresho</h2>
+              <p style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)", letterSpacing: 2, textTransform: "uppercase" }}>
+                Hi, {userData?.name}
+              </p>
+            </div>
           </div>
           <button className="btn-icon" onClick={() => signOut(auth)}>
             <i className="fas fa-power-off" style={{ fontSize: 14 }} />
@@ -261,9 +403,9 @@ export default function ShopPage() {
             {/* Hero Banner */}
             <div style={s.heroBanner}>
               <div style={s.heroBannerGlow} />
-              <p style={{ fontSize: 11, fontWeight: 700, opacity: 0.8, letterSpacing: 1 }}>DELIVERY IN</p>
+              <p style={{ fontSize: 11, fontWeight: 700, opacity: 0.9, letterSpacing: 1 }}>DELIVERY IN</p>
               <h3 style={{ fontSize: 32, fontWeight: 900, marginTop: 4 }}>30 Minutes ⚡</h3>
-              <p style={{ fontSize: 13, opacity: 0.7, marginTop: 6 }}>Premium fashion from nearby boutiques</p>
+              <p style={{ fontSize: 13, opacity: 0.8, marginTop: 6 }}>Premium fashion from nearby boutiques</p>
             </div>
 
             {/* Categories */}
@@ -295,7 +437,7 @@ export default function ShopPage() {
                 filteredProducts.map((p, i) => (
                   <div
                     key={p.id}
-                    className={`glass-card animate-fade-in-up stagger-${Math.min(i + 1, 8)}`}
+                    className={`premium-card animate-fade-in-up stagger-${Math.min(i + 1, 8)}`}
                     style={s.productCard}
                     onClick={() => { setViewProduct(p); setSelectedSize(p.sizes?.[0] || "M"); }}
                   >
@@ -436,19 +578,34 @@ export default function ShopPage() {
               </div>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div className="glass-card" style={{ padding: "18px 20px", borderRadius: 18, display: "flex", alignItems: "center", gap: 14, cursor: "default" }}>
-                <i className="fas fa-location-dot" style={{ color: "var(--aurora-7)", fontSize: 16 }} />
-                <div>
-                  <p style={{ fontSize: 13, fontWeight: 700 }}>Delivery Address</p>
-                  <p style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{userData?.address || "Not set"}</p>
-                </div>
+              <div className="glass-card" style={{ padding: "18px 20px", borderRadius: 18, display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }} onClick={() => setCurrentSection('orders')}>
+                <i className="fas fa-box" style={{ color: "var(--aurora-7)", fontSize: 16 }} />
+                <span style={{ fontSize: 14, fontWeight: 600 }}>My Orders</span>
               </div>
-              <div className="glass-card" style={{ padding: "18px 20px", borderRadius: 18, display: "flex", alignItems: "center", gap: 14, cursor: "default" }}>
-                <i className="fas fa-phone" style={{ color: "var(--aurora-7)", fontSize: 16 }} />
-                <div>
-                  <p style={{ fontSize: 13, fontWeight: 700 }}>Phone</p>
-                  <p style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{userData?.phone || "Not set"}</p>
-                </div>
+              <div className="glass-card" style={{ padding: "18px 20px", borderRadius: 18, display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }} onClick={() => setShowHelp(true)}>
+                <i className="fas fa-life-ring" style={{ color: "var(--aurora-7)", fontSize: 16 }} />
+                <span style={{ fontSize: 14, fontWeight: 600 }}>Help & Support</span>
+              </div>
+              <div className="glass-card" style={{ padding: "18px 20px", borderRadius: 18, display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }} onClick={() => setIsDarkMode(!isDarkMode)}>
+                <i className="fas fa-moon" style={{ color: "var(--aurora-7)", fontSize: 16 }} />
+                <span style={{ fontSize: 14, fontWeight: 600 }}>{isDarkMode ? 'Light Mode' : 'Dark Mode'}</span>
+              </div>
+              <div className="glass-card" style={{ padding: "18px 20px", borderRadius: 18, display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }} onClick={() => {
+                if (navigator.share) {
+                  navigator.share({
+                    title: 'Dresho App',
+                    url: window.location.origin,
+                  });
+                } else {
+                  prompt('Copy this link', window.location.origin);
+                }
+              }}>
+                <i className="fas fa-share-alt" style={{ color: "var(--aurora-7)", fontSize: 16 }} />
+                <span style={{ fontSize: 14, fontWeight: 600 }}>Share App</span>
+              </div>
+              <div className="glass-card" style={{ padding: "18px 20px", borderRadius: 18, display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }} onClick={() => setShowAbout(true)}>
+                <i className="fas fa-info-circle" style={{ color: "var(--aurora-7)", fontSize: 16 }} />
+                <span style={{ fontSize: 14, fontWeight: 600 }}>About Us</span>
               </div>
             </div>
             <button className="btn-danger" style={{ width: "100%", marginTop: 20, borderRadius: 18, padding: "16px" }} onClick={() => signOut(auth)}>
@@ -457,9 +614,33 @@ export default function ShopPage() {
           </div>
         )}
 
+        {showAbout && (
+          <div className="modal-overlay" onClick={() => setShowAbout(false)}>
+            <div className="modal-content" style={{ maxWidth: 400 }} onClick={e => e.stopPropagation()}>
+              <h3 style={{ fontSize: 22, fontWeight: 900, marginBottom: 12 }}>About Dresho</h3>
+              <p style={{ color: "var(--text-tertiary)", lineHeight: 1.6 }}>
+                Dresho is a premium quick‑commerce platform delivering fashion in 30 minutes. We bring the latest trends from curated boutiques straight to your doorstep.
+              </p>
+              <button className="btn-primary" onClick={() => setShowAbout(false)} style={{ marginTop: 16 }}>Close</button>
+            </div>
+          </div>
+        )}
+        {showHelp && (
+          <div className="modal-overlay" onClick={() => setShowHelp(false)}>
+            <div className="modal-content" style={{ maxWidth: 400 }} onClick={e => e.stopPropagation()}>
+              <h3 style={{ fontSize: 22, fontWeight: 900, marginBottom: 12 }}>Help & Support</h3>
+              <p style={{ color: "var(--text-tertiary)", lineHeight: 1.6 }}>
+                Need assistance? Email us at <a href="mailto:dresho.business@gmail.com" style={{ color: "var(--blue-vivid)" }}>dresho.business@gmail.com</a> or WhatsApp +91 9128926837 (10 AM – 8 PM).
+              </p>
+              <button className="btn-primary" onClick={() => setShowHelp(false)} style={{ marginTop: 16 }}>Close</button>
+            </div>
+          </div>
+        )}
+
         {/* ── BOTTOM NAV ── */}
         <nav style={s.bottomNav} className="glass-panel">
           {[
+            { id: "search", icon: "fa-magnifying-glass", label: "Search" },
             { id: "home", icon: "fa-house", label: "Home" },
             { id: "cart", icon: "fa-bag-shopping", label: "Cart", badge: cartCount },
             { id: "orders", icon: "fa-box", label: "Orders" },
@@ -485,7 +666,7 @@ export default function ShopPage() {
                 <img src={viewProduct.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", position: "absolute" }} onError={(e) => { e.target.style.display = "none"; }} />
                 <i className="fas fa-shirt" style={{ fontSize: 50, color: "var(--text-tertiary)", opacity: 0.3 }} />
               </div>
-              <p style={{ fontSize: 10, fontWeight: 800, color: "var(--aurora-8)", letterSpacing: 2 }}>{viewProduct.storeName || "DRĀP"}</p>
+              <p style={{ fontSize: 10, fontWeight: 800, color: "var(--aurora-8)", letterSpacing: 2 }}>{viewProduct.storeName || "DRESHO"}</p>
               <h3 style={{ fontSize: 22, fontWeight: 900, marginTop: 4 }}>{viewProduct.name}</h3>
               <p style={{ fontSize: 28, fontWeight: 900, color: "var(--aurora-cyan)", marginTop: 8 }}>₹{viewProduct.price}</p>
 
@@ -531,19 +712,43 @@ export default function ShopPage() {
                 <input className="glass-input" placeholder="Full Delivery Address" value={checkoutAddress} onChange={(e) => setCheckoutAddress(e.target.value)} />
                 <input className="glass-input" type="tel" placeholder="Phone Number" value={checkoutPhone} onChange={(e) => setCheckoutPhone(e.target.value)} />
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 18px", borderRadius: 16, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)", marginTop: 16 }}>
+
+              {/* Payment Method */}
+              <div style={{ marginTop: 18 }}>
+                <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.5, color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 10 }}>Payment Method</p>
+                <div style={{ display: "flex", gap: 10 }}>
+                  {[
+                    { id: "COD", icon: "fa-money-bill-wave", label: "Cash on Delivery", sub: "Pay at door" },
+                    { id: "UPI", icon: "fa-mobile-screen", label: "UPI / Card", sub: "Instant payment" },
+                  ].map((pm) => (
+                    <button key={pm.id} onClick={() => setPaymentMethod(pm.id)} style={{
+                      flex: 1, padding: "14px 12px", borderRadius: 14, cursor: "pointer", textAlign: "left",
+                      background: paymentMethod === pm.id ? "rgba(26,13,220,0.15)" : "rgba(255,255,255,0.03)",
+                      border: paymentMethod === pm.id ? "1px solid rgba(107,127,255,0.5)" : "1px solid rgba(255,255,255,0.06)",
+                      transition: "all 0.2s ease",
+                    }}>
+                      <i className={`fas ${pm.icon}`} style={{ fontSize: 18, color: paymentMethod === pm.id ? "#6B7FFF" : "var(--text-muted)", marginBottom: 6, display: "block" }} />
+                      <p style={{ fontSize: 12, fontWeight: 700, color: paymentMethod === pm.id ? "var(--white)" : "var(--text-secondary)" }}>{pm.label}</p>
+                      <p style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>{pm.sub}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", borderRadius: 14, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)", marginTop: 16 }}>
                 <span style={{ fontWeight: 600, color: "var(--text-secondary)" }}>Total</span>
                 <span style={{ fontSize: 22, fontWeight: 900, color: "var(--aurora-cyan)" }}>₹{cartTotal}</span>
               </div>
-              <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
+              <div style={{ display: "flex", gap: 12, marginTop: 18 }}>
                 <button className="btn-secondary" style={{ flex: 1, borderRadius: 14 }} onClick={() => setShowCheckout(false)}>Cancel</button>
                 <button className="btn-primary" style={{ flex: 1, borderRadius: 14 }} onClick={placeOrder} disabled={placing}>
-                  {placing ? "Placing..." : "Place Order"}
+                  {placing ? "Placing..." : paymentMethod === "COD" ? "🛵 Place Order" : "Pay via UPI"}
                 </button>
               </div>
             </div>
           </div>
         )}
+
       </div>
     </>
   );
@@ -554,9 +759,9 @@ const s = {
   authCard: {
     width: "100%",
     maxWidth: 420,
-    background: "rgba(20, 20, 50, 0.9)",
+    background: "rgba(255, 255, 255, 0.9)",
     backdropFilter: "blur(40px)",
-    border: "1px solid rgba(255,255,255,0.06)",
+    border: "1px solid rgba(0,0,0,0.06)",
     borderRadius: 36,
     padding: 40,
     display: "flex",
@@ -574,13 +779,13 @@ const s = {
     width: 72,
     height: 72,
     borderRadius: 24,
-    background: "rgba(168, 85, 247, 0.15)",
-    border: "1px solid rgba(168, 85, 247, 0.2)",
+    background: "rgba(26, 13, 220, 0.08)",
+    border: "1px solid rgba(26, 13, 220, 0.15)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 8,
-    boxShadow: "0 0 40px rgba(168, 85, 247, 0.2)",
+    boxShadow: "0 0 40px rgba(26, 13, 220, 0.1)",
   },
   topNav: {
     display: "flex",
@@ -593,12 +798,13 @@ const s = {
     borderBottom: "1px solid rgba(255,255,255,0.04)",
   },
   heroBanner: {
-    background: "linear-gradient(135deg, #4c1d95, #7c3aed, #6d28d9)",
+    background: "linear-gradient(135deg, var(--blue-vivid), var(--blue-electric), var(--blue-bright))",
     padding: "28px 24px",
     borderRadius: 28,
     color: "white",
     position: "relative",
     overflow: "hidden",
+    boxShadow: "0 12px 40px rgba(26, 13, 220, 0.3)",
   },
   heroBannerGlow: {
     position: "absolute",
@@ -607,7 +813,7 @@ const s = {
     width: 120,
     height: 120,
     borderRadius: "50%",
-    background: "rgba(6, 182, 212, 0.3)",
+    background: "rgba(255, 255, 255, 0.2)",
     filter: "blur(40px)",
   },
   catBtn: {
@@ -616,19 +822,19 @@ const s = {
     borderRadius: 14,
     fontSize: 13,
     fontWeight: 700,
-    background: "rgba(255,255,255,0.03)",
-    border: "1px solid rgba(255,255,255,0.06)",
-    color: "var(--text-secondary)",
+    background: "rgba(255, 255, 255, 0.8)",
+    border: "1px solid rgba(0,0,0,0.06)",
+    color: "var(--text-muted)",
     cursor: "pointer",
     transition: "all 0.3s ease",
     fontFamily: "Inter, sans-serif",
     whiteSpace: "nowrap",
   },
   catBtnActive: {
-    background: "linear-gradient(135deg, #7c3aed, #6d28d9)",
+    background: "linear-gradient(135deg, var(--blue-electric), var(--blue-vivid))",
     color: "white",
     border: "1px solid transparent",
-    boxShadow: "0 4px 20px rgba(124, 58, 237, 0.3)",
+    boxShadow: "0 4px 20px rgba(26, 13, 220, 0.3)",
   },
   productGrid: {
     display: "grid",
@@ -644,7 +850,7 @@ const s = {
   },
   productImage: {
     height: 140,
-    background: "linear-gradient(135deg, #1a1a3e, #2d1b69)",
+    background: "linear-gradient(135deg, #F8F7F4, #E5E7EB)",
     position: "relative",
     overflow: "hidden",
     display: "flex",
@@ -691,7 +897,9 @@ const s = {
     display: "flex",
     justifyContent: "space-around",
     padding: "10px 0 14px",
-    borderTop: "1px solid rgba(255,255,255,0.04)",
+    borderTop: "1px solid rgba(0,0,0,0.05)",
+    background: "rgba(248, 247, 244, 0.95)",
+    backdropFilter: "blur(20px)",
   },
   navBtn: {
     display: "flex",
@@ -700,14 +908,14 @@ const s = {
     gap: 4,
     background: "none",
     border: "none",
-    color: "var(--text-tertiary)",
+    color: "#888",
     cursor: "pointer",
     transition: "all 0.3s ease",
     padding: "6px 16px",
     fontFamily: "Inter, sans-serif",
   },
   navBtnActive: {
-    color: "var(--aurora-8)",
+    color: "#1a0ddc",
     transform: "translateY(-2px)",
   },
   navBadge: {
