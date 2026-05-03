@@ -7,7 +7,7 @@ import {
   signInWithEmailAndPassword, onAuthStateChanged, signOut,
 } from "firebase/auth";
 import {
-  doc, getDoc, collection, onSnapshot, updateDoc, deleteDoc,
+  doc, getDoc, setDoc, collection, onSnapshot, updateDoc, deleteDoc,
 } from "firebase/firestore";
 
 export default function AdminPage() {
@@ -21,6 +21,12 @@ export default function AdminPage() {
   const [orders, setOrders] = useState([]);
   const [users, setUsers] = useState([]);
   const [deliveryAgents, setDeliveryAgents] = useState([]);
+
+  // Banner Management State
+  const [banners, setBanners] = useState({});
+  const [bannerRequests, setBannerRequests] = useState([]);
+  const [editingBanner, setEditingBanner] = useState(null);
+  const [bannerForm, setBannerForm] = useState({ imageUrl: "", title: "", subtitle: "", tag: "", cta: "", expiry: "" });
 
   useEffect(() => {
     const AUTHORIZED = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "")
@@ -55,6 +61,7 @@ export default function AdminPage() {
     return () => unsub();
   }, []);
 
+  const [feedbacks, setFeedbacks] = useState([]);
   useEffect(() => {
     if (!authenticated) return;
     const unsubs = [];
@@ -87,11 +94,33 @@ export default function AdminPage() {
       setDeliveryAgents(d);
       setStats((prev) => ({ ...prev, fleet: d.length }));
     }));
+    // Feedback collection
+    unsubs.push(onSnapshot(collection(db, "feedback"), (snap) => {
+      const f = [];
+      snap.forEach((doc) => f.push({ id: doc.id, ...doc.data() }));
+      setFeedbacks(f);
+    }));
 
     // Users
     unsubs.push(onSnapshot(collection(db, "users"), (snap) => {
       const u = []; snap.forEach((d) => u.push({ id: d.id, ...d.data() }));
       setUsers(u);
+    }));
+
+    // Banners (docs: banner_1 through banner_5)
+    ["banner_1", "banner_2", "banner_3", "banner_4", "banner_5"].forEach((id) => {
+      unsubs.push(onSnapshot(doc(db, "banners", id), (snap) => {
+        if (snap.exists()) {
+          setBanners((prev) => ({ ...prev, [id]: { id, ...snap.data() } }));
+        }
+      }));
+    });
+
+    // Banner Requests from sellers
+    unsubs.push(onSnapshot(collection(db, "banner_requests"), (snap) => {
+      const r = []; snap.forEach((d) => r.push({ id: d.id, ...d.data() }));
+      r.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+      setBannerRequests(r);
     }));
 
     return () => unsubs.forEach((u) => u());
@@ -113,6 +142,73 @@ export default function AdminPage() {
     alert(current ? "Seller suspended." : "Seller reactivated! ✅");
   };
 
+  // Banner Management Functions
+  const openBannerEditor = (bannerId) => {
+    const existing = banners[bannerId] || {};
+    setBannerForm({
+      imageUrl: existing.imageUrl || "",
+      title: existing.title || "",
+      subtitle: existing.subtitle || "",
+      tag: existing.tag || "",
+      cta: existing.cta || "",
+      expiry: existing.expiry || "",
+    });
+    setEditingBanner(bannerId);
+  };
+
+  const saveBanner = async () => {
+    if (!editingBanner) return;
+    try {
+      await setDoc(doc(db, "banners", editingBanner), {
+        ...bannerForm,
+        updatedAt: new Date(),
+      }, { merge: true });
+      alert("Banner saved! ✅");
+      setEditingBanner(null);
+    } catch (e) { alert("Failed: " + e.message); }
+  };
+
+  const approveBannerRequest = async (reqId, req) => {
+    const duration = prompt("How many days to run this banner?", "7");
+    if (!duration) return;
+    const slot = req.slot || 1;
+    const bannerId = `banner_${slot}`;
+    const expiryDate = new Date();
+    expiryDate.setDate(expiryDate.getDate() + parseInt(duration));
+    try {
+      await setDoc(doc(db, "banners", bannerId), {
+        imageUrl: req.imageUrl,
+        title: req.title || "",
+        subtitle: req.subtitle || "",
+        tag: req.tag || "",
+        cta: req.cta || "",
+        expiry: expiryDate.toISOString(),
+        sellerName: req.sellerName || "",
+        sellerId: req.sellerId || "",
+        updatedAt: new Date(),
+      }, { merge: true });
+      await updateDoc(doc(db, "banner_requests", reqId), {
+        status: "approved",
+        approvedAt: new Date(),
+        durationDays: parseInt(duration),
+        assignedSlot: slot,
+      });
+      alert(`Banner approved for Slot ${slot}, ${duration} days! ✅`);
+    } catch (e) { alert("Failed: " + e.message); }
+  };
+
+  const rejectBannerRequest = async (reqId) => {
+    const reason = prompt("Reason for rejection (optional):", "");
+    try {
+      await updateDoc(doc(db, "banner_requests", reqId), {
+        status: "rejected",
+        rejectedAt: new Date(),
+        rejectionReason: reason || "",
+      });
+      alert("Request rejected.");
+    } catch (e) { alert("Failed: " + e.message); }
+  };
+
   const getStatusStyle = (status) => {
     switch (status) {
       case "Delivered": return { bg: "rgba(16,185,129,0.1)", color: "#10b981", border: "rgba(16,185,129,0.2)" };
@@ -128,21 +224,23 @@ export default function AdminPage() {
     { id: "orders", icon: "fa-truck-fast", label: "Live Orders" },
     { id: "users", icon: "fa-users-gear", label: "Users" },
     { id: "fleet", icon: "fa-motorcycle", label: "Delivery Fleet" },
+    { id: "reviews", icon: "fa-star", label: "Ratings & Reviews" },
+    { id: "banners", icon: "fa-image", label: "Banners" }
   ];
 
   // AUTH SCREEN
   if (!authenticated) {
     return (
       <>
-        <div className="luxury-bg"><div className="grain" /></div>
-        <div className="page-content lp-light" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 20, position: "relative", zIndex: 1 }}>
-          <Link href="/" style={{ position: "fixed", top: 20, left: 20, zIndex: 100, width: 42, height: 42, borderRadius: 12, background: "rgba(255,255,255,0.85)", border: "1px solid rgba(0,0,0,0.08)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "var(--blue-vivid)", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", transition: "all 0.3s ease" }}>
+        <div className=""><div className="" /></div>
+        <div className="page-content " style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 20, position: "relative", zIndex: 1 }}>
+          <Link href="/" style={{ position: "fixed", top: 20, left: 20, zIndex: 100, width: 42, height: 42, borderRadius: 12, background: "rgba(255,255,255,0.85)", border: "1px solid rgba(0,0,0,0.08)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "var(--gold)", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", transition: "all 0.3s ease" }}>
             <i className="fas fa-house" style={{ fontSize: 16 }} />
           </Link>
           <div className="animate-scale-in premium-card" style={s.authCard}>
             <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-              <div style={{ ...s.authLogo, background: "var(--blue-subtle)", border: "1px solid var(--border-blue)" }}>
-                <i className="fas fa-shield-halved" style={{ fontSize: 28, color: "var(--blue-electric)" }} />
+              <div style={{ ...s.authLogo, background: "var(--ivory2)", border: "1px solid var(--border2)" }}>
+                <i className="fas fa-shield-halved" style={{ fontSize: 28, color: "var(--navy)" }} />
               </div>
               <h1 style={{ fontSize: 28, fontWeight: 900, letterSpacing: 2 }}>Dresho</h1>
               <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Admin Control Center</p>
@@ -150,7 +248,7 @@ export default function AdminPage() {
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <input className="glass-input" type="email" placeholder="Admin Email" value={email} onChange={(e) => setEmail(e.target.value)} />
               <input className="glass-input" type="password" placeholder="Password" value={pass} onChange={(e) => setPass(e.target.value)} />
-                <button className="btn-primary" onClick={async () => { try { await signInWithEmailAndPassword(auth, email, pass); } catch (err) { alert("Login failed: " + (err.code || err.message)); } }}>
+                <button className="btn-slide-primary" onClick={async () => { try { await signInWithEmailAndPassword(auth, email, pass); } catch (err) { alert("Login failed: " + (err.code || err.message)); } }}>
                 Verify Identity
               </button>
             </div>
@@ -163,13 +261,13 @@ export default function AdminPage() {
   // MAIN ADMIN PANEL
   return (
     <>
-      <div className="luxury-bg"><div className="grain" /></div>
-      <div className="page-content lp-light" style={{ display: "flex", minHeight: "100vh", position: "relative", zIndex: 1 }}>
+      <div className=""><div className="" /></div>
+      <div className="page-content " style={{ display: "flex", minHeight: "100vh", position: "relative", zIndex: 1 }}>
         {/* SIDEBAR */}
         <nav style={s.sidebar} className="premium-sidebar">
           <div style={{ padding: "24px 16px 32px", textAlign: "center" }}>
             <Link href="/" style={{ textDecoration: "none" }}>
-              <h2 style={{ fontSize: 20, fontWeight: 900, color: "var(--blue-vivid)", letterSpacing: 3, cursor: "pointer" }}>Dresho</h2>
+              <h2 style={{ fontSize: 20, fontWeight: 900, color: "var(--gold)", letterSpacing: 3, cursor: "pointer" }}>Dresho</h2>
             </Link>
             <p className="section-label" style={{ marginTop: 4, marginBottom: 0 }}>ADMIN</p>
           </div>
@@ -201,6 +299,7 @@ export default function AdminPage() {
 
           {/* DASHBOARD */}
           {tab === "dash" && (
+
             <div className="animate-fade-in">
               <div style={{ marginBottom: 32 }}>
                 <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1 }}>Platform Overview</h1>
@@ -216,7 +315,7 @@ export default function AdminPage() {
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 20, marginBottom: 32 }}>
                 {[
-                  { label: "Total Revenue", value: `₹${stats.revenue.toLocaleString("en-IN")}`, color: "var(--blue-electric)", icon: "fa-indian-rupee-sign" },
+                  { label: "Total Revenue", value: `₹${stats.revenue.toLocaleString("en-IN")}`, color: "var(--navy)", icon: "fa-indian-rupee-sign" },
                   { label: "Active Orders", value: stats.active, color: "#06b6d4", icon: "fa-clock" },
                   { label: "Sellers", value: stats.sellers, color: "#10b981", icon: "fa-store" },
                   { label: "Delivery Fleet", value: stats.fleet, color: "#f59e0b", icon: "fa-motorcycle" },
@@ -253,6 +352,7 @@ export default function AdminPage() {
 
           {/* SELLERS */}
           {tab === "sellers" && (
+
             <div className="animate-fade-in">
               <h1 style={{ fontSize: 28, fontWeight: 900, marginBottom: 8 }}>Seller Management</h1>
               <p style={{ color: "var(--text-tertiary)", fontSize: 13, marginBottom: 24 }}>Approve, suspend, or remove sellers from the Dresho platform.</p>
@@ -279,7 +379,7 @@ export default function AdminPage() {
                         <td style={{ padding: "16px 20px" }}>
                           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                             {!s.approved ? (
-                              <button className="btn-primary" style={{ width: "auto", padding: "7px 16px", borderRadius: 8, fontSize: 11, background: "linear-gradient(135deg, #6366f1, #4f46e5)" }} onClick={() => approveSeller(s.id)}>
+                              <button className="btn-slide-primary" style={{ width: "auto", padding: "7px 16px", borderRadius: 8, fontSize: 11, background: "linear-gradient(135deg, #6366f1, #4f46e5)" }} onClick={() => approveSeller(s.id)}>
                                 ✓ Approve
                               </button>
                             ) : (
@@ -354,7 +454,13 @@ export default function AdminPage() {
                         <td style={{ padding: "16px 24px", fontWeight: 700 }}>{u.name}</td>
                         <td style={{ padding: "16px 24px", color: "var(--text-secondary)" }}>{u.email}</td>
                         <td style={{ padding: "16px 24px", color: "var(--text-secondary)" }}>{u.phone || "—"}</td>
-                        <td style={{ padding: "16px 24px", color: "var(--text-secondary)", fontSize: 13, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.address || "—"}</td>
+                        <td style={{ padding: "16px 24px", color: "var(--text-secondary)", fontSize: 13, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {u.address
+                            ? (typeof u.address === "object"
+                                ? [u.address.line, u.address.landmark, u.address.city, u.address.pincode].filter(Boolean).join(", ")
+                                : u.address)
+                            : "—"}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -397,6 +503,133 @@ export default function AdminPage() {
               </div>
             </div>
           )}
+
+          {/* BANNER MANAGEMENT */}
+          {tab === "banners" && (
+            <div className="animate-fade-in">
+              <h1 style={{ fontSize: 28, fontWeight: 900, marginBottom: 8 }}>Banner Management</h1>
+              <p style={{ color: "var(--text-tertiary)", fontSize: 13, marginBottom: 24 }}>Control all 5 homepage banner slots and review seller advertising requests.</p>
+
+              {/* LIVE BANNER SLOTS */}
+              <h2 style={{ fontSize: 18, fontWeight: 800, marginBottom: 16 }}>Live Banner Slots</h2>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 40 }}>
+                {["banner_1", "banner_2", "banner_3", "banner_4", "banner_5"].map((bid, i) => {
+                  const b = banners[bid] || {};
+                  const labels = ["Hero Slide 1", "Hero Slide 2", "Hero Slide 3", "Mini Left", "Mini Right"];
+                  const isExpired = b.expiry && new Date(b.expiry) < new Date();
+                  return (
+                    <div key={bid} className="glass-card" style={{ padding: 22, borderRadius: 20, cursor: "default", border: isExpired ? "2px solid #fb7185" : "1px solid rgba(0,0,0,0.06)" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                        <div>
+                          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.5, color: "var(--text-tertiary)", textTransform: "uppercase" }}>SLOT {i + 1}</span>
+                          <p style={{ fontSize: 14, fontWeight: 700, marginTop: 2 }}>{labels[i]}</p>
+                        </div>
+                        {isExpired && <span className="badge badge-rose" style={{ fontSize: 10 }}>EXPIRED</span>}
+                        {b.sellerName && <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>by {b.sellerName}</span>}
+                      </div>
+                      {b.imageUrl ? (
+                        <div style={{ width: "100%", height: 120, borderRadius: 12, overflow: "hidden", marginBottom: 12, background: "#f0ebe3" }}>
+                          <img src={b.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
+                        </div>
+                      ) : (
+                        <div style={{ width: "100%", height: 120, borderRadius: 12, background: "#f0ebe3", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 12, color: "#aaa", fontSize: 13 }}>No banner set</div>
+                      )}
+                      <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}><strong>Title:</strong> {b.title || "—"}</div>
+                      <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}><strong>Tag:</strong> {b.tag || "—"}</div>
+                      {b.expiry && <div style={{ fontSize: 11, color: isExpired ? "#fb7185" : "#10b981", marginBottom: 8 }}>Expires: {new Date(b.expiry).toLocaleDateString()}</div>}
+                      <button className="btn-slide-primary" style={{ width: "100%", padding: "10px", borderRadius: 12, fontSize: 12 }} onClick={() => openBannerEditor(bid)}>
+                        ✎ Edit Banner
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* BANNER EDITOR MODAL */}
+              {editingBanner && (
+                <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setEditingBanner(null)}>
+                  <div onClick={(e) => e.stopPropagation()} style={{ background: "white", borderRadius: 24, padding: 32, maxWidth: 500, width: "100%", maxHeight: "85vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }}>
+                    <h3 style={{ fontSize: 20, fontWeight: 900, marginBottom: 20 }}>Edit {editingBanner.replace("_", " ").toUpperCase()}</h3>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, color: "#888", display: "block", marginBottom: 4 }}>IMAGE URL</label>
+                        <input className="glass-input" placeholder="https://..." value={bannerForm.imageUrl} onChange={(e) => setBannerForm({ ...bannerForm, imageUrl: e.target.value })} />
+                      </div>
+                      {bannerForm.imageUrl && (
+                        <div style={{ width: "100%", height: 140, borderRadius: 12, overflow: "hidden", background: "#f0ebe3" }}>
+                          <img src={bannerForm.imageUrl} alt="Preview" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
+                        </div>
+                      )}
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, color: "#888", display: "block", marginBottom: 4 }}>TITLE</label>
+                        <input className="glass-input" placeholder="e.g. Style Arrives in 30 Minutes" value={bannerForm.title} onChange={(e) => setBannerForm({ ...bannerForm, title: e.target.value })} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, color: "#888", display: "block", marginBottom: 4 }}>SUBTITLE</label>
+                        <input className="glass-input" placeholder="e.g. Premium brands delivered fast" value={bannerForm.subtitle} onChange={(e) => setBannerForm({ ...bannerForm, subtitle: e.target.value })} />
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <div>
+                          <label style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, color: "#888", display: "block", marginBottom: 4 }}>TAG</label>
+                          <input className="glass-input" placeholder="e.g. Express Fashion" value={bannerForm.tag} onChange={(e) => setBannerForm({ ...bannerForm, tag: e.target.value })} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, color: "#888", display: "block", marginBottom: 4 }}>CTA TEXT</label>
+                          <input className="glass-input" placeholder="e.g. Shop Now" value={bannerForm.cta} onChange={(e) => setBannerForm({ ...bannerForm, cta: e.target.value })} />
+                        </div>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, color: "#888", display: "block", marginBottom: 4 }}>EXPIRY DATE</label>
+                        <input className="glass-input" type="date" value={bannerForm.expiry ? bannerForm.expiry.slice(0, 10) : ""} onChange={(e) => setBannerForm({ ...bannerForm, expiry: e.target.value ? new Date(e.target.value).toISOString() : "" })} />
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 12, marginTop: 24 }}>
+                      <button style={{ flex: 1, padding: 14, borderRadius: 14, fontSize: 13, fontWeight: 700, background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.08)", cursor: "pointer" }} onClick={() => setEditingBanner(null)}>Cancel</button>
+                      <button className="btn-slide-primary" style={{ flex: 1, borderRadius: 14, fontSize: 13 }} onClick={saveBanner}>Save Banner</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* SELLER BANNER REQUESTS */}
+              <h2 style={{ fontSize: 18, fontWeight: 800, marginBottom: 16 }}>Seller Advertising Requests</h2>
+              {bannerRequests.length === 0 ? (
+                <div className="glass-card" style={{ padding: 40, textAlign: "center", borderRadius: 20, color: "var(--text-tertiary)", fontWeight: 600, cursor: "default" }}>No banner requests yet</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  {bannerRequests.map((req) => {
+                    const statusColors = { pending: { bg: "rgba(245,158,11,0.1)", color: "#f59e0b" }, approved: { bg: "rgba(16,185,129,0.1)", color: "#10b981" }, rejected: { bg: "rgba(251,113,133,0.1)", color: "#fb7185" } };
+                    const sc = statusColors[req.status] || statusColors.pending;
+                    return (
+                      <div key={req.id} className="glass-card" style={{ padding: 22, borderRadius: 20, cursor: "default" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                          <div>
+                            <span style={{ fontSize: 13, fontWeight: 700 }}>{req.sellerName || req.sellerId}</span>
+                            <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginLeft: 8 }}>→ Slot {req.slot}</span>
+                          </div>
+                          <span style={{ padding: "4px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: sc.bg, color: sc.color, textTransform: "uppercase" }}>{req.status}</span>
+                        </div>
+                        {req.imageUrl && (
+                          <div style={{ width: "100%", height: 100, borderRadius: 12, overflow: "hidden", marginBottom: 12, background: "#f0ebe3" }}>
+                            <img src={req.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
+                          </div>
+                        )}
+                        <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}><strong>Title:</strong> {req.title || "—"} &nbsp; <strong>Tag:</strong> {req.tag || "—"}</div>
+                        {req.message && <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}><strong>Message:</strong> {req.message}</div>}
+                        <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 12 }}>Requested {req.durationDays || "?"} days &nbsp;·&nbsp; {req.createdAt?.toDate ? req.createdAt.toDate().toLocaleDateString() : ""}</div>
+                        {req.status === "pending" && (
+                          <div style={{ display: "flex", gap: 10 }}>
+                            <button className="btn-slide-primary" style={{ flex: 1, padding: "10px", borderRadius: 12, fontSize: 12 }} onClick={() => approveBannerRequest(req.id, req)}>✓ Approve & Set Duration</button>
+                            <button style={{ flex: 1, padding: "10px", borderRadius: 12, fontSize: 12, fontWeight: 700, background: "rgba(251,113,133,0.1)", color: "#fb7185", border: "1px solid rgba(251,113,133,0.2)", cursor: "pointer" }} onClick={() => rejectBannerRequest(req.id)}>✕ Reject</button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </main>
       </div>
     </>
@@ -424,8 +657,9 @@ const s = {
     fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 600, width: "100%", textAlign: "left",
   },
   sidebarBtnActive: {
-    background: "linear-gradient(135deg, var(--blue-electric), var(--blue-vivid))", color: "white",
+    background: "linear-gradient(135deg, var(--navy), var(--gold))", color: "white",
     boxShadow: "0 4px 20px rgba(26, 13, 220, 0.3)",
   },
   sidebarLabel: { fontSize: 14, fontWeight: 600 },
 };
+

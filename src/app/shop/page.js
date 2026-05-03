@@ -1,16 +1,18 @@
 "use client";
 export const dynamic = 'force-dynamic';
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { auth, db } from "@/lib/firebase";
 import {
+  GoogleAuthProvider,
+  signInWithPopup,
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
   onAuthStateChanged,
   signOut,
 } from "firebase/auth";
 import {
-  doc, setDoc, getDoc, collection, query, where,
+  doc, setDoc, getDoc, getDocs, collection, query, where,
   onSnapshot, addDoc, orderBy,
 } from "firebase/firestore";
 
@@ -27,11 +29,39 @@ export default function ShopPage() {
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [user, setUser] = useState(null);
   const [userData, setUserData] = useState(null);
-  const [isLogin, setIsLogin] = useState(true);
-  const [authEmail, setAuthEmail] = useState("");
-  const [authPass, setAuthPass] = useState("");
-  const [authName, setAuthName] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminPass, setAdminPass] = useState("");
+  const [isAdminLogin, setIsAdminLogin] = useState(false);
+  const [activeSlide, setActiveSlide] = useState(0);
+  const [showAuth, setShowAuth] = useState(false);
+  const router = useRouter();
+
+  // ── Custom Cursor State ──
+  const [cursorPos, setCursorPos] = useState({ x: -100, y: -100 });
+  const [dotPos, setDotPos] = useState({ x: -100, y: -100 });
+
+  useEffect(() => {
+    const onMouseMove = (e) => {
+      setCursorPos({ x: e.clientX, y: e.clientY });
+    };
+    window.addEventListener("mousemove", onMouseMove);
+    return () => window.removeEventListener("mousemove", onMouseMove);
+  }, []);
+
+  useEffect(() => {
+    let animationFrame;
+    const updateDot = () => {
+      setDotPos((prev) => {
+        const dx = cursorPos.x - prev.x;
+        const dy = cursorPos.y - prev.y;
+        return { x: prev.x + dx * 0.15, y: prev.y + dy * 0.15 };
+      });
+      animationFrame = requestAnimationFrame(updateDot);
+    };
+    animationFrame = requestAnimationFrame(updateDot);
+    return () => cancelAnimationFrame(animationFrame);
+  }, [cursorPos]);
 
   // ── App State ──
   const [currentSection, setCurrentSection] = useState("home");
@@ -45,18 +75,46 @@ export default function ShopPage() {
   // ── Checkout ──
   const [showCheckout, setShowCheckout] = useState(false);
   const [checkoutAddress, setCheckoutAddress] = useState("");
-  const [checkoutPhone, setCheckoutPhone] = useState("");
+  const [checkoutLandmark, setCheckoutLandmark] = useState("");
+  const [checkoutCity, setCheckoutCity] = useState("");
+  const [checkoutPincode, setCheckoutPincode] = useState("");
+  const [checkoutCoordinates, setCheckoutCoordinates] = useState("");
+  const [deliveryFee, setDeliveryFee] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState("COD"); // COD | UPI
   const [placing, setPlacing] = useState(false);
 
+  // Address Management
+  const [showAddressModal, setShowAddressModal] = useState(false);
+  const [showAddAddressForm, setShowAddAddressForm] = useState(false);
+  const [newAddrLine, setNewAddrLine] = useState("");
+  const [newAddrLandmark, setNewAddrLandmark] = useState("");
+  const [newAddrCity, setNewAddrCity] = useState("");
+  const [newAddrPincode, setNewAddrPincode] = useState("");
+
   const [loaded, setLoaded] = useState(false);
+  const [timeLeft, setTimeLeft] = useState({ h: "04", m: "32", s: "17" });
+
+  useEffect(() => {
+    let end = new Date().getTime() + 4 * 3600000 + 32 * 60000 + 17000;
+    const timer = setInterval(() => {
+      let diff = end - new Date().getTime();
+      if (diff < 0) { end = new Date().getTime() + 8 * 3600000; return; }
+      let h = Math.floor(diff / 3600000), m = Math.floor((diff % 3600000) / 60000), s = Math.floor((diff % 60000) / 1000);
+      setTimeLeft({
+        h: String(h).padStart(2, '0'),
+        m: String(m).padStart(2, '0'),
+        s: String(s).padStart(2, '0')
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   // ── Auth Listener ──
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
       if (u) {
         let snap = await getDoc(doc(db, "users", u.uid));
-        
+
         // If document doesn't exist immediately, wait and retry (fixes signup race condition)
         if (!snap.exists()) {
           await new Promise(r => setTimeout(r, 2000));
@@ -79,16 +137,53 @@ export default function ShopPage() {
     return () => unsub();
   }, []);
 
+  // ── Intersection Observer for Animations ──
+  useEffect(() => {
+    if (currentSection !== "home") return;
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(e => {
+        if(e.isIntersecting) {
+          e.target.classList.add('in');
+        }
+      });
+    }, { threshold: 0.1 });
+    // Small timeout to ensure DOM is ready
+    const timer = setTimeout(() => {
+      const els = document.querySelectorAll('.reveal');
+      els.forEach(el => observer.observe(el));
+    }, 100);
+    return () => { clearTimeout(timer); observer.disconnect(); };
+  }, [currentSection, loaded, products]);
+
   // ── Products Listener ──
   useEffect(() => {
-    if (!user) return;
     const unsub = onSnapshot(collection(db, "products"), (snap) => {
-      const p = [];
+      let p = [];
       snap.forEach((d) => p.push({ id: d.id, ...d.data() }));
+      // Sort newest first so New Arrivals shows latest uploads
+      p.sort((a, b) => {
+        const aTime = a.createdAt?.seconds || a.createdAt?.toMillis?.() || 0;
+        const bTime = b.createdAt?.seconds || b.createdAt?.toMillis?.() || 0;
+        return bTime - aTime;
+      });
+      
+      if (p.length === 0) {
+        p = [
+          { id: "mock1", name: "Royal Blue Embroidered Kurta", price: 2499, category: "Ethnic", image: "https://images.unsplash.com/photo-1583391733958-d25e07fac04f?w=600&q=80", sizes: ["S", "M", "L"] },
+          { id: "mock2", name: "Banarasi Silk Saree", price: 4999, category: "Ethnic", image: "https://images.unsplash.com/photo-1610189013230-6db19c4d92a1?w=600&q=80", sizes: ["Free Size"] },
+          { id: "mock3", name: "Premium Leather Jacket", price: 3999, category: "Men's Wear", image: "https://images.unsplash.com/photo-1551028719-00167b16eac5?w=600&q=80", sizes: ["M", "L", "XL"] },
+          { id: "mock4", name: "Linen Formal Shirt", price: 1299, category: "Men's Wear", image: "https://images.unsplash.com/photo-1596755094514-f87e32f85e2c?w=600&q=80", sizes: ["38", "40", "42"] },
+          { id: "mock5", name: "Designer Party Gown", price: 5499, category: "Women's Wear", image: "https://images.unsplash.com/photo-1566150905458-1bf1fc113f0d?w=600&q=80", sizes: ["S", "M"] },
+          { id: "mock6", name: "Classic White Sneakers", price: 1999, category: "Casual", image: "https://images.unsplash.com/photo-1600185365483-26d7a4cc7519?w=600&q=80", sizes: ["7", "8", "9", "10"] },
+          { id: "mock7", name: "Velvet Lehenga Choli", price: 8999, category: "Women's Wear", image: "https://images.unsplash.com/photo-1621786032742-0199e52575be?w=600&q=80", sizes: ["S", "M", "L"] },
+          { id: "mock8", name: "Kids Party Wear Suit", price: 1499, category: "Kids Wear", image: "https://images.unsplash.com/photo-1519241047957-be31d7379a5d?w=600&q=80", sizes: ["4-5Y", "6-7Y"] }
+        ];
+      }
+      
       setProducts(p);
     });
     return () => unsub();
-  }, [user]);
+  }, []);
 
   // ── Orders Listener ──
   useEffect(() => {
@@ -102,20 +197,95 @@ export default function ShopPage() {
     return () => unsub();
   }, [user]);
 
-  // ── Auth handlers ──
-  const handleAuth = async () => {
+  // ── Setup Recaptcha ──
+  // ── Google Sign-In for customers ──
+  const handleGoogleSignIn = async () => {
     setAuthLoading(true);
     try {
-      if (isLogin) {
-        await signInWithEmailAndPassword(auth, authEmail, authPass);
-      } else {
-        const res = await createUserWithEmailAndPassword(auth, authEmail, authPass);
-        await setDoc(doc(db, "users", res.user.uid), {
-          name: authName, email: authEmail, role: "user", address: "", phone: "",
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      const u = result.user;
+      const snap = await getDoc(doc(db, "users", u.uid));
+      if (!snap.exists()) {
+        await setDoc(doc(db, "users", u.uid), {
+          name: u.displayName || "",
+          email: u.email || "",
+          phone: "",
+          role: "user",
         });
+      } else if (snap.data().role !== "user") {
+        await signOut(auth);
+        alert("This account is not registered as a customer.");
+        setAuthLoading(false);
+        return;
       }
-    } catch (e) { alert(e.message); }
+      setShowAuth(false);
+    } catch (e) {
+      if (e.code !== "auth/popup-closed-by-user") alert("Sign-in failed: " + e.message);
+    }
     setAuthLoading(false);
+  };
+
+  // ── Admin Email + Password login ──
+  const handleAdminLogin = async () => {
+    const ADMIN_EMAILS = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "prinxadmin29@gmail.com,krishnaprakash0016@gmail.com")
+      .split(",").map(e => e.trim().toLowerCase());
+    if (!ADMIN_EMAILS.includes(adminEmail.trim().toLowerCase())) {
+      return alert("Unauthorized: this email is not on the admin list.");
+    }
+    setAuthLoading(true);
+    try {
+      await signInWithEmailAndPassword(auth, adminEmail.trim(), adminPass);
+      setShowAuth(false);
+      router.push("/admin");
+    } catch (e) {
+      const msg = (e.code === "auth/wrong-password" || e.code === "auth/invalid-credential")
+        ? "Wrong email or password." : e.message;
+      alert("Login failed: " + msg);
+    }
+    setAuthLoading(false);
+  };
+
+  // ── Address Management ──
+  const handleAddAddress = async () => {
+    if (!newAddrLine.trim() || !newAddrCity.trim() || !newAddrPincode.trim()) {
+      return alert("Please fill required address fields.");
+    }
+    try {
+      const newAddr = {
+        id: Date.now().toString(),
+        line: newAddrLine.trim(),
+        landmark: newAddrLandmark.trim(),
+        city: newAddrCity.trim(),
+        pincode: newAddrPincode.trim()
+      };
+      
+      let updatedAddresses = userData.addresses || [];
+      if (!updatedAddresses.length && userData.address) {
+        updatedAddresses = [{ id: "default", ...userData.address }];
+      }
+      updatedAddresses.push(newAddr);
+      
+      const docRef = doc(db, "users", user.uid);
+      await updateDoc(docRef, { addresses: updatedAddresses, address: newAddr }); // Set new address as active (address)
+      
+      setUserData({ ...userData, addresses: updatedAddresses, address: newAddr });
+      setShowAddAddressForm(false);
+      setNewAddrLine(""); setNewAddrLandmark(""); setNewAddrCity(""); setNewAddrPincode("");
+    } catch (e) {
+      alert("Error adding address: " + e.message);
+    }
+  };
+
+  const handleSelectAddress = async (addr) => {
+    try {
+      const docRef = doc(db, "users", user.uid);
+      await updateDoc(docRef, { address: addr }); // Sets the active selected address
+      setUserData({ ...userData, address: addr });
+      setShowAddressModal(false);
+    } catch (e) {
+      alert("Error selecting address: " + e.message);
+    }
   };
 
   // ── Cart helpers ──
@@ -148,13 +318,70 @@ export default function ShopPage() {
   const cartCount = cart.reduce((sum, i) => sum + i.qty, 0);
 
   // ── Place Order ──
+  // ── Format address object to string for orders ──
+  const formatAddress = (addr) => {
+    if (!addr) return "";
+    if (typeof addr === "string") return addr;
+    return [addr.line, addr.landmark, addr.city, addr.pincode].filter(Boolean).join(", ");
+  };
+
+  const getDistanceFromLatLonInKm = (lat1, lon1, lat2, lon2) => {
+    const R = 6371; // Radius of the earth in km
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c * 1.3; // 1.3 road multiplier
+  };
+
+  const fetchCustomerLocation = () => {
+    if (!navigator.geolocation) return alert("Geolocation not supported by your browser.");
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const custLat = pos.coords.latitude;
+        const custLon = pos.coords.longitude;
+        setCheckoutCoordinates(`${custLat}, ${custLon}`);
+        
+        // Dynamic Delivery Fee Calculation
+        const sellerId = cart[0]?.sellerId;
+        if (sellerId) {
+          try {
+            const sellerDoc = await getDoc(doc(db, "sellers_profile", sellerId));
+            if (sellerDoc.exists() && sellerDoc.data().coordinates) {
+              const [sellLat, sellLon] = sellerDoc.data().coordinates.split(",").map(Number);
+              const distanceKm = getDistanceFromLatLonInKm(custLat, custLon, sellLat, sellLon);
+              
+              let fee = 20; // 0.5 to 1km = 20
+              if (distanceKm > 1 && distanceKm <= 2) fee = 30; // 1 to 2km = 30
+              else if (distanceKm > 2) fee = 40; // > 2km = 40
+
+              const totalItems = cart.reduce((sum, i) => sum + i.qty, 0);
+              if (totalItems > 3) fee = fee / 2; // 50% discount
+
+              setDeliveryFee(fee);
+            } else { setDeliveryFee(40); }
+          } catch(e) { console.error(e); setDeliveryFee(40); }
+        }
+      },
+      () => alert("Unable to retrieve location. Please allow location access.")
+    );
+  };
+
   const placeOrder = async () => {
-    if (!checkoutAddress || !checkoutPhone) return alert("Fill all details.");
+    if (!checkoutAddress || !checkoutPhone) return alert("Fill all delivery details.");
+    if (!checkoutCoordinates) return alert("Please Pin Your Delivery Location first!");
     setPlacing(true);
     try {
       const otp = Math.floor(1000 + Math.random() * 9000);
       const trackingId = "DR" + Date.now().toString().slice(-6);
       const sellerId = cart[0]?.sellerId || "";
+
+      // Financial Engine Calculations
+      const grandTotal = cartTotal + deliveryFee;
+      const adminCommission = cartTotal * 0.15; // 15% of product value
+      const sellerEarnings = cartTotal * 0.85; // 85% of product value
 
       if (paymentMethod === "UPI") {
         // ── Razorpay UPI / Card flow ──
@@ -172,7 +399,7 @@ export default function ShopPage() {
         await new Promise((resolve, reject) => {
           const options = {
             key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
-            amount: cartTotal * 100, // paise
+            amount: grandTotal * 100, // paise
             currency: "INR",
             name: "Dresho",
             description: `Order — ${cart.length} item(s)`,
@@ -188,13 +415,18 @@ export default function ShopPage() {
                 await addDoc(collection(db, "orders"), {
                   userId: user.uid,
                   userName: userData.name,
-                  userAddress: checkoutAddress,
+                  userAddress: formatAddress({ line: checkoutAddress, landmark: checkoutLandmark, city: checkoutCity, pincode: checkoutPincode }),
+                  userCoordinates: checkoutCoordinates,
                   userPhone: checkoutPhone,
                   sellerId,
                   items: cart.map((i) => ({
                     name: i.name, qty: i.qty, price: i.price, size: i.selectedSize,
                   })),
-                  total: cartTotal,
+                  cartTotal,
+                  deliveryFee,
+                  total: grandTotal,
+                  adminCommission,
+                  sellerEarnings,
                   status: "Pending",
                   paymentMethod: "UPI",
                   paymentStatus: "Paid",
@@ -204,8 +436,8 @@ export default function ShopPage() {
                   riderId: null,
                   createdAt: new Date(),
                 });
-                await setDoc(doc(db, "users", user.uid), { address: checkoutAddress, phone: checkoutPhone }, { merge: true });
-                setUserData((prev) => ({ ...prev, address: checkoutAddress, phone: checkoutPhone }));
+                await setDoc(doc(db, "users", user.uid), { address: { line: checkoutAddress, landmark: checkoutLandmark, city: checkoutCity, pincode: checkoutPincode }, phone: checkoutPhone }, { merge: true });
+                setUserData((prev) => ({ ...prev, address: { line: checkoutAddress, landmark: checkoutLandmark, city: checkoutCity, pincode: checkoutPincode }, phone: checkoutPhone }));
                 setCart([]);
                 setShowCheckout(false);
                 setCurrentSection("orders");
@@ -227,13 +459,18 @@ export default function ShopPage() {
       await addDoc(collection(db, "orders"), {
         userId: user.uid,
         userName: userData.name,
-        userAddress: checkoutAddress,
+        userAddress: formatAddress({ line: checkoutAddress, landmark: checkoutLandmark, city: checkoutCity, pincode: checkoutPincode }),
+        userCoordinates: checkoutCoordinates,
         userPhone: checkoutPhone,
         sellerId,
         items: cart.map((i) => ({
           name: i.name, qty: i.qty, price: i.price, size: i.selectedSize,
         })),
-        total: cartTotal,
+        cartTotal,
+        deliveryFee,
+        total: grandTotal,
+        adminCommission,
+        sellerEarnings,
         status: "Pending",
         paymentMethod,
         paymentStatus: "Pending",
@@ -242,8 +479,8 @@ export default function ShopPage() {
         riderId: null,
         createdAt: new Date(),
       });
-      await setDoc(doc(db, "users", user.uid), { address: checkoutAddress, phone: checkoutPhone }, { merge: true });
-      setUserData((prev) => ({ ...prev, address: checkoutAddress, phone: checkoutPhone }));
+      await setDoc(doc(db, "users", user.uid), { address: { line: checkoutAddress, landmark: checkoutLandmark, city: checkoutCity, pincode: checkoutPincode }, phone: checkoutPhone }, { merge: true });
+      setUserData((prev) => ({ ...prev, address: { line: checkoutAddress, landmark: checkoutLandmark, city: checkoutCity, pincode: checkoutPincode }, phone: checkoutPhone }));
       setCart([]);
       setShowCheckout(false);
       setCurrentSection("orders");
@@ -268,248 +505,532 @@ export default function ShopPage() {
   // ══════════════════════════
   //   AUTH SCREEN
   // ══════════════════════════
-  if (!user) {
-    return (
-      <>
-        <div className="luxury-bg"><div className="grain" /></div>
-        <div className="page-content lp-light" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 20, position: "relative", zIndex: 1 }}>
-          <Link href="/" style={{ position: "fixed", top: 20, left: 20, zIndex: 100, width: 42, height: 42, borderRadius: 12, background: "rgba(255,255,255,0.85)", border: "1px solid rgba(0,0,0,0.08)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "var(--blue-vivid)", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", transition: "all 0.3s ease" }}>
-            <i className="fas fa-house" style={{ fontSize: 16 }} />
-          </Link>
-          <div className={`animate-scale-in premium-card`} style={s.authCard}>
-            <div style={s.authHeader}>
-              <div style={s.authLogo}>
-                <i className="fas fa-bolt" style={{ fontSize: 28, color: "var(--blue-electric)" }} />
-              </div>
-              <h1 style={{ fontSize: 28, fontWeight: 900, letterSpacing: 2 }}>Dresho</h1>
-              <p style={{ color: "var(--text-tertiary)", fontSize: 13, fontWeight: 500 }}>
-                Fashion in 30 Minutes ⚡
-              </p>
-            </div>
+  const authModal = (!user && showAuth) && (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(20,33,61,0.6)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      {/* Invisible reCAPTCHA container — required by Firebase Phone Auth */}
+      <div id="recaptcha-container" />
+      <div className="animate-scale-in" style={{ width: "100%", maxWidth: 400, background: "var(--white)", border: "1px solid var(--border)", padding: "44px 36px", boxShadow: "var(--shadow-lg)", position: "relative" }}>
+        <button onClick={() => { setShowAuth(false); setIsAdminLogin(false); }} style={{ position: "absolute", top: 16, right: 20, background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "var(--sub)" }}>×</button>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              {!isLogin && (
-                <input
-                  className="glass-input"
-                  type="text"
-                  placeholder="Full Name"
-                  value={authName}
-                  onChange={(e) => setAuthName(e.target.value)}
-                />
-              )}
-              <input
-                className="glass-input"
-                type="email"
-                placeholder="Email Address"
-                value={authEmail}
-                onChange={(e) => setAuthEmail(e.target.value)}
-              />
-              <input
-                className="glass-input"
-                type="password"
-                placeholder="Password"
-                value={authPass}
-                onChange={(e) => setAuthPass(e.target.value)}
-              />
-              {!isLogin && (
-                <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginTop: 4 }}>
-                  <input type="checkbox" checked={agreedTerms} onChange={(e) => setAgreedTerms(e.target.checked)} style={{ marginTop: 3, accentColor: "var(--blue-vivid)", width: 18, height: 18, cursor: "pointer" }} />
-                  <p style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
-                    I agree to Dresho&apos;s{" "}
-                    <span onClick={() => setShowTermsModal(true)} style={{ color: "var(--blue-vivid)", fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Terms of Use, Privacy Policy & Replacement Policy</span>
-                  </p>
-                </div>
-              )}
-              <button className="btn-primary" onClick={handleAuth} disabled={authLoading || (!isLogin && !agreedTerms)} style={{ marginTop: 4, opacity: (!isLogin && !agreedTerms) ? 0.5 : 1 }}>
-                {authLoading ? "..." : isLogin ? "Sign In" : "Create Account"}
-              </button>
-              <button className="btn-ghost" onClick={() => setIsLogin(!isLogin)} style={{ textAlign: "center" }}>
-                {isLogin ? "Create an Account" : "Back to Login"}
+        {/* Brand */}
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <h1 style={{ fontFamily: "var(--font-d)", fontSize: 36, fontWeight: 400, color: "var(--navy)", letterSpacing: 2, margin: 0 }}>Dres<span style={{ color: "var(--gold)" }}>h</span>o</h1>
+          <p style={{ color: "var(--sub)", fontSize: 11, letterSpacing: 3, textTransform: "uppercase", marginTop: 6 }}>{isAdminLogin ? "Admin Access" : "Fashion in 30 Minutes"}</p>
+        </div>
+
+        {/* ── CUSTOMER: Google Sign-In ── */}
+        {!isAdminLogin && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <button
+              onClick={handleGoogleSignIn}
+              disabled={authLoading}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, width: "100%", padding: "14px 20px", border: "1.5px solid var(--border2)", background: "var(--white)", cursor: authLoading ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 600, color: "var(--navy)", fontFamily: "var(--font-b)" }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+              </svg>
+              {authLoading ? "Signing in…" : "Continue with Google"}
+            </button>
+            <p style={{ textAlign: "center", fontSize: 11, color: "var(--sub)", margin: 0, lineHeight: 1.6 }}>
+              By continuing you agree to Dresho&apos;s Terms of Use.
+            </p>
+            <div style={{ textAlign: "center" }}>
+              <button onClick={() => setIsAdminLogin(true)} style={{ background: "none", border: "none", color: "var(--gold)", fontSize: 11, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer", borderBottom: "1px solid var(--gold)" }}>
+                Admin? Login Here
               </button>
             </div>
           </div>
-          {showTermsModal && (
-            <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setShowTermsModal(false)}>
-              <div onClick={(e) => e.stopPropagation()} style={{ background: "white", borderRadius: 24, padding: "28px 24px", maxWidth: 480, width: "100%", maxHeight: "80vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }}>
-                <h3 style={{ fontSize: 20, fontWeight: 900, marginBottom: 16, color: "var(--blue-vivid)" }}>Terms of Use</h3>
-                <div style={{ fontSize: 13, color: "#444", lineHeight: 1.7 }}>
-                  <p><strong>1. Orders</strong> — Orders once placed cannot be cancelled after dispatch.</p>
-                  <p><strong>2. Pricing</strong> — Prices are set by sellers and may vary.</p>
-                  <p><strong>3. Delivery</strong> — Delivery time is estimated, not guaranteed.</p>
-                  <p><strong>4. COD Orders</strong> — Users must be available to receive orders. Repeated refusal may lead to account restriction.</p>
-                  <p><strong>5. Liability</strong> — Dresho acts as a platform connecting buyers and sellers.</p>
-                </div>
-                <h3 style={{ fontSize: 20, fontWeight: 900, margin: "20px 0 16px", color: "var(--blue-vivid)" }}>Privacy Policy</h3>
-                <div style={{ fontSize: 13, color: "#444", lineHeight: 1.7 }}>
-                  <p><strong>1. Information Collected</strong> — Name, phone number, address, payment details (via secure gateways), app usage data.</p>
-                  <p><strong>2. Use of Information</strong> — To process orders, improve user experience, and provide customer support.</p>
-                  <p><strong>3. Data Sharing</strong> — Shared with delivery partners & sellers for order fulfillment. Not sold to third parties.</p>
-                  <p><strong>4. Security</strong> — We use secure systems to protect user data.</p>
-                  <p><strong>5. Consent</strong> — By using Dresho, users agree to this policy.</p>
-                </div>
-                <h3 style={{ fontSize: 20, fontWeight: 900, margin: "20px 0 16px", color: "var(--blue-vivid)" }}>Replacement Policy</h3>
-                <div style={{ fontSize: 13, color: "#444", lineHeight: 1.7 }}>
-                  <p>✅ We offer <strong>Replacement only</strong> (No refunds).</p>
-                  <p>🔁 <strong>Eligible cases:</strong> Wrong item delivered, Damaged product, Size issue (if applicable).</p>
-                  <p>⏱ <strong>Time:</strong> Request within 24 hours of delivery.</p>
-                  <p>📦 <strong>Conditions:</strong> Product must be unused, original packaging required.</p>
-                  <p>❌ <strong>Not eligible:</strong> Change of mind, Used products.</p>
-                  <p>🔄 <strong>Process:</strong> User raises request → Product picked up → Replacement delivered.</p>
-                </div>
-                <h3 style={{ fontSize: 20, fontWeight: 900, margin: "20px 0 16px", color: "var(--blue-vivid)" }}>Contact & Support</h3>
-                <div style={{ fontSize: 13, color: "#444", lineHeight: 1.7 }}>
-                  <p>📧 Email: <strong>dresho.business@gmail.com</strong></p>
-                  <p>💬 WhatsApp: <strong>+91 9128926837</strong> (10 AM – 8 PM, All Days)</p>
-                  <p>📍 Service Area: <strong>Hazaribagh, Jharkhand</strong></p>
-                </div>
-                <button className="btn-primary" style={{ width: "100%", marginTop: 20 }} onClick={() => { setAgreedTerms(true); setShowTermsModal(false); }}>I Agree</button>
-              </div>
+        )}
+
+        {/* ── ADMIN: Email + Password ── */}
+        {isAdminLogin && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <input
+              type="email" placeholder="Admin Email"
+              value={adminEmail} onChange={e => setAdminEmail(e.target.value)}
+              style={{ padding: "12px 0", border: "none", borderBottom: "1px solid var(--border2)", outline: "none", background: "transparent", fontSize: 14, fontFamily: "var(--font-b)", color: "var(--navy)" }}
+              autoFocus
+            />
+            <input
+              type="password" placeholder="Password"
+              value={adminPass} onChange={e => setAdminPass(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleAdminLogin()}
+              style={{ padding: "12px 0", border: "none", borderBottom: "1px solid var(--border2)", outline: "none", background: "transparent", fontSize: 14, fontFamily: "var(--font-b)", color: "var(--navy)" }}
+            />
+            <button
+              onClick={handleAdminLogin}
+              disabled={authLoading || !adminEmail || !adminPass}
+              style={{ background: "var(--navy)", color: "#fff", border: "none", padding: "14px", fontSize: 12, letterSpacing: 2, textTransform: "uppercase", fontWeight: 500, cursor: "pointer", opacity: (!adminEmail || !adminPass || authLoading) ? 0.5 : 1 }}
+            >
+              {authLoading ? "Verifying…" : "Login as Admin"}
+            </button>
+            <div style={{ textAlign: "center" }}>
+              <button onClick={() => setIsAdminLogin(false)} style={{ background: "none", border: "none", color: "var(--sub)", fontSize: 11, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer" }}>
+                ← Back
+              </button>
             </div>
-          )}
-        </div>
-      </>
-    );
-  }
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   // ══════════════════════════
   //   MAIN APP
   // ══════════════════════════
   return (
     <>
-      <div className="luxury-bg"><div className="grain" /></div>
-      <div className="page-content lp-light" style={{ paddingBottom: 90, position: "relative", zIndex: 1 }}>
+      {/* ── Custom Cursor ── */}
+      <div style={{ position: "fixed", left: dotPos.x, top: dotPos.y, width: 32, height: 32, background: "rgba(139,69,19,0.15)", borderRadius: "50%", pointerEvents: "none", transform: "translate(-50%, -50%)", zIndex: 99999, transition: "width 0.2s, height 0.2s" }} />
+      <div style={{ position: "fixed", left: cursorPos.x, top: cursorPos.y, width: 8, height: 8, background: "rgba(139,69,19,0.8)", borderRadius: "50%", pointerEvents: "none", transform: "translate(-50%, -50%)", zIndex: 100000 }} />
 
-        {/* ── Top Nav ── */}
-        <nav style={s.topNav} className="premium-nav">
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <Link href="/" style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(26,13,220,0.06)", border: "1px solid rgba(26,13,220,0.12)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "var(--blue-vivid)", transition: "all 0.3s ease", flexShrink: 0 }}>
-              <i className="fas fa-house" style={{ fontSize: 13 }} />
-            </Link>
-            <div>
-              <h2 style={{ fontSize: 18, fontWeight: 900, color: "var(--blue-vivid)", letterSpacing: 2 }}>Dresho</h2>
-              <p style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)", letterSpacing: 2, textTransform: "uppercase" }}>
-                Hi, {userData?.name}
-              </p>
+      {authModal}
+      <div style={{ paddingBottom: 90, position: "relative", zIndex: 1, minHeight: "100vh", background: "var(--ivory)", color: "var(--text)" }}>
+
+        {/* ── Top Announcement Strip ── */}
+        <div className="top-strip">
+          <div className="strip-track">
+            {[1, 2].map((group) => (
+              <div key={group} style={{ display: 'flex' }}>
+                <div className="strip-item"><span>Free Delivery on ₹999+</span><div className="strip-dot"></div></div>
+                <div className="strip-item"><span>⚡ 30 Min Express Delivery</span><div className="strip-dot"></div></div>
+                <div className="strip-item"><span>500+ Premium Brands</span><div className="strip-dot"></div></div>
+                <div className="strip-item"><span>7-Day Easy Returns</span><div className="strip-dot"></div></div>
+                <div className="strip-item"><span>100% Authentic Products</span><div className="strip-dot"></div></div>
+                <div className="strip-item"><span>Now Live in 12 Cities</span><div className="strip-dot"></div></div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Main Navbar ── */}
+        <nav>
+          <div className="nav-top">
+            <div onClick={() => setCurrentSection("home")} className="nav-logo" style={{ cursor: "pointer" }}>
+              Dres<span>h</span>o
+            </div>
+            
+            <div className="nav-loc" onClick={() => { if(userData) setShowAddressModal(true); else setShowAuth(true); }} style={{ cursor: "pointer" }}>
+              <svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="currentColor"/><circle cx="12" cy="9" r="2.5" fill="white" opacity=".8"/></svg>
+              <div>
+                <div style={{fontSize:10,color:"var(--muted)",letterSpacing:1}}>DELIVER TO</div>
+                <strong>{userData?.address?.city ? `${userData.address.city} ${userData.address.pincode}` : "Select Address"}</strong>
+              </div>
+              <svg width="12" height="12" fill="none" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+            </div>
+
+            <div className="search-bar">
+              <select className="search-cat">
+                <option>All</option>
+                <option>Women</option>
+                <option>Men</option>
+                <option>Ethnic</option>
+                <option>Kids</option>
+              </select>
+              <input className="search-input" type="text" placeholder="Search for clothes, brands, occasions…" />
+              <button className="search-btn">🔍</button>
+            </div>
+
+            <div className="nav-actions">
+              {userData && (
+                <button onClick={() => setCurrentSection("orders")} className="nav-action-btn">
+                  <span className="nav-action-icon">📦</span>
+                  <span className="nav-action-label">Orders</span>
+                </button>
+              )}
+              {user && (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "").toLowerCase().split(",").map(e => e.trim()).includes(user.email?.toLowerCase()) && (
+                <Link href="/admin">
+                  <button className="btn-signin" style={{ background: "var(--gold)", color: "#fff", border: "none", fontSize: 11, padding: "8px 16px", letterSpacing: 1 }}>
+                    🛡️ Admin Panel
+                  </button>
+                </Link>
+              )}
+              <button onClick={() => setCurrentSection("cart")} className="nav-action-btn">
+                <span className="nav-action-icon">🛍{cart.length > 0 && <span className="nav-badge">{cart.length}</span>}</span>
+                <span className="nav-action-label">Cart</span>
+              </button>
+              {userData ? (
+                <button onClick={() => signOut(auth)} className="btn-signin" style={{ background: "transparent", color: "var(--navy)", border: "1px solid var(--border)" }}>Logout</button>
+              ) : (
+                <button onClick={() => setShowAuth(true)} className="btn-signin">Sign In</button>
+              )}
             </div>
           </div>
-          <button className="btn-icon" onClick={() => signOut(auth)}>
-            <i className="fas fa-power-off" style={{ fontSize: 14 }} />
-          </button>
+          
+          <div className="nav-bottom">
+            <div onClick={() => {setCurrentCategory("All"); setCurrentSection("home");}} className={`nav-cat-link ${currentCategory === "All" || !currentCategory ? 'active' : ''}`} style={{cursor:"pointer"}}><span>👗</span> Women</div>
+            <div onClick={() => {setCurrentCategory("Men's Wear"); setCurrentSection("home");}} className={`nav-cat-link ${currentCategory === "Men's Wear" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>👖</span> Men</div>
+            <div onClick={() => {setCurrentCategory("Ethnic"); setCurrentSection("home");}} className={`nav-cat-link ${currentCategory === "Ethnic" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>🥻</span> Ethnic Wear</div>
+            <div onClick={() => {setCurrentCategory("Footwear"); setCurrentSection("home");}} className={`nav-cat-link ${currentCategory === "Footwear" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>🥿</span> Footwear</div>
+            <div onClick={() => {setCurrentCategory("Kids Wear"); setCurrentSection("home");}} className={`nav-cat-link ${currentCategory === "Kids Wear" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>👶</span> Kids</div>
+            <div onClick={() => {setCurrentCategory("Accessories"); setCurrentSection("home");}} className={`nav-cat-link ${currentCategory === "Accessories" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>💍</span> Accessories</div>
+            <div onClick={() => {setCurrentCategory("Beauty"); setCurrentSection("home");}} className={`nav-cat-link ${currentCategory === "Beauty" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>💄</span> Beauty</div>
+            <div onClick={() => {setCurrentCategory("Sale"); setCurrentSection("home");}} className={`nav-cat-link ${currentCategory === "Sale" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>🏷️</span> Sale <em>SALE</em></div>
+            <div onClick={() => {setCurrentCategory("New Arrivals"); setCurrentSection("home");}} className={`nav-cat-link ${currentCategory === "New Arrivals" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>✨</span> New Arrivals <em>NEW</em></div>
+            <Link href="/seller" className="nav-cat-link" style={{ marginLeft: "auto", color: "var(--gold)" }}>
+              <span>🏪</span> Become a Seller
+            </Link>
+            <Link href="/delivery" className="nav-cat-link" style={{ color: "var(--gold)" }}>
+              <span>🛵</span> Become a Rider
+            </Link>
+          </div>
         </nav>
 
         {/* ── HOME ── */}
         {currentSection === "home" && (
-          <div style={{ padding: "16px 16px 0" }} className="animate-fade-in">
-            {/* Hero Banner */}
-            <div style={s.heroBanner}>
-              <div style={s.heroBannerGlow} />
-              <p style={{ fontSize: 11, fontWeight: 700, opacity: 0.9, letterSpacing: 1 }}>DELIVERY IN</p>
-              <h3 style={{ fontSize: 32, fontWeight: 900, marginTop: 4 }}>30 Minutes ⚡</h3>
-              <p style={{ fontSize: 13, opacity: 0.8, marginTop: 6 }}>Premium fashion from nearby boutiques</p>
+          <div style={{ paddingBottom: 60 }}>
+            
+            {/* QUICK CATEGORY PILLS */}
+            <div className="quick-cats">
+              <div className="quick-cats-inner">
+                <div className="qcat" onClick={() => setCurrentCategory("Kurtas")}><div className="qcat-icon">👗</div><div className="qcat-name">Kurtas</div></div>
+                <div className="qcat" onClick={() => setCurrentCategory("Sarees")}><div className="qcat-icon">🥻</div><div className="qcat-name">Sarees</div></div>
+                <div className="qcat" onClick={() => setCurrentCategory("Lehengas")}><div className="qcat-icon">👗</div><div className="qcat-name">Lehengas</div></div>
+                <div className="qcat" onClick={() => setCurrentCategory("Jackets")}><div className="qcat-icon">🧥</div><div className="qcat-name">Jackets</div></div>
+                <div className="qcat" onClick={() => setCurrentCategory("Shirts")}><div className="qcat-icon">👔</div><div className="qcat-name">Shirts</div></div>
+                <div className="qcat" onClick={() => setCurrentCategory("Trousers")}><div className="qcat-icon">👖</div><div className="qcat-name">Trousers</div></div>
+                <div className="qcat" onClick={() => setCurrentCategory("Sneakers")}><div className="qcat-icon">👟</div><div className="qcat-name">Sneakers</div></div>
+                <div className="qcat" onClick={() => setCurrentCategory("Heels")}><div className="qcat-icon">👠</div><div className="qcat-name">Heels</div></div>
+                <div className="qcat" onClick={() => setCurrentCategory("Handbags")}><div className="qcat-icon">👜</div><div className="qcat-name">Handbags</div></div>
+                <div className="qcat" onClick={() => setCurrentCategory("Sunglasses")}><div className="qcat-icon">🕶️</div><div className="qcat-name">Sunglasses</div></div>
+                <div className="qcat" onClick={() => setCurrentCategory("Watches")}><div className="qcat-icon">⌚</div><div className="qcat-name">Watches</div></div>
+                <div className="qcat" onClick={() => setCurrentCategory("Jewellery")}><div className="qcat-icon">💍</div><div className="qcat-name">Jewellery</div></div>
+                <div className="qcat" onClick={() => setCurrentCategory("Scarves")}><div className="qcat-icon">🧣</div><div className="qcat-name">Scarves</div></div>
+                <div className="qcat" onClick={() => setCurrentCategory("Activewear")}><div className="qcat-icon">🎽</div><div className="qcat-name">Activewear</div></div>
+              </div>
             </div>
 
-            {/* Categories */}
-            <div style={{ marginTop: 24 }}>
-              <p className="section-label" style={{ paddingLeft: 4 }}>CATEGORIES</p>
-              <div className="hide-scrollbar" style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 8, marginTop: 12 }}>
-                {categories.map((cat) => (
-                  <button
-                    key={cat}
-                    onClick={() => setCurrentCategory(cat)}
-                    style={{
-                      ...s.catBtn,
-                      ...(currentCategory === cat ? s.catBtnActive : {}),
-                    }}
-                  >
-                    {cat}
-                  </button>
+            {/* HERO BANNER */}
+            <div className="hero-banner" id="heroBanner">
+              <div className="hero-slides" style={{ transform: `translateX(-${activeSlide * 100}%)` }}>
+                {/* Slide 1 */}
+                <div className="hero-slide slide-1">
+                  <div className="slide-content">
+                    <div className="slide-tag"><span>⚡ Express Fashion</span></div>
+                    <h1 className="slide-title">Style Arrives<br/><em>in 30 Minutes</em></h1>
+                    <p className="slide-sub">Premium brands. Real-time inventory.<br/>Delivered to your door faster than you think.</p>
+                    <div className="slide-cta">
+                      <Link href="/shop/category/all"><button className="btn-slide-primary">Shop Now</button></Link>
+                    </div>
+                  </div>
+                  <div className="slide-img-area">
+                    <img src="https://images.unsplash.com/photo-1558769132-cb1aea458c5e?w=600&q=80" alt="Fashion" />
+                    <div className="slide-badge"><div className="slide-badge-num">30</div><div className="slide-badge-txt">Min Delivery</div></div>
+                  </div>
+                </div>
+                {/* Slide 2 */}
+                <div className="hero-slide slide-2">
+                  <div className="slide-content">
+                    <div className="slide-tag"><span>🥻 New Ethnic Collection</span></div>
+                    <h1 className="slide-title">Celebrate Every<br/><em>Occasion</em></h1>
+                    <p className="slide-sub">Handpicked ethnic wear from India's finest designers.<br/>From ₹999 onwards — delivered instantly.</p>
+                    <div className="slide-cta">
+                      <button className="btn-slide-primary" onClick={() => setCurrentSection('search')}>Shop Now</button>
+                    </div>
+                  </div>
+                  <div className="slide-img-area">
+                    <img src="https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=600&q=80" alt="Ethnic Wear" />
+                    <div className="slide-badge" style={{ background: "var(--gold2)" }}><div className="slide-badge-num">40%</div><div className="slide-badge-txt">Up to Off</div></div>
+                  </div>
+                </div>
+                {/* Slide 3 */}
+                <div className="hero-slide slide-3">
+                  <div className="slide-content">
+                    <div className="slide-tag"><span>👔 Men's New In</span></div>
+                    <h1 className="slide-title">Dress Sharp.<br/><em>Every Day.</em></h1>
+                    <p className="slide-sub">Premium formals, casuals & ethnic wear for men.<br/>Top brands. Lightning delivery.</p>
+                    <div className="slide-cta">
+                      <button className="btn-slide-primary" onClick={() => setCurrentSection('search')}>Shop Now</button>
+                    </div>
+                  </div>
+                  <div className="slide-img-area">
+                    <img src="https://images.unsplash.com/photo-1617137968427-85924c800a22?w=600&q=80" alt="Men's Wear" />
+                    <div className="slide-badge" style={{ background: "var(--green)" }}><div className="slide-badge-num">Free</div><div className="slide-badge-txt">Delivery</div></div>
+                  </div>
+                </div>
+              </div>
+              <button className="hero-arrow prev" onClick={() => setActiveSlide((p) => (p === 0 ? 2 : p - 1))}>‹</button>
+              <button className="hero-arrow next" onClick={() => setActiveSlide((p) => (p === 2 ? 0 : p + 1))}>›</button>
+              <div className="hero-dots">
+                <button className={`hero-dot ${activeSlide === 0 ? "active" : ""}`} onClick={() => setActiveSlide(0)}></button>
+                <button className={`hero-dot ${activeSlide === 1 ? "active" : ""}`} onClick={() => setActiveSlide(1)}></button>
+                <button className={`hero-dot ${activeSlide === 2 ? "active" : ""}`} onClick={() => setActiveSlide(2)}></button>
+              </div>
+            </div>
+
+
+            {/* FLASH SALE */}
+            <div className="flash-sale">
+              <div className="flash-label">
+                <span className="flash-icon">⚡</span>
+                <div><div className="flash-title">Flash Sale</div><div className="flash-subtitle">Today's Best Deals</div></div>
+              </div>
+              <div className="flash-divider"></div>
+              <div className="flash-timer">
+                <span className="timer-label">Ends in</span>
+                <div className="timer-block"><div className="timer-num">{timeLeft.h}</div><div className="timer-unit">Hrs</div></div>
+                <span className="timer-sep">:</span>
+                <div className="timer-block"><div className="timer-num">{timeLeft.m}</div><div className="timer-unit">Min</div></div>
+                <span className="timer-sep">:</span>
+                <div className="timer-block"><div className="timer-num">{timeLeft.s}</div><div className="timer-unit">Sec</div></div>
+              </div>
+              <div className="flash-divider"></div>
+              <div className="flash-products">
+                {products.slice(0, 5).map((p, i) => (
+                  <div key={p.id} className="flash-product" onClick={() => { setViewProduct(p); setSelectedSize(p.sizes?.[0] || "M"); }}>
+                    <img src={p.image} alt="" className="flash-product-img" />
+                    <div>
+                      <div className="flash-product-name">{p.name}</div>
+                      <div className="flash-product-price">₹{p.price}</div>
+                      <div className="flash-product-off">−30%</div>
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>
 
-            {/* Product Grid */}
-            <div style={s.productGrid}>
-              {filteredProducts.length === 0 ? (
-                <p style={{ gridColumn: "1/-1", textAlign: "center", padding: 60, color: "var(--text-tertiary)", fontWeight: 600 }}>
-                  No products found
-                </p>
-              ) : (
-                filteredProducts.map((p, i) => (
-                  <div
-                    key={p.id}
-                    className={`premium-card animate-fade-in-up stagger-${Math.min(i + 1, 8)}`}
-                    style={s.productCard}
-                    onClick={() => { setViewProduct(p); setSelectedSize(p.sizes?.[0] || "M"); }}
-                  >
-                    <div style={s.productImage}>
-                      <img
-                        src={p.image}
-                        alt={p.name}
-                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                        onError={(e) => { e.target.style.display = "none"; }}
-                      />
-                      <div style={s.productImageFallback}>
-                        <i className="fas fa-shirt" style={{ fontSize: 30, color: "var(--text-tertiary)" }} />
+            {/* NEW ARRIVALS */}
+            <section className="section" id="shopProducts">
+              <div className="sec-head reveal in">
+                <div className="sec-head-left">
+                  <div className="sec-eyebrow"><div className="sec-eyebrow-line"></div><span>Just In</span></div>
+                  <h2 className="sec-title">New <em>Arrivals</em></h2>
+                </div>
+                <div className="sec-link" style={{ cursor: "pointer" }} onClick={() => setCurrentCategory("All")}>View All New Arrivals →</div>
+              </div>
+              
+              <div className="deal-grid">
+                {filteredProducts.length === 0 ? (
+                  <p style={{ gridColumn: "1/-1", textAlign: "center", padding: 60, color: "var(--sub)" }}>No products found</p>
+                ) : (
+                  filteredProducts.slice(0, 10).map((p, i) => (
+                    <div key={p.id} className={`deal-card reveal in d${i}`} onClick={() => { setViewProduct(p); setSelectedSize(p.sizes?.[0] || "M"); }}>
+                      <div className="deal-img-wrap">
+                        <img src={p.image} alt={p.name} onError={(e) => { e.target.style.display = "none"; }} />
+                        <div className="deal-badge-wrap">
+                          {i === 0 && <span className="badge-new">New</span>}
+                          {i === 1 && <span className="badge-hot">Hot</span>}
+                          <span className="badge-off">−38%</span>
+                        </div>
+                        <button className="wishlist-btn">♡</button>
+                        <div className="deal-quick" onClick={(e) => { e.stopPropagation(); addToCart(p, p.sizes?.[0] || "M"); }}>⚡ Quick Add</div>
+                      </div>
+                      <div className="deal-info">
+                        <div className="deal-brand">{p.storeName || "DRESHO"}</div>
+                        <div className="deal-name" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
+                        <div className="deal-price-row"><span className="deal-price">₹{p.price}</span><span className="deal-mrp">₹{Math.floor(p.price * 1.38)}</span><span className="deal-off">38% off</span></div>
+                        <div className="deal-rating"><span className="deal-rating-stars">★ 4.6</span><span className="deal-rating-count">(1.2k)</span></div>
+                        <div className="deal-delivery"><span className="green-dot"></span>Delivery in 28 min</div>
                       </div>
                     </div>
-                    <div style={{ padding: "14px 16px 16px" }}>
-                      <p style={{ fontSize: 9, fontWeight: 800, color: "var(--aurora-8)", letterSpacing: 2, textTransform: "uppercase" }}>
-                        {p.storeName || "DRĀP"}
-                      </p>
-                      <h4 style={{ fontSize: 14, fontWeight: 700, marginTop: 4, color: "var(--text-primary)", lineHeight: 1.3 }}>{p.name}</h4>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10 }}>
-                        <span style={{ fontSize: 18, fontWeight: 900, color: "var(--aurora-cyan)" }}>₹{p.price}</span>
-                        <button
-                          className="btn-icon"
-                          style={{ width: 34, height: 34, borderRadius: 10, background: "linear-gradient(135deg, #7c3aed, #6d28d9)", border: "none", color: "white", fontSize: 12 }}
-                          onClick={(e) => { e.stopPropagation(); addToCart(p, p.sizes?.[0] || "M"); }}
-                        >
-                          <i className="fas fa-plus" />
-                        </button>
-                      </div>
+                  ))
+                )}
+              </div>
+            </section>
+
+            {/* TRENDING NOW */}
+            <section className="section">
+              <div className="sec-head reveal in">
+                <div className="sec-head-left">
+                  <div className="sec-eyebrow"><div className="sec-eyebrow-line"></div><span>Trending</span></div>
+                  <h2 className="sec-title">What's <em>Hot</em> Right Now</h2>
+                </div>
+                <div className="sec-link" style={{ cursor: "pointer" }} onClick={() => setCurrentCategory("All")}>See All →</div>
+              </div>
+              <div className="trending-row">
+                {filteredProducts.slice(5, 9).map((p, i) => (
+                  <div key={p.id} className={`trend-card reveal in d${i}`} onClick={() => { setViewProduct(p); setSelectedSize(p.sizes?.[0] || "M"); }}>
+                    <div className="trend-img">
+                      <img src={p.image} alt={p.name} onError={(e) => { e.target.style.display = "none"; }} />
+                    </div>
+                    <div className="trend-info">
+                      <div className="trend-brand">{p.storeName || "DRESHO"}</div>
+                      <div className="trend-name" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
+                      <div className="trend-price">₹{p.price}</div>
+                      <div className="trend-delivery"><span className="green-dot"></span>28 min delivery</div>
                     </div>
                   </div>
-                ))
-              )}
+                ))}
+              </div>
+            </section>
+
+            {/* SHOP BY CATEGORY */}
+            <section className="section section-bg">
+              <div className="sec-head reveal in">
+                <div className="sec-head-left">
+                  <div className="sec-eyebrow"><div className="sec-eyebrow-line"></div><span>Browse</span></div>
+                  <h2 className="sec-title">Shop by <em>Category</em></h2>
+                </div>
+                <div className="sec-link" style={{ cursor: "pointer" }} onClick={() => setCurrentCategory("All")}>All Categories →</div>
+              </div>
+              <div className="cat-grid reveal in">
+                <Link href="/shop/category/womens-wear"><div className="cat-card"><img src="https://images.unsplash.com/photo-1567401893414-76b7b1e5a7a5?w=800&q=80" alt="Women" /><div className="cat-overlay"></div><div className="cat-arrow">→</div><div className="cat-content"><div className="cat-label">Explore</div><div className="cat-name">Women's<br/>Collection</div><div className="cat-count">1,240 styles</div></div></div></Link>
+                <Link href="/shop/category/mens-wear"><div className="cat-card"><img src="https://images.unsplash.com/photo-1617137968427-85924c800a22?w=600&q=80" alt="Men" /><div className="cat-overlay"></div><div className="cat-arrow">→</div><div className="cat-content"><div className="cat-label">Explore</div><div className="cat-name">Men's Wear</div><div className="cat-count">980 styles</div></div></div></Link>
+                <Link href="/shop/category/ethnic"><div className="cat-card"><img src="https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=600&q=80" alt="Ethnic" /><div className="cat-overlay"></div><div className="cat-arrow">→</div><div className="cat-content"><div className="cat-label">Explore</div><div className="cat-name">Ethnic & Fusion</div><div className="cat-count">2,100 styles</div></div></div></Link>
+                <Link href="/shop/category/kids-wear"><div className="cat-card" style={{gridColumn:"span 2"}}><img src="https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=600&q=80" alt="Kids" /><div className="cat-overlay"></div><div className="cat-arrow">→</div><div className="cat-content"><div className="cat-label">Explore</div><div className="cat-name">Kids & Teen</div><div className="cat-count">450 styles</div></div></div></Link>
+              </div>
+            </section>
+
+            {/* MINI BANNERS */}
+            <div style={{ padding: "0 40px 3px" }}>
+              <div className="banner-pair">
+                <Link href="/shop/category/womens-wear"><div className="mini-banner"><img src="https://images.unsplash.com/photo-1483985988355-763728e1935b?w=900&q=80" alt="Women Sale" /><div className="mini-banner-overlay"></div><div className="mini-banner-content"><div className="mini-banner-tag">Women's Special</div><div className="mini-banner-title">Up to 50%<br/>Off Today</div><button className="mini-banner-btn">Shop Now</button></div></div></Link>
+                <Link href="/shop/category/mens-wear"><div className="mini-banner"><img src="https://images.unsplash.com/photo-1550246140-5119ae4790b8?w=900&q=80" alt="Men Sale" /><div className="mini-banner-overlay"></div><div className="mini-banner-content"><div className="mini-banner-tag">Men's Exclusive</div><div className="mini-banner-title">New Season<br/>Formals</div><button className="mini-banner-btn">Shop Now</button></div></div></Link>
+              </div>
             </div>
+
+            {/* HOW IT WORKS */}
+            <section className="section how-section">
+              <div className="sec-head reveal in" style={{ marginBottom: 48 }}>
+                <div className="sec-head-left">
+                  <div className="sec-eyebrow"><div className="sec-eyebrow-line"></div><span>The Process</span></div>
+                  <h2 className="sec-title">How <em>Dresho</em> Works</h2>
+                </div>
+              </div>
+              <div className="how-grid">
+                <div className="how-card reveal in"><div className="how-num">01</div><div className="how-icon-wrap">📍</div><h3 className="how-title">Set Location</h3><p className="how-desc">Share your address and we instantly show real-time inventory from the nearest Dresho dark store in your city.</p><div className="how-time">⚡ Under 10 seconds</div></div>
+                <div className="how-card reveal in d1"><div className="how-num">02</div><div className="how-icon-wrap">✨</div><h3 className="how-title">Browse & Pick</h3><p className="how-desc">Explore 500+ premium Indian and global brands. Filter by size, colour, occasion, and price to find your perfect look.</p><div className="how-time">✦ At your pace</div></div>
+                <div className="how-card reveal in d2"><div className="how-num">03</div><div className="how-icon-wrap">💳</div><h3 className="how-title">Pay Securely</h3><p className="how-desc">Pay via UPI, card, net banking, or Cash on Delivery. Fully encrypted, 100% safe every single time.</p><div className="how-time">⚡ Under 5 seconds</div></div>
+                <div className="how-card reveal in d3"><div className="how-num">04</div><div className="how-icon-wrap">🛵</div><h3 className="how-title">Delivered Fast</h3><p className="how-desc">Your order is picked, quality-checked, and delivered in a premium Dresho bag. In 30 minutes or we refund.</p><div className="how-time">⚡ 30 min guarantee</div></div>
+              </div>
+            </section>
+
+            {/* PARTNER / SELLER / RIDER SECTION */}
+            <section className="section partner-section">
+              <div className="sec-head reveal in" style={{ marginBottom: 36 }}>
+                <div className="sec-head-left">
+                  <div className="sec-eyebrow"><div className="sec-eyebrow-line"></div><span>Join Us</span></div>
+                  <h2 className="sec-title">Grow with <em>Dresho</em></h2>
+                </div>
+              </div>
+              <div className="partner-grid">
+                <div className="partner-card reveal in">
+                  <div className="partner-pill"><span>🏪 For Brands & Sellers</span></div>
+                  <h3 className="partner-title">Become a<br/><em>Dresho Seller</em></h3>
+                  <p className="partner-desc">List your clothing brand on India's fastest growing quick commerce fashion platform. Reach millions of style-conscious customers across 12 cities and growing.</p>
+                  <div className="partner-perks">
+                    <div className="partner-perk"><div className="perk-check">✓</div><span>Zero listing fee for your first 3 months</span></div>
+                    <div className="partner-perk"><div className="perk-check">✓</div><span>Dedicated seller dashboard and analytics</span></div>
+                    <div className="partner-perk"><div className="perk-check">✓</div><span>Dresho handles all delivery and returns</span></div>
+                    <div className="partner-perk"><div className="perk-check">✓</div><span>Weekly payouts, no hidden charges</span></div>
+                    <div className="partner-perk"><div className="perk-check">✓</div><span>24/7 seller support team</span></div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                    <Link href="/seller"><button className="btn-partner">Start Selling</button></Link>
+                  </div>
+
+                </div>
+                <div className="partner-card reveal in d2">
+                  <div className="partner-pill"><span>🛵 For Delivery Partners</span></div>
+                  <h3 className="partner-title">Become a<br/><em>Dresho Rider</em></h3>
+                  <p className="partner-desc">Join India's most rewarding delivery network. Flexible hours, guaranteed earnings, and the pride of delivering style to thousands of customers every day.</p>
+                  <div className="partner-perks">
+
+                    <div className="partner-perk"><div className="perk-check">✓</div><span>Flexible shift timings — you choose your hours</span></div>
+                    <div className="partner-perk"><div className="perk-check">✓</div><span>Weekly salary + performance bonuses</span></div>
+                    <div className="partner-perk"><div className="perk-check">✓</div><span>Free Dresho uniform and delivery gear</span></div>
+                    <div className="partner-perk"><div className="perk-check">✓</div><span>Health insurance and accident cover</span></div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                    <Link href="/delivery"><button className="btn-partner">Apply Now</button></Link>
+                  </div>
+
+                </div>
+              </div>
+            </section>
+
+
+
+            {/* FOOTER */}
+            <footer>
+              <div className="footer-main">
+                <div>
+                  <div className="footer-brand">Dres<span>h</span>o</div>
+                  <p className="footer-tagline">India's first luxury quick commerce fashion platform. Premium brands, delivered in 30 minutes.</p>
+                  <div className="footer-social"><a href="https://www.instagram.com/dresho.in/" target="_blank" rel="noopener noreferrer" className="soc" style={{ width: "auto", padding: "0 16px", textDecoration: "none" }}>instagram</a></div>
+                </div>
+                <div><div className="footer-col-title">Help</div><ul className="footer-links"><li onClick={() => { if(!user) setShowAuth(true); else setCurrentSection('orders'); }} style={{ cursor: "pointer" }}>Track Order</li><li onClick={() => setCurrentSection('about')} style={{ cursor: "pointer" }}>About Us</li><li><a href="mailto:prinxadmin29@gmail.com" style={{ color: "inherit", textDecoration: "none" }}>Contact Us</a></li></ul></div>
+                <div><div className="footer-col-title">Sellers</div><ul className="footer-links"><li><Link href="/seller">Sell on Dresho</Link></li><li><Link href="/seller">Seller Login</Link></li></ul></div>
+                <div><div className="footer-col-title">Cities</div><ul className="footer-links"><li>Hazaribagh</li></ul></div>
+              </div>
+              <div className="footer-bottom">
+                <div className="footer-bottom-left">
+                  <span>© 2026 Dresho Technologies Pvt. Ltd.</span>
+                  <span>CIN: U74999MH2026PTC000001</span>
+                </div>
+                <div className="footer-bottom-right">
+                  <span>Privacy Policy</span>
+                  <span>Terms of Service</span>
+                  <span>Cookie Policy</span>
+                  <span>Grievance</span>
+                </div>
+              </div>
+            </footer>
+
+          </div>
+        )}
+
+        {/* ── ABOUT US ── */}
+        {currentSection === "about" && (
+          <div style={{ padding: "60px 20px", maxWidth: 800, margin: "0 auto", textAlign: "center", minHeight: "60vh" }} className="animate-fade-in">
+            <div className="sec-eyebrow" style={{ justifyContent: "center" }}><div className="sec-eyebrow-line"></div><span>Our Story</span><div className="sec-eyebrow-line"></div></div>
+            <h3 style={{ fontFamily: "var(--font-d)", fontSize: 40, fontWeight: 400, color: "var(--navy)", marginBottom: 32, marginTop: 12 }}>About <em>Dresho</em></h3>
+            <p style={{ fontSize: 16, color: "var(--sub)", lineHeight: 1.8, marginBottom: 24 }}>
+              Dresho is India's first luxury quick commerce fashion platform. We are revolutionizing how you shop for premium brands by delivering the latest fashion right to your doorstep in just <strong>30 minutes</strong>.
+            </p>
+            <p style={{ fontSize: 16, color: "var(--sub)", lineHeight: 1.8, marginBottom: 40 }}>
+              Whether you need a last-minute outfit for a party, a sharp suit for a meeting, or just want to upgrade your wardrobe without waiting days for delivery, Dresho is your ultimate style companion.
+            </p>
+            <button className="btn-signin" onClick={() => setCurrentSection("home")} style={{ padding: "12px 32px", fontSize: 14 }}>Explore Collection</button>
           </div>
         )}
 
         {/* ── CART ── */}
         {currentSection === "cart" && (
-          <div style={{ padding: 16 }} className="animate-fade-in">
-            <h3 style={{ fontSize: 24, fontWeight: 900, marginBottom: 20 }}>My Cart</h3>
+          <div style={{ padding: "32px 20px" }} className="animate-fade-in">
+            <h3 style={{ fontFamily: "var(--font-d)", fontSize: 28, fontWeight: 400, color: "var(--navy)", marginBottom: 24 }}>My Cart</h3>
             {cart.length === 0 ? (
-              <div style={s.emptyState}>
-                <i className="fas fa-bag-shopping" style={{ fontSize: 40, marginBottom: 12, color: "var(--text-tertiary)" }} />
-                <p style={{ fontWeight: 700, color: "var(--text-tertiary)" }}>Cart is empty</p>
+              <div style={{ textAlign: "center", padding: "60px 20px", border: "1px dashed var(--border)", background: "var(--ivory2)" }}>
+                <span style={{ fontSize: 40, marginBottom: 12 }}>🛍</span>
+                <p style={{ fontWeight: 500, color: "var(--sub)" }}>Your cart is empty.</p>
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                 {cart.map((item, idx) => (
-                  <div key={idx} className="glass-card" style={s.cartItem}>
-                    <div style={s.cartItemImg}>
-                      <img src={item.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 14 }} onError={(e) => { e.target.style.display = "none"; }} />
+                  <div key={idx} style={{ display: "flex", gap: 16, background: "var(--card)", border: "1px solid var(--border)", padding: 12 }}>
+                    <div style={{ width: 80, height: 100, background: "var(--ivory2)", flexShrink: 0 }}>
+                      <img src={item.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
                     </div>
-                    <div style={{ flex: 1 }}>
-                      <h4 style={{ fontSize: 14, fontWeight: 700 }}>{item.name}</h4>
-                      <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                      <h4 style={{ fontSize: 14, fontWeight: 600, color: "var(--navy)" }}>{item.name}</h4>
+                      <p style={{ fontSize: 12, color: "var(--sub)", marginTop: 4 }}>
                         Size: {item.selectedSize} · ₹{item.price} × {item.qty}
                       </p>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <button className="btn-icon" style={{ width: 30, height: 30, borderRadius: 8, fontSize: 12 }} onClick={() => changeQty(idx, -1)}>−</button>
-                      <span style={{ fontWeight: 800, fontSize: 14, width: 20, textAlign: "center" }}>{item.qty}</span>
-                      <button className="btn-icon" style={{ width: 30, height: 30, borderRadius: 8, fontSize: 12, background: "linear-gradient(135deg, #7c3aed, #6d28d9)", border: "none", color: "white" }} onClick={() => changeQty(idx, 1)}>+</button>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12 }}>
+                        <button style={{ width: 32, height: 32, borderRadius: "50%", border: "1px solid var(--border)", background: "var(--ivory2)", color: "var(--navy)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }} onClick={() => changeQty(idx, -1)}>−</button>
+                        <span style={{ fontWeight: 600, fontSize: 14, color: "var(--navy)" }}>{item.qty}</span>
+                        <button style={{ width: 32, height: 32, borderRadius: "50%", border: "none", background: "var(--navy)", color: "var(--white)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }} onClick={() => changeQty(idx, 1)}>+</button>
+                      </div>
                     </div>
                   </div>
                 ))}
-                <div className="glass-card" style={{ padding: "24px", borderRadius: 24, marginTop: 8 }}>
+                <div style={{ background: "var(--card)", border: "1px solid var(--border)", padding: "24px", marginTop: 8 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontWeight: 600, color: "var(--text-secondary)" }}>Total</span>
-                    <span style={{ fontSize: 24, fontWeight: 900, color: "var(--aurora-cyan)" }}>₹{cartTotal}</span>
+                    <span style={{ fontWeight: 500, color: "var(--sub)", fontSize: 13, textTransform: "uppercase", letterSpacing: 1 }}>Total Amount</span>
+                    <span style={{ fontSize: 24, fontWeight: 600, color: "var(--navy)" }}>₹{cartTotal}</span>
                   </div>
-                  <button className="btn-primary" style={{ marginTop: 16 }} onClick={() => { setCheckoutAddress(userData?.address || ""); setCheckoutPhone(userData?.phone || ""); setShowCheckout(true); }}>
+                  <button style={{ background: "var(--navy)", color: "#fff", border: "none", padding: "16px", width: "100%", marginTop: 24, fontSize: 12, letterSpacing: 2, textTransform: "uppercase", fontWeight: 500, cursor: "pointer", transition: "background 0.3s" }} onClick={() => {
+                    const addr = userData?.address;
+                    setCheckoutAddress(typeof addr === "object" ? addr?.line || "" : addr || "");
+                    setCheckoutLandmark(typeof addr === "object" ? addr?.landmark || "" : "");
+                    setCheckoutCity(typeof addr === "object" ? addr?.city || "" : "");
+                    setCheckoutPincode(typeof addr === "object" ? addr?.pincode || "" : "");
+                    setCheckoutPhone(userData?.phone || "");
+                    setShowCheckout(true);
+                  }}>
                     Proceed to Checkout
                   </button>
                 </div>
@@ -520,38 +1041,39 @@ export default function ShopPage() {
 
         {/* ── ORDERS ── */}
         {currentSection === "orders" && (
-          <div style={{ padding: 16 }} className="animate-fade-in">
-            <h3 style={{ fontSize: 24, fontWeight: 900, marginBottom: 20 }}>My Orders</h3>
+          <div style={{ padding: "32px 20px" }} className="animate-fade-in">
+            <h3 style={{ fontFamily: "var(--font-d)", fontSize: 28, fontWeight: 400, color: "var(--navy)", marginBottom: 24 }}>My Orders</h3>
             {orders.length === 0 ? (
-              <div style={s.emptyState}>
-                <i className="fas fa-box" style={{ fontSize: 40, marginBottom: 12, color: "var(--text-tertiary)" }} />
-                <p style={{ fontWeight: 700, color: "var(--text-tertiary)" }}>No orders yet</p>
+              <div style={{ textAlign: "center", padding: "60px 20px", border: "1px dashed var(--border)", background: "var(--ivory2)" }}>
+                <span style={{ fontSize: 40, marginBottom: 12 }}>📦</span>
+                <p style={{ fontWeight: 500, color: "var(--sub)" }}>No orders yet.</p>
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                 {orders.map((o) => (
-                  <div key={o.id} className="glass-card animate-fade-in-up" style={{ padding: "20px 22px", borderRadius: 28, cursor: "default" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                      <span style={{ fontSize: 11, fontWeight: 800, color: "var(--text-tertiary)", letterSpacing: 1 }}>ORDER #{o.trackingId}</span>
-                      <span className="badge" style={{ background: `${getStatusColor(o.status)}15`, color: getStatusColor(o.status), border: `1px solid ${getStatusColor(o.status)}30` }}>
+                  <div key={o.id} className="animate-fade-in-up" style={{ background: "var(--card)", border: "1px solid var(--border)", padding: "24px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: "var(--sub)", letterSpacing: 1 }}>ORDER #{o.trackingId}</span>
+                      <span style={{ padding: "4px 8px", fontSize: 10, fontWeight: 600, textTransform: "uppercase", background: "var(--ivory2)", color: "var(--navy)", border: "1px solid var(--border)" }}>
                         {o.status}
                       </span>
                     </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
                       {o.items?.map((item, i) => (
-                        <p key={i} style={{ fontSize: 13, color: "var(--text-secondary)" }}>
-                          {item.qty}× {item.name} {item.size ? `(${item.size})` : ""} — <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>₹{item.price * item.qty}</span>
+                        <p key={i} style={{ fontSize: 13, color: "var(--sub)", display: "flex", justifyContent: "space-between" }}>
+                          <span>{item.qty}× {item.name} {item.size ? `(${item.size})` : ""}</span>
+                          <span style={{ fontWeight: 600, color: "var(--navy)" }}>₹{item.price * item.qty}</span>
                         </p>
                       ))}
                     </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
-                      <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Total</span>
-                      <span style={{ fontSize: 20, fontWeight: 900, color: "var(--aurora-cyan)" }}>₹{o.total}</span>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 16, borderTop: "1px solid var(--border2)" }}>
+                      <span style={{ fontSize: 12, color: "var(--sub)", textTransform: "uppercase", letterSpacing: 1 }}>Total</span>
+                      <span style={{ fontSize: 20, fontWeight: 600, color: "var(--navy)" }}>₹{o.total}</span>
                     </div>
                     {o.status === "Out for Delivery" && (
-                      <div style={{ marginTop: 12, padding: "12px 16px", borderRadius: 14, background: "rgba(6, 182, 212, 0.1)", border: "1px solid rgba(6, 182, 212, 0.15)", textAlign: "center" }}>
-                        <p style={{ fontSize: 12, fontWeight: 700, color: "var(--aurora-cyan)" }}>
-                          Delivery OTP: <span style={{ fontSize: 20 }}>{o.deliveryOtp}</span>
+                      <div style={{ marginTop: 16, padding: "16px", background: "var(--ivory2)", border: "1px dashed var(--gold)", textAlign: "center" }}>
+                        <p style={{ fontSize: 12, fontWeight: 600, color: "var(--navy)", textTransform: "uppercase", letterSpacing: 1 }}>
+                          Delivery OTP: <span style={{ fontSize: 24, display: "block", marginTop: 4, color: "var(--gold)" }}>{o.deliveryOtp}</span>
                         </p>
                       </div>
                     )}
@@ -564,30 +1086,28 @@ export default function ShopPage() {
 
         {/* ── ACCOUNT ── */}
         {currentSection === "account" && (
-          <div style={{ padding: 16 }} className="animate-fade-in">
-            <h3 style={{ fontSize: 24, fontWeight: 900, marginBottom: 20 }}>My Account</h3>
-            <div className="glass-card" style={{ padding: 24, borderRadius: 28, marginBottom: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                <div style={{ width: 60, height: 60, borderRadius: 18, background: "linear-gradient(135deg, #7c3aed, #6d28d9)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <i className="fas fa-user" style={{ fontSize: 22, color: "white" }} />
-                </div>
-                <div>
-                  <h4 style={{ fontSize: 18, fontWeight: 800 }}>{userData?.name}</h4>
-                  <p style={{ fontSize: 13, color: "var(--text-tertiary)" }}>{userData?.email}</p>
-                </div>
+          <div style={{ padding: "32px 20px" }} className="animate-fade-in">
+            <h3 style={{ fontFamily: "var(--font-d)", fontSize: 28, fontWeight: 400, color: "var(--navy)", marginBottom: 24 }}>My Account</h3>
+            <div style={{ background: "var(--card)", border: "1px solid var(--border)", padding: 24, marginBottom: 16, display: "flex", alignItems: "center", gap: 20 }}>
+              <div style={{ width: 64, height: 64, borderRadius: "50%", background: "var(--ivory2)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <span style={{ fontSize: 24 }}>👤</span>
+              </div>
+              <div>
+                <h4 style={{ fontSize: 18, fontWeight: 600, color: "var(--navy)", marginBottom: 4 }}>{userData?.name}</h4>
+                <p style={{ fontSize: 13, color: "var(--sub)" }}>{userData?.email}</p>
               </div>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div className="glass-card" style={{ padding: "18px 20px", borderRadius: 18, display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }} onClick={() => setCurrentSection('orders')}>
-                <i className="fas fa-box" style={{ color: "var(--aurora-7)", fontSize: 16 }} />
-                <span style={{ fontSize: 14, fontWeight: 600 }}>My Orders</span>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ background: "var(--card)", border: "1px solid var(--border)", padding: "20px 24px", display: "flex", alignItems: "center", gap: 16, cursor: "pointer" }} onClick={() => setCurrentSection('orders')}>
+                <span style={{ fontSize: 20 }}>📦</span>
+                <span style={{ fontSize: 14, fontWeight: 500, color: "var(--navy)" }}>My Orders</span>
               </div>
-              <div className="glass-card" style={{ padding: "18px 20px", borderRadius: 18, display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }} onClick={() => setShowHelp(true)}>
-                <i className="fas fa-life-ring" style={{ color: "var(--aurora-7)", fontSize: 16 }} />
-                <span style={{ fontSize: 14, fontWeight: 600 }}>Help & Support</span>
+              <div style={{ background: "var(--card)", border: "1px solid var(--border)", padding: "20px 24px", display: "flex", alignItems: "center", gap: 16, cursor: "pointer" }} onClick={() => setShowHelp(true)}>
+                <span style={{ fontSize: 20 }}>📞</span>
+                <span style={{ fontSize: 14, fontWeight: 500, color: "var(--navy)" }}>Help & Support</span>
               </div>
               <div className="glass-card" style={{ padding: "18px 20px", borderRadius: 18, display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }} onClick={() => setIsDarkMode(!isDarkMode)}>
-                <i className="fas fa-moon" style={{ color: "var(--aurora-7)", fontSize: 16 }} />
+                <i className="fas fa-moon" style={{ color: "var(--gold)", fontSize: 16 }} />
                 <span style={{ fontSize: 14, fontWeight: 600 }}>{isDarkMode ? 'Light Mode' : 'Dark Mode'}</span>
               </div>
               <div className="glass-card" style={{ padding: "18px 20px", borderRadius: 18, display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }} onClick={() => {
@@ -600,11 +1120,11 @@ export default function ShopPage() {
                   prompt('Copy this link', window.location.origin);
                 }
               }}>
-                <i className="fas fa-share-alt" style={{ color: "var(--aurora-7)", fontSize: 16 }} />
+                <i className="fas fa-share-alt" style={{ color: "var(--gold)", fontSize: 16 }} />
                 <span style={{ fontSize: 14, fontWeight: 600 }}>Share App</span>
               </div>
               <div className="glass-card" style={{ padding: "18px 20px", borderRadius: 18, display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }} onClick={() => setShowAbout(true)}>
-                <i className="fas fa-info-circle" style={{ color: "var(--aurora-7)", fontSize: 16 }} />
+                <i className="fas fa-info-circle" style={{ color: "var(--gold)", fontSize: 16 }} />
                 <span style={{ fontSize: 14, fontWeight: 600 }}>About Us</span>
               </div>
             </div>
@@ -630,7 +1150,7 @@ export default function ShopPage() {
             <div className="modal-content" style={{ maxWidth: 400 }} onClick={e => e.stopPropagation()}>
               <h3 style={{ fontSize: 22, fontWeight: 900, marginBottom: 12 }}>Help & Support</h3>
               <p style={{ color: "var(--text-tertiary)", lineHeight: 1.6 }}>
-                Need assistance? Email us at <a href="mailto:dresho.business@gmail.com" style={{ color: "var(--blue-vivid)" }}>dresho.business@gmail.com</a> or WhatsApp +91 9128926837 (10 AM – 8 PM).
+                Need assistance? Email us at <a href="mailto:dresho.business@gmail.com" style={{ color: "var(--gold)" }}>dresho.business@gmail.com</a> or WhatsApp +91 9128926837 (10 AM – 8 PM).
               </p>
               <button className="btn-primary" onClick={() => setShowHelp(false)} style={{ marginTop: 16 }}>Close</button>
             </div>
@@ -638,7 +1158,7 @@ export default function ShopPage() {
         )}
 
         {/* ── BOTTOM NAV ── */}
-        <nav style={s.bottomNav} className="glass-panel">
+        <div style={s.bottomNav}>
           {[
             { id: "search", icon: "fa-magnifying-glass", label: "Search" },
             { id: "home", icon: "fa-house", label: "Home" },
@@ -656,33 +1176,33 @@ export default function ShopPage() {
               <span style={{ fontSize: 10, fontWeight: 700 }}>{item.label}</span>
             </button>
           ))}
-        </nav>
+        </div>
 
         {/* ── PRODUCT DETAIL MODAL ── */}
         {viewProduct && (
-          <div className="modal-overlay" onClick={() => setViewProduct(null)}>
-            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 400 }}>
-              <div style={{ height: 220, borderRadius: 20, overflow: "hidden", background: "linear-gradient(135deg, #1a1a3e, #2d1b69)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20, position: "relative" }}>
+          <div style={{ position: "fixed", inset: 0, zIndex: 600, background: "rgba(20,33,61,0.6)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setViewProduct(null)}>
+            <div className="animate-scale-in" onClick={(e) => e.stopPropagation()} style={{ background: "var(--white)", width: "100%", maxWidth: 420, padding: 32, boxShadow: "var(--shadow-lg)" }}>
+              <div style={{ height: 260, background: "var(--ivory2)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 24, position: "relative" }}>
                 <img src={viewProduct.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", position: "absolute" }} onError={(e) => { e.target.style.display = "none"; }} />
-                <i className="fas fa-shirt" style={{ fontSize: 50, color: "var(--text-tertiary)", opacity: 0.3 }} />
+                <span style={{ fontSize: 40, color: "var(--sub)", opacity: 0.3 }}>👗</span>
               </div>
-              <p style={{ fontSize: 10, fontWeight: 800, color: "var(--aurora-8)", letterSpacing: 2 }}>{viewProduct.storeName || "DRESHO"}</p>
-              <h3 style={{ fontSize: 22, fontWeight: 900, marginTop: 4 }}>{viewProduct.name}</h3>
-              <p style={{ fontSize: 28, fontWeight: 900, color: "var(--aurora-cyan)", marginTop: 8 }}>₹{viewProduct.price}</p>
+              <p style={{ fontSize: 10, fontWeight: 600, color: "var(--gold)", letterSpacing: 2, textTransform: "uppercase" }}>{viewProduct.storeName || "DRESHO"}</p>
+              <h3 style={{ fontFamily: "var(--font-d)", fontSize: 24, color: "var(--navy)", marginTop: 4 }}>{viewProduct.name}</h3>
+              <p style={{ fontSize: 22, fontWeight: 600, color: "var(--navy)", marginTop: 8 }}>₹{viewProduct.price}</p>
 
               {/* Size Selector */}
-              <div style={{ marginTop: 16 }}>
-                <p style={{ fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", marginBottom: 10 }}>SELECT SIZE</p>
-                <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ marginTop: 20 }}>
+                <p style={{ fontSize: 11, fontWeight: 600, color: "var(--sub)", marginBottom: 12, letterSpacing: 1, textTransform: "uppercase" }}>Select Size</p>
+                <div style={{ display: "flex", gap: 10 }}>
                   {(viewProduct.sizes || ["S", "M", "L", "XL"]).map((size) => (
                     <button
                       key={size}
                       onClick={() => setSelectedSize(size)}
                       style={{
-                        width: 44, height: 44, borderRadius: 12, fontSize: 13, fontWeight: 700,
-                        background: selectedSize === size ? "linear-gradient(135deg, #7c3aed, #6d28d9)" : "rgba(255,255,255,0.04)",
-                        color: selectedSize === size ? "white" : "var(--text-secondary)",
-                        border: selectedSize === size ? "none" : "1px solid rgba(255,255,255,0.08)",
+                        width: 44, height: 44, fontSize: 13, fontWeight: 500,
+                        background: selectedSize === size ? "var(--navy)" : "var(--ivory2)",
+                        color: selectedSize === size ? "white" : "var(--navy)",
+                        border: selectedSize === size ? "none" : "1px solid var(--border)",
                         cursor: "pointer", transition: "all 0.3s ease",
                       }}
                     >
@@ -692,10 +1212,9 @@ export default function ShopPage() {
                 </div>
               </div>
 
-              <div style={{ display: "flex", gap: 12, marginTop: 24 }}>
-                <button className="btn-secondary" style={{ flex: 1, borderRadius: 14 }} onClick={() => setViewProduct(null)}>Close</button>
-                <button className="btn-primary" style={{ flex: 2, borderRadius: 14 }} onClick={() => addToCart(viewProduct, selectedSize)}>
-                  <i className="fas fa-bag-shopping" style={{ marginRight: 8 }} />
+              <div style={{ display: "flex", gap: 12, marginTop: 32 }}>
+                <button style={{ flex: 1, background: "transparent", color: "var(--navy)", border: "1px solid var(--border2)", padding: 14, fontSize: 11, textTransform: "uppercase", letterSpacing: 1, cursor: "pointer", transition: "all 0.3s" }} onClick={() => setViewProduct(null)}>Close</button>
+                <button style={{ flex: 2, background: "var(--gold)", color: "white", border: "none", padding: 14, fontSize: 11, textTransform: "uppercase", letterSpacing: 2, cursor: "pointer", transition: "background 0.3s" }} onClick={() => addToCart(viewProduct, selectedSize)}>
                   Add to Cart
                 </button>
               </div>
@@ -705,46 +1224,130 @@ export default function ShopPage() {
 
         {/* ── CHECKOUT MODAL ── */}
         {showCheckout && (
-          <div className="modal-overlay" onClick={() => setShowCheckout(false)}>
-            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-              <h3 style={{ fontSize: 22, fontWeight: 900, marginBottom: 20 }}>Checkout</h3>
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <input className="glass-input" placeholder="Full Delivery Address" value={checkoutAddress} onChange={(e) => setCheckoutAddress(e.target.value)} />
-                <input className="glass-input" type="tel" placeholder="Phone Number" value={checkoutPhone} onChange={(e) => setCheckoutPhone(e.target.value)} />
+          <div style={{ position: "fixed", inset: 0, zIndex: 600, background: "rgba(20,33,61,0.6)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setShowCheckout(false)}>
+            <div className="animate-scale-in hide-scrollbar" onClick={(e) => e.stopPropagation()} style={{ background: "var(--white)", width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto", padding: 32, boxShadow: "var(--shadow-lg)" }}>
+              <h3 style={{ fontFamily: "var(--font-d)", fontSize: 26, color: "var(--navy)", marginBottom: 24 }}>Checkout</h3>
+              
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                <input style={{ padding: "12px 0", border: "none", borderBottom: "1px solid var(--border2)", outline: "none", background: "transparent", fontSize: 14, fontFamily: "var(--font-b)", color: "var(--navy)" }} placeholder="House / Flat No., Street" value={checkoutAddress} onChange={(e) => setCheckoutAddress(e.target.value)} />
+                <input style={{ padding: "12px 0", border: "none", borderBottom: "1px solid var(--border2)", outline: "none", background: "transparent", fontSize: 14, fontFamily: "var(--font-b)", color: "var(--navy)" }} placeholder="Landmark (e.g. Near City Mall)" value={checkoutLandmark} onChange={(e) => setCheckoutLandmark(e.target.value)} />
+                <div style={{ display: "flex", gap: 16 }}>
+                  <input style={{ flex: 1, padding: "12px 0", border: "none", borderBottom: "1px solid var(--border2)", outline: "none", background: "transparent", fontSize: 14, fontFamily: "var(--font-b)", color: "var(--navy)" }} placeholder="City" value={checkoutCity} onChange={(e) => setCheckoutCity(e.target.value)} />
+                  <input style={{ flex: 1, padding: "12px 0", border: "none", borderBottom: "1px solid var(--border2)", outline: "none", background: "transparent", fontSize: 14, fontFamily: "var(--font-b)", color: "var(--navy)" }} placeholder="Pincode" type="tel" maxLength={6} inputMode="numeric" value={checkoutPincode} onChange={(e) => setCheckoutPincode(e.target.value.replace(/\D/g, "").slice(0, 6))} />
+                </div>
+                <input style={{ padding: "12px 0", border: "none", borderBottom: "1px solid var(--border2)", outline: "none", background: "transparent", fontSize: 14, fontFamily: "var(--font-b)", color: "var(--navy)" }} type="tel" placeholder="Phone Number" value={checkoutPhone} onChange={(e) => setCheckoutPhone(e.target.value)} />
+                
+                <button 
+                  style={{ 
+                    marginTop: 8, padding: 14, fontSize: 11, letterSpacing: 1, textTransform: "uppercase", fontWeight: 500, cursor: "pointer", transition: "all 0.3s",
+                    background: checkoutCoordinates ? "var(--green)" : "var(--ivory2)",
+                    color: checkoutCoordinates ? "white" : "var(--navy)",
+                    border: checkoutCoordinates ? "none" : "1px solid var(--border)"
+                  }} 
+                  onClick={fetchCustomerLocation}
+                >
+                  <span style={{ marginRight: 8 }}>{checkoutCoordinates ? '✓' : '📍'}</span>
+                  {checkoutCoordinates ? "GPS Location Pinned" : "Pin My Delivery Location (Required)"}
+                </button>
               </div>
 
               {/* Payment Method */}
-              <div style={{ marginTop: 18 }}>
-                <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.5, color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 10 }}>Payment Method</p>
-                <div style={{ display: "flex", gap: 10 }}>
+              <div style={{ marginTop: 32 }}>
+                <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: 1, color: "var(--sub)", textTransform: "uppercase", marginBottom: 16 }}>Payment Method</p>
+                <div style={{ display: "flex", gap: 12 }}>
                   {[
-                    { id: "COD", icon: "fa-money-bill-wave", label: "Cash on Delivery", sub: "Pay at door" },
-                    { id: "UPI", icon: "fa-mobile-screen", label: "UPI / Card", sub: "Instant payment" },
+                    { id: "COD", icon: "💵", label: "Cash", sub: "Pay at door" },
+                    { id: "UPI", icon: "📱", label: "UPI", sub: "Instant pay" },
                   ].map((pm) => (
                     <button key={pm.id} onClick={() => setPaymentMethod(pm.id)} style={{
-                      flex: 1, padding: "14px 12px", borderRadius: 14, cursor: "pointer", textAlign: "left",
-                      background: paymentMethod === pm.id ? "rgba(26,13,220,0.15)" : "rgba(255,255,255,0.03)",
-                      border: paymentMethod === pm.id ? "1px solid rgba(107,127,255,0.5)" : "1px solid rgba(255,255,255,0.06)",
+                      flex: 1, padding: "16px 12px", cursor: "pointer", textAlign: "left",
+                      background: paymentMethod === pm.id ? "var(--ivory2)" : "var(--white)",
+                      border: paymentMethod === pm.id ? "1px solid var(--gold)" : "1px solid var(--border)",
                       transition: "all 0.2s ease",
                     }}>
-                      <i className={`fas ${pm.icon}`} style={{ fontSize: 18, color: paymentMethod === pm.id ? "#6B7FFF" : "var(--text-muted)", marginBottom: 6, display: "block" }} />
-                      <p style={{ fontSize: 12, fontWeight: 700, color: paymentMethod === pm.id ? "var(--white)" : "var(--text-secondary)" }}>{pm.label}</p>
-                      <p style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>{pm.sub}</p>
+                      <span style={{ fontSize: 20, marginBottom: 8, display: "block" }}>{pm.icon}</span>
+                      <p style={{ fontSize: 14, fontWeight: 500, color: "var(--navy)" }}>{pm.label}</p>
+                      <p style={{ fontSize: 11, color: "var(--sub)", marginTop: 4 }}>{pm.sub}</p>
                     </button>
                   ))}
                 </div>
               </div>
 
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", borderRadius: 14, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)", marginTop: 16 }}>
-                <span style={{ fontWeight: 600, color: "var(--text-secondary)" }}>Total</span>
-                <span style={{ fontSize: 22, fontWeight: 900, color: "var(--aurora-cyan)" }}>₹{cartTotal}</span>
+              <div style={{ background: "var(--ivory2)", border: "1px dashed var(--border2)", padding: 20, marginTop: 32 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <span style={{ fontSize: 13, color: "var(--sub)" }}>Items Total</span>
+                  <span style={{ fontSize: 14, fontWeight: 500, color: "var(--navy)" }}>₹{cartTotal}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <span style={{ fontSize: 13, color: "var(--sub)" }}>Delivery Fee</span>
+                  <span style={{ fontSize: 14, fontWeight: 500, color: checkoutCoordinates ? "var(--green)" : "var(--sub)" }}>
+                    {checkoutCoordinates ? `₹${deliveryFee}` : "Calculated at GPS Pin"}
+                  </span>
+                </div>
+                <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontWeight: 600, color: "var(--navy)", textTransform: "uppercase", letterSpacing: 1, fontSize: 11 }}>Grand Total</span>
+                  <span style={{ fontSize: 24, fontWeight: 600, color: "var(--navy)" }}>₹{checkoutCoordinates ? cartTotal + deliveryFee : cartTotal}</span>
+                </div>
               </div>
-              <div style={{ display: "flex", gap: 12, marginTop: 18 }}>
-                <button className="btn-secondary" style={{ flex: 1, borderRadius: 14 }} onClick={() => setShowCheckout(false)}>Cancel</button>
-                <button className="btn-primary" style={{ flex: 1, borderRadius: 14 }} onClick={placeOrder} disabled={placing}>
-                  {placing ? "Placing..." : paymentMethod === "COD" ? "🛵 Place Order" : "Pay via UPI"}
+
+              <div style={{ display: "flex", gap: 12, marginTop: 24 }}>
+                <button style={{ flex: 1, background: "transparent", color: "var(--navy)", border: "1px solid var(--border2)", padding: 16, fontSize: 11, letterSpacing: 2, textTransform: "uppercase", cursor: "pointer" }} onClick={() => setShowCheckout(false)}>Cancel</button>
+                <button style={{ flex: 1, background: "var(--navy)", color: "white", border: "none", padding: 16, fontSize: 11, letterSpacing: 2, textTransform: "uppercase", cursor: "pointer" }} onClick={placeOrder} disabled={placing}>
+                  {placing ? "Placing..." : paymentMethod === "COD" ? "Place Order" : "Pay via UPI"}
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Address Management Modal ── */}
+        {showAddressModal && (
+          <div style={{ position: "fixed", inset: 0, zIndex: 600, background: "rgba(20,33,61,0.6)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setShowAddressModal(false)}>
+            <div onClick={(e) => e.stopPropagation()} className="animate-scale-in hide-scrollbar" style={{ background: "var(--white)", padding: "32px", maxWidth: 480, width: "100%", maxHeight: "80vh", overflowY: "auto", boxShadow: "var(--shadow-lg)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+                <h3 style={{ fontFamily: "var(--font-d)", fontSize: 22, color: "var(--navy)", margin: 0 }}>Select Address</h3>
+                <button onClick={() => setShowAddressModal(false)} style={{ background: "none", border: "none", fontSize: 24, color: "var(--sub)", cursor: "pointer" }}>×</button>
+              </div>
+
+              {(userData?.addresses && userData.addresses.length > 0) || userData?.address ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
+                  {(userData?.addresses && userData.addresses.length > 0 ? userData.addresses : [userData.address]).map((addr, i) => (
+                    <div key={addr.id || i} onClick={() => handleSelectAddress(addr)} style={{ padding: 16, border: userData?.address?.id === addr.id || userData?.address?.line === addr.line ? "2px solid var(--gold)" : "1px solid var(--border)", background: "var(--ivory2)", cursor: "pointer", display: "flex", alignItems: "flex-start", gap: 12 }}>
+                      <div style={{ width: 16, height: 16, borderRadius: "50%", border: userData?.address?.id === addr.id || userData?.address?.line === addr.line ? "5px solid var(--gold)" : "1px solid var(--border)", flexShrink: 0, marginTop: 2 }}></div>
+                      <div>
+                        <div style={{ fontSize: 13, color: "var(--navy)", fontWeight: 500, marginBottom: 4 }}>{addr.line}</div>
+                        <div style={{ fontSize: 11, color: "var(--sub)" }}>{addr.landmark}, {addr.city} - {addr.pincode}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ padding: 24, textAlign: "center", color: "var(--sub)", fontSize: 13, border: "1px dashed var(--border)", marginBottom: 24 }}>
+                  No saved addresses found.
+                </div>
+              )}
+
+              {!showAddAddressForm ? (
+                <button onClick={() => setShowAddAddressForm(true)} style={{ background: "transparent", color: "var(--navy)", border: "1px dashed var(--navy)", padding: "14px", width: "100%", fontSize: 12, letterSpacing: 1, textTransform: "uppercase", fontWeight: 500, cursor: "pointer" }}>
+                  + Add New Address
+                </button>
+              ) : (
+                <div style={{ borderTop: "1px solid var(--border)", paddingTop: 24 }}>
+                  <h4 style={{ fontFamily: "var(--font-d)", fontSize: 16, color: "var(--navy)", marginBottom: 16 }}>New Address</h4>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    <input style={{ padding: "12px 0", border: "none", borderBottom: "1px solid var(--border2)", outline: "none", background: "transparent", fontSize: 14, color: "var(--navy)" }} type="text" placeholder="House / Flat No., Street" value={newAddrLine} onChange={(e) => setNewAddrLine(e.target.value)} />
+                    <input style={{ padding: "12px 0", border: "none", borderBottom: "1px solid var(--border2)", outline: "none", background: "transparent", fontSize: 14, color: "var(--navy)" }} type="text" placeholder="Landmark" value={newAddrLandmark} onChange={(e) => setNewAddrLandmark(e.target.value)} />
+                    <div style={{ display: "flex", gap: 16 }}>
+                      <input style={{ flex: 1, padding: "12px 0", border: "none", borderBottom: "1px solid var(--border2)", outline: "none", background: "transparent", fontSize: 14, color: "var(--navy)" }} type="text" placeholder="City" value={newAddrCity} onChange={(e) => setNewAddrCity(e.target.value)} />
+                      <input style={{ flex: 1, padding: "12px 0", border: "none", borderBottom: "1px solid var(--border2)", outline: "none", background: "transparent", fontSize: 14, color: "var(--navy)" }} type="tel" placeholder="Pincode" maxLength={6} inputMode="numeric" value={newAddrPincode} onChange={(e) => setNewAddrPincode(e.target.value.replace(/\D/g, "").slice(0, 6))} />
+                    </div>
+                    <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+                      <button style={{ flex: 1, background: "transparent", color: "var(--navy)", border: "1px solid var(--border2)", padding: 12, fontSize: 11, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer" }} onClick={() => setShowAddAddressForm(false)}>Cancel</button>
+                      <button style={{ flex: 1, background: "var(--navy)", color: "white", border: "none", padding: 12, fontSize: 11, letterSpacing: 1, textTransform: "uppercase", cursor: "pointer" }} onClick={handleAddAddress}>Save Address</button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -779,13 +1382,13 @@ const s = {
     width: 72,
     height: 72,
     borderRadius: 24,
-    background: "rgba(26, 13, 220, 0.08)",
-    border: "1px solid rgba(26, 13, 220, 0.15)",
+    background: "rgba(176,125,58,0.15)",
+    border: "1px solid rgba(176,125,58,0.15)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 8,
-    boxShadow: "0 0 40px rgba(26, 13, 220, 0.1)",
+    boxShadow: "0 0 40px rgba(176,125,58,0.15)",
   },
   topNav: {
     display: "flex",
@@ -798,13 +1401,13 @@ const s = {
     borderBottom: "1px solid rgba(255,255,255,0.04)",
   },
   heroBanner: {
-    background: "linear-gradient(135deg, var(--blue-vivid), var(--blue-electric), var(--blue-bright))",
+    background: "linear-gradient(135deg, var(--gold), var(--blue-electric), var(--blue-bright))",
     padding: "28px 24px",
     borderRadius: 28,
     color: "white",
     position: "relative",
     overflow: "hidden",
-    boxShadow: "0 12px 40px rgba(26, 13, 220, 0.3)",
+    boxShadow: "0 12px 40px rgba(176,125,58,0.15)",
   },
   heroBannerGlow: {
     position: "absolute",
@@ -831,10 +1434,10 @@ const s = {
     whiteSpace: "nowrap",
   },
   catBtnActive: {
-    background: "linear-gradient(135deg, var(--blue-electric), var(--blue-vivid))",
+    background: "linear-gradient(135deg, var(--blue-electric), var(--gold))",
     color: "white",
     border: "1px solid transparent",
-    boxShadow: "0 4px 20px rgba(26, 13, 220, 0.3)",
+    boxShadow: "0 4px 20px rgba(176,125,58,0.15)",
   },
   productGrid: {
     display: "grid",
@@ -925,7 +1528,7 @@ const s = {
     width: 18,
     height: 18,
     borderRadius: "50%",
-    background: "var(--aurora-rose)",
+    background: "var(--red)",
     color: "white",
     fontSize: 9,
     fontWeight: 800,
@@ -934,3 +1537,5 @@ const s = {
     justifyContent: "center",
   },
 };
+
+

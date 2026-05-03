@@ -2,9 +2,9 @@
 export const dynamic = 'force-dynamic';
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { auth, db } from "@/lib/firebase";
+import { auth, db, IMGBB_API_KEY } from "@/lib/firebase";
 import {
-  signInWithEmailAndPassword, createUserWithEmailAndPassword,
+  RecaptchaVerifier, signInWithPhoneNumber,
   onAuthStateChanged, signOut,
 } from "firebase/auth";
 import {
@@ -15,14 +15,34 @@ import {
 export default function DeliveryPage() {
   const [user, setUser] = useState(null);
   const [riderData, setRiderData] = useState(null);
-  const [isLogin, setIsLogin] = useState(true);
-  const [email, setEmail] = useState("");
-  const [pass, setPass] = useState("");
-  const [riderName, setRiderName] = useState("");
-  const [vehicle, setVehicle] = useState("");
+  const [isPending, setIsPending] = useState(false);
+
+  // Auth flow states
+  const [authStep, setAuthStep] = useState("phone"); // phone, otp, basic, vehicle, documents, availability
+  const [authPhone, setAuthPhone] = useState("");
+  const [authOtp, setAuthOtp] = useState(["", "", "", "", "", ""]);
+  const [confirmResult, setConfirmResult] = useState(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [agreedTerms, setAgreedTerms] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
+
+  // Form Fields
+  const [riderName, setRiderName] = useState("");
+  const [address, setAddress] = useState("");
+  
+  const [vehicleType, setVehicleType] = useState("Bike");
+  const [vehicleNumber, setVehicleNumber] = useState("");
+  
+  const [idProofFile, setIdProofFile] = useState(null);
+  const [idProofPreview, setIdProofPreview] = useState("");
+  const [drivingLicenseFile, setDrivingLicenseFile] = useState(null);
+  const [drivingLicensePreview, setDrivingLicensePreview] = useState("");
+  const [rcBookFile, setRcBookFile] = useState(null);
+  const [rcBookPreview, setRcBookPreview] = useState("");
+  
+  const [workingHours, setWorkingHours] = useState("");
+  const [preferredZone, setPreferredZone] = useState("");
+  const [upiId, setUpiId] = useState("");
 
   const [isOnline, setIsOnline] = useState(false);
   const [tab, setTab] = useState("jobs");
@@ -80,17 +100,96 @@ export default function DeliveryPage() {
     return () => unsub();
   }, [user]);
 
-  const handleAuth = async () => {
+  const setupRecaptcha = () => {
+    if (!window.recaptchaVerifier) {
+      window.recaptchaVerifier = new RecaptchaVerifier(auth, "recaptcha-container", { size: "invisible" });
+    }
+    return window.recaptchaVerifier;
+  };
+
+  const handleSendOtp = async () => {
+    if (authPhone.length !== 10) return alert("Enter a valid 10-digit number.");
     setAuthLoading(true);
     try {
-      if (isLogin) { await signInWithEmailAndPassword(auth, email, pass); }
-      else {
-        const res = await createUserWithEmailAndPassword(auth, email, pass);
-        await setDoc(doc(db, "delivery_profile", res.user.uid), {
-          name: riderName, vehicle, email, role: "delivery", online: false, earnings: 0, deliveryCount: 0,
-        });
+      const fullPhone = "+91" + authPhone;
+      const appVerifier = setupRecaptcha();
+      const result = await signInWithPhoneNumber(auth, fullPhone, appVerifier);
+      setConfirmResult(result);
+      setAuthStep("otp");
+    } catch (e) {
+      alert("Error: " + e.message);
+      if (window.recaptchaVerifier) { window.recaptchaVerifier.clear(); window.recaptchaVerifier = null; }
+    }
+    setAuthLoading(false);
+  };
+
+  const handleVerifyOtp = async () => {
+    const otp = authOtp.join("");
+    if (otp.length < 6) return alert("Enter the 6-digit OTP.");
+    setAuthLoading(true);
+    try {
+      const result = await confirmResult.confirm(otp);
+      const snap = await getDoc(doc(db, "delivery_profile", result.user.uid));
+      if (!snap.exists() || snap.data().role !== "delivery") {
+        setAuthStep("basic");
       }
-    } catch (e) { alert(e.message); }
+    } catch (e) {
+      alert("Invalid OTP. Please try again.");
+      setAuthOtp(["", "", "", "", "", ""]);
+    }
+    setAuthLoading(false);
+  };
+
+  const handleOtpChange = (index, value) => {
+    if (value.length > 1) value = value.slice(-1);
+    if (value && !/^\d$/.test(value)) return;
+    const newOtp = [...authOtp];
+    newOtp[index] = value;
+    setAuthOtp(newOtp);
+    if (value && index < 5) {
+      const next = document.getElementById(`otp-${index + 1}`);
+      if (next) next.focus();
+    }
+  };
+
+  const handleOtpKeyDown = (index, e) => {
+    if (e.key === "Backspace" && !authOtp[index] && index > 0) {
+      const prev = document.getElementById(`otp-${index - 1}`);
+      if (prev) prev.focus();
+    }
+  };
+
+  const uploadToImgBB = async (file) => {
+    const formData = new FormData();
+    formData.append("image", file);
+    const res = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`, { method: "POST", body: formData });
+    const data = await res.json();
+    if (!data.success) throw new Error("Image upload failed.");
+    return data.data.url;
+  };
+
+  const submitRegistration = async () => {
+    if (!agreedTerms) return alert("You must agree to the Terms & Conditions.");
+    setAuthLoading(true);
+    try {
+      let idProofUrl = "";
+      let drivingLicenseUrl = "";
+      let rcBookUrl = "";
+      if (idProofFile) idProofUrl = await uploadToImgBB(idProofFile);
+      if (drivingLicenseFile) drivingLicenseUrl = await uploadToImgBB(drivingLicenseFile);
+      if (rcBookFile) rcBookUrl = await uploadToImgBB(rcBookFile);
+
+      await setDoc(doc(db, "delivery_profile", auth.currentUser.uid), {
+        phone: "+91" + authPhone,
+        name: riderName, address, email,
+        vehicleType, vehicleNumber,
+        idProofUrl, drivingLicenseUrl, rcBookUrl,
+        workingHours, preferredZone, upiId,
+        role: "delivery", approved: false, online: false, earnings: 0, deliveryCount: 0,
+        createdAt: new Date(),
+      });
+      setIsPending(true);
+    } catch (e) { alert("Registration failed: " + e.message); }
     setAuthLoading(false);
   };
 
@@ -136,49 +235,163 @@ export default function DeliveryPage() {
   if (!user) {
     return (
       <>
-        <div className="luxury-bg"><div className="grain" /></div>
-        <div className="page-content lp-light" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 20, position: "relative", zIndex: 1 }}>
-          <Link href="/" style={{ position: "fixed", top: 20, left: 20, zIndex: 100, width: 42, height: 42, borderRadius: 12, background: "rgba(255,255,255,0.85)", border: "1px solid rgba(0,0,0,0.08)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "var(--blue-vivid)", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", transition: "all 0.3s ease" }}>
+        <div className=""><div className="" /></div>
+        <div id="recaptcha-container" />
+        <div className="page-content " style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 20, position: "relative", zIndex: 1 }}>
+          <Link href="/" style={{ position: "fixed", top: 20, left: 20, zIndex: 100, width: 42, height: 42, borderRadius: 12, background: "rgba(255,255,255,0.85)", border: "1px solid rgba(0,0,0,0.08)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "var(--gold)", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", transition: "all 0.3s ease", display: "none" }}>
             <i className="fas fa-house" style={{ fontSize: 16 }} />
           </Link>
-          <div className="animate-scale-in premium-card" style={s.authCard}>
-            <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-              <div style={{ ...s.authLogo, background: "var(--blue-subtle)", border: "1px solid var(--border-blue)" }}>
-                <i className="fas fa-motorcycle" style={{ fontSize: 28, color: "var(--blue-electric)" }} />
-              </div>
-              <h1 style={{ fontSize: 24, fontWeight: 900 }}>Rider Login</h1>
-              <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Join the Dresho Delivery Fleet ⚡</p>
+          <div className="animate-scale-in" style={s.authCard}>
+            <div style={{ position: "absolute", top: 16, right: 20, cursor: "pointer", color: "var(--sub)" }}>
+              <i className="fas fa-question-circle" style={{ fontSize: 18 }} />
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              {!isLogin && (
-                <>
-                  <input className="glass-input" placeholder="Full Name" value={riderName} onChange={(e) => setRiderName(e.target.value)} />
-                  <input className="glass-input" placeholder="Vehicle Number (DL 1S AB 1234)" value={vehicle} onChange={(e) => setVehicle(e.target.value)} />
-                </>
-              )}
-              <input className="glass-input" type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-              <input className="glass-input" type="password" placeholder="Password" value={pass} onChange={(e) => setPass(e.target.value)} />
-              {!isLogin && (
+            {/* Header */}
+            <div style={{ textAlign: "center", marginBottom: 32 }}>
+              <h1 style={{ fontFamily: "var(--font-d)", fontSize: 44, fontWeight: 400, color: "var(--navy)", letterSpacing: 4, marginBottom: 12 }}>
+                Dres<span style={{ color: "var(--gold)" }}>h</span>o
+              </h1>
+              <p style={{ color: "var(--sub)", fontSize: 11, letterSpacing: 3, textTransform: "uppercase", fontWeight: 600 }}>Rider Access</p>
+            </div>
+
+            {/* Steps Indicator */}
+            {authStep !== "phone" && authStep !== "otp" && (
+              <div style={{ display: "flex", gap: 6, justifyContent: "center", marginTop: -10 }}>
+                {["basic", "vehicle", "documents", "availability"].map((stepItem) => (
+                  <div key={stepItem} style={{ width: authStep === stepItem ? 20 : 8, height: 8, borderRadius: 4, background: authStep === stepItem ? "var(--navy)" : "rgba(139,69,19,0.15)", transition: "all 0.3s ease" }} />
+                ))}
+              </div>
+            )}
+
+            {/* ── STEP 1: Phone ── */}
+            {authStep === "phone" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                <div style={{ position: "relative" }}>
+                  <span style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", color: "var(--navy)", fontWeight: 500, fontSize: 15 }}>+91</span>
+                  <input type="tel" maxLength={10} placeholder="Mobile Number" value={authPhone} onChange={(e) => setAuthPhone(e.target.value.replace(/\D/g, ""))} style={{ width: "100%", padding: "18px 16px 18px 52px", background: "#f0f4f8", border: "none", fontSize: 15, color: "var(--navy)", outline: "none" }} autoFocus />
+                </div>
+                <button style={{ width: "100%", padding: "18px", background: "var(--navy)", color: "#fff", border: "none", fontSize: 12, letterSpacing: 2, textTransform: "uppercase", fontWeight: 500, cursor: "pointer", transition: "background 0.3s", marginTop: 8 }} onClick={handleSendOtp} disabled={authLoading}>
+                  {authLoading ? <i className="fas fa-circle-notch fa-spin" /> : "Access Rider Panel"}
+                </button>
+                <div style={{ textAlign: "center", marginTop: 16 }}>
+                  <Link href="/" style={{ fontSize: 11, color: "var(--sub)", textTransform: "uppercase", letterSpacing: 1, textDecoration: "none" }}>? Back to Customer Login</Link>
+                </div>
+              </div>
+            )}
+
+            {/* ── STEP 2: OTP ── */}
+            {authStep === "otp" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <p style={{ textAlign: "center", fontSize: 13, color: "var(--text-tertiary)" }}>Sent to +91 {authPhone}</p>
+                <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+                  {authOtp.map((digit, i) => (
+                    <input key={i} id={`otp-${i}`} type="tel" maxLength={1} value={digit} onChange={(e) => handleOtpChange(i, e.target.value)} onKeyDown={(e) => handleOtpKeyDown(i, e)} style={{ width: 44, height: 52, borderRadius: 12, border: "1px solid rgba(0,0,0,0.08)", textAlign: "center", fontSize: 20, fontWeight: 700, background: "rgba(255,255,255,0.8)" }} />
+                  ))}
+                </div>
+                <button className="btn-slide-primary" onClick={handleVerifyOtp} disabled={authLoading}>
+                  {authLoading ? <i className="fas fa-circle-notch fa-spin" /> : "Verify & Continue"}
+                </button>
+                <button className="btn-slide-ghost" onClick={() => setAuthStep("phone")} style={{ fontSize: 12 }}>Change Number</button>
+              </div>
+            )}
+
+            {/* ── STEP 3: Basic Info ── */}
+            {authStep === "basic" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <input className="glass-input" placeholder="Full Name" value={riderName} onChange={(e) => setRiderName(e.target.value)} />
+                <input className="glass-input" placeholder="Full Address" value={address} onChange={(e) => setAddress(e.target.value)} />
+                <input className="glass-input" type="email" placeholder="Email (Optional)" value={email} onChange={(e) => setEmail(e.target.value)} />
+                <button className="btn-slide-primary" onClick={() => {
+                  if(!riderName || !address) return alert("Fill required fields");
+                  setAuthStep("vehicle");
+                }}>Next</button>
+              </div>
+            )}
+
+            {/* ── STEP 4: Vehicle Info ── */}
+            {authStep === "vehicle" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <select className="glass-input" value={vehicleType} onChange={(e) => setVehicleType(e.target.value)} style={{ cursor: "pointer" }}>
+                  <option value="Bike">Bike</option>
+                  <option value="Scooter">Scooter</option>
+                </select>
+                <input className="glass-input" placeholder="Vehicle Number (e.g. DL 1S AB 1234)" value={vehicleNumber} onChange={(e) => setVehicleNumber(e.target.value)} />
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button className="btn-slide-ghost" onClick={() => setAuthStep("basic")} style={{ flex: 1 }}>Back</button>
+                  <button className="btn-slide-primary" onClick={() => {
+                    if(!vehicleNumber) return alert("Fill Vehicle Number");
+                    setAuthStep("documents");
+                  }} style={{ flex: 1 }}>Next</button>
+                </div>
+              </div>
+            )}
+
+            {/* ── STEP 5: Documents ── */}
+            {authStep === "documents" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div>
+                    <p style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>ID PROOF (Aadhar/PAN)</p>
+                    <input type="file" accept="image/*" onChange={(e) => {
+                      const f = e.target.files[0]; if(f) { setIdProofFile(f); setIdProofPreview(URL.createObjectURL(f)); }
+                    }} style={{ display: "none" }} id="idUpload" />
+                    <div onClick={() => document.getElementById("idUpload").click()} style={{ minHeight: 100, border: "2px dashed var(--border2)", borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", cursor: "pointer", background: "rgba(255,255,255,0.5)", transition: "all 0.3s ease" }}>
+                      {idProofPreview ? <img src={idProofPreview} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 16 }} /> : <p style={{ fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)" }}>Tap to upload</p>}
+                    </div>
+                  </div>
+                  <div>
+                    <p style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>DRIVING LICENSE</p>
+                    <input type="file" accept="image/*" onChange={(e) => {
+                      const f = e.target.files[0]; if(f) { setDrivingLicenseFile(f); setDrivingLicensePreview(URL.createObjectURL(f)); }
+                    }} style={{ display: "none" }} id="dlUpload" />
+                    <div onClick={() => document.getElementById("dlUpload").click()} style={{ minHeight: 100, border: "2px dashed var(--border2)", borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", cursor: "pointer", background: "rgba(255,255,255,0.5)", transition: "all 0.3s ease" }}>
+                      {drivingLicensePreview ? <img src={drivingLicensePreview} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 16 }} /> : <p style={{ fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)" }}>Tap to upload</p>}
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <p style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>VEHICLE RC BOOK</p>
+                  <input type="file" accept="image/*" onChange={(e) => {
+                    const f = e.target.files[0]; if(f) { setRcBookFile(f); setRcBookPreview(URL.createObjectURL(f)); }
+                  }} style={{ display: "none" }} id="rcUpload" />
+                  <div onClick={() => document.getElementById("rcUpload").click()} style={{ minHeight: 100, border: "2px dashed var(--border2)", borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", cursor: "pointer", background: "rgba(255,255,255,0.5)", transition: "all 0.3s ease" }}>
+                    {rcBookPreview ? <img src={rcBookPreview} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 16 }} /> : <p style={{ fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)" }}>Tap to upload</p>}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+                  <button className="btn-slide-ghost" onClick={() => setAuthStep("vehicle")} style={{ flex: 1 }}>Back</button>
+                  <button className="btn-slide-primary" onClick={() => {
+                    if(!idProofFile || !drivingLicenseFile || !rcBookFile) return alert("ID, Driving License, and RC Book are required");
+                    setAuthStep("availability");
+                  }} style={{ flex: 1 }}>Next</button>
+                </div>
+              </div>
+            )}
+
+            {/* ── STEP 6: Availability ── */}
+            {authStep === "availability" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <input className="glass-input" placeholder="Working Hours (e.g. 10 AM - 8 PM)" value={workingHours} onChange={(e) => setWorkingHours(e.target.value)} />
+                <input className="glass-input" placeholder="Preferred Area/Zone" value={preferredZone} onChange={(e) => setPreferredZone(e.target.value)} />
+                <input className="glass-input" placeholder="UPI ID (For Payments)" value={upiId} onChange={(e) => setUpiId(e.target.value)} />
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginTop: 4 }}>
-                  <input type="checkbox" checked={agreedTerms} onChange={(e) => setAgreedTerms(e.target.checked)} style={{ marginTop: 3, accentColor: "var(--blue-vivid)", width: 18, height: 18, cursor: "pointer" }} />
+                  <input type="checkbox" checked={agreedTerms} onChange={(e) => setAgreedTerms(e.target.checked)} style={{ marginTop: 3, accentColor: "var(--gold)", width: 18, height: 18, cursor: "pointer" }} />
                   <p style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
-                    I agree to Dresho&apos;s{" "}
-                    <span onClick={() => setShowTermsModal(true)} style={{ color: "var(--blue-vivid)", fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Delivery Partner Agreement</span>
+                    I agree to Dresho&apos;s <span onClick={() => setShowTermsModal(true)} style={{ color: "var(--gold)", fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Delivery Partner Agreement</span>
                   </p>
                 </div>
-              )}
-              <button className="btn-primary" onClick={handleAuth} disabled={authLoading || (!isLogin && !agreedTerms)} style={{ opacity: (!isLogin && !agreedTerms) ? 0.5 : 1 }}>
-                {authLoading ? "..." : isLogin ? "Sign In" : "Register as Rider"}
-              </button>
-              <button className="btn-ghost" onClick={() => setIsLogin(!isLogin)} style={{ textAlign: "center", color: "var(--blue-electric)" }}>
-                {isLogin ? "Need to Register?" : "Already a Rider?"}
-              </button>
-            </div>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button className="btn-slide-ghost" onClick={() => setAuthStep("documents")} style={{ flex: 1 }}>Back</button>
+                  <button className="btn-slide-primary" onClick={submitRegistration} disabled={authLoading} style={{ flex: 1 }}>
+                    {authLoading ? <i className="fas fa-circle-notch fa-spin" /> : "Submit Application"}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
           {showTermsModal && (
             <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setShowTermsModal(false)}>
               <div onClick={(e) => e.stopPropagation()} style={{ background: "white", borderRadius: 24, padding: "28px 24px", maxWidth: 480, width: "100%", maxHeight: "80vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }}>
-                <h3 style={{ fontSize: 20, fontWeight: 900, marginBottom: 16, color: "var(--blue-vivid)" }}>Delivery Partner Agreement</h3>
+                <h3 style={{ fontSize: 20, fontWeight: 900, marginBottom: 16, color: "var(--gold)" }}>Delivery Partner Agreement</h3>
                 <div style={{ fontSize: 13, color: "#444", lineHeight: 1.7 }}>
                   <p><strong>1. Role</strong> — The Rider agrees to pick up and deliver orders assigned via the Dresho platform.</p>
                   <p><strong>2. Independent Contractor</strong> — The Rider is not an employee. No salary, PF, or employment benefits are applicable.</p>
@@ -188,7 +401,7 @@ export default function DeliveryPage() {
                   <p><strong>6. Penalties</strong> — Late delivery / misconduct may result in penalties or suspension.</p>
                   <p><strong>7. Termination</strong> — Dresho can suspend or terminate rider access anytime for misconduct or poor performance.</p>
                 </div>
-                <h3 style={{ fontSize: 20, fontWeight: 900, margin: "20px 0 16px", color: "var(--blue-vivid)" }}>Privacy Policy</h3>
+                <h3 style={{ fontSize: 20, fontWeight: 900, margin: "20px 0 16px", color: "var(--gold)" }}>Privacy Policy</h3>
                 <div style={{ fontSize: 13, color: "#444", lineHeight: 1.7 }}>
                   <p><strong>1. Information Collected</strong> — Name, phone number, address, payment details (via secure gateways), app usage data.</p>
                   <p><strong>2. Use of Information</strong> — To process orders, improve user experience, and provide customer support.</p>
@@ -196,13 +409,13 @@ export default function DeliveryPage() {
                   <p><strong>4. Security</strong> — We use secure systems to protect user data.</p>
                   <p><strong>5. Consent</strong> — By using Dresho, users agree to this policy.</p>
                 </div>
-                <h3 style={{ fontSize: 20, fontWeight: 900, margin: "20px 0 16px", color: "var(--blue-vivid)" }}>Contact & Support</h3>
+                <h3 style={{ fontSize: 20, fontWeight: 900, margin: "20px 0 16px", color: "var(--gold)" }}>Contact & Support</h3>
                 <div style={{ fontSize: 13, color: "#444", lineHeight: 1.7 }}>
                   <p>📧 Email: <strong>dresho.business@gmail.com</strong></p>
                   <p>💬 WhatsApp: <strong>+91 9128926837</strong> (10 AM – 8 PM, All Days)</p>
                   <p>📍 Service Area: <strong>Hazaribagh, Jharkhand</strong></p>
                 </div>
-                <button className="btn-primary" style={{ width: "100%", marginTop: 20 }} onClick={() => { setAgreedTerms(true); setShowTermsModal(false); }}>I Agree</button>
+                <button className="btn-slide-primary" style={{ width: "100%", marginTop: 20 }} onClick={() => { setAgreedTerms(true); setShowTermsModal(false); }}>I Agree</button>
               </div>
             </div>
           )}
@@ -214,17 +427,17 @@ export default function DeliveryPage() {
   // MAIN RIDER APP
   return (
     <>
-      <div className="luxury-bg"><div className="grain" /></div>
-      <div className="page-content lp-light" style={{ paddingBottom: 40, position: "relative", zIndex: 1 }}>
+      <div className=""><div className="" /></div>
+      <div className="page-content " style={{ paddingBottom: 40, position: "relative", zIndex: 1 }}>
         {/* Top Nav */}
         <nav style={s.topNav} className="premium-nav">
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <Link href="/" style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(26,13,220,0.06)", border: "1px solid rgba(26,13,220,0.12)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "var(--blue-vivid)", transition: "all 0.3s ease", flexShrink: 0 }}>
+            <Link href="/" style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(26,13,220,0.06)", border: "1px solid rgba(26,13,220,0.12)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "var(--gold)", transition: "all 0.3s ease", flexShrink: 0 }}>
               <i className="fas fa-house" style={{ fontSize: 13 }} />
             </Link>
             <div>
-              <h2 style={{ fontSize: 18, fontWeight: 900, color: "var(--blue-vivid)", letterSpacing: 2 }}>DRESHO RIDER</h2>
-              <p style={{ fontSize: 10, fontWeight: 700, color: isOnline ? "var(--blue-electric)" : "var(--text-muted)", letterSpacing: 2, textTransform: "uppercase" }}>
+              <h2 style={{ fontSize: 18, fontWeight: 900, color: "var(--gold)", letterSpacing: 2 }}>DRESHO RIDER</h2>
+              <p style={{ fontSize: 10, fontWeight: 700, color: isOnline ? "var(--navy)" : "var(--text-muted)", letterSpacing: 2, textTransform: "uppercase" }}>
                 {isOnline ? "Online" : "Offline"}
               </p>
             </div>
@@ -277,7 +490,7 @@ export default function DeliveryPage() {
               <button key={t} onClick={() => setTab(t)} style={{
                 flex: 1, padding: "12px", borderRadius: 12, fontSize: 14, fontWeight: 700,
                 background: tab === t ? "white" : "transparent",
-                color: tab === t ? "var(--blue-electric)" : "var(--text-muted)",
+                color: tab === t ? "var(--navy)" : "var(--text-muted)",
                 border: "none", cursor: "pointer", fontFamily: "Inter, sans-serif",
                 transition: "all 0.3s ease",
                 boxShadow: tab === t ? "0 2px 10px rgba(0,0,0,0.2)" : "none",
@@ -307,13 +520,13 @@ export default function DeliveryPage() {
                     <div key={o.id} className="premium-card animate-fade-in-up" style={{ padding: "20px 22px", borderRadius: 24, cursor: "default" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                         <span className="badge badge-purple">New Job</span>
-                        <span style={{ fontWeight: 800, color: "var(--blue-electric)" }}>₹40 Earning</span>
+                        <span style={{ fontWeight: 800, color: "var(--navy)" }}>₹40 Earning</span>
                       </div>
                       <h5 style={{ fontWeight: 700, marginBottom: 4 }}>{o.userName}</h5>
                       <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         <i className="fas fa-location-dot" style={{ marginRight: 6 }} />{o.userAddress}
                       </p>
-                      <button className="btn-primary" style={{ borderRadius: 14 }} onClick={() => acceptOrder(o.id)}>
+                      <button className="btn-slide-primary" style={{ borderRadius: 14 }} onClick={() => acceptOrder(o.id)}>
                         Accept Delivery
                       </button>
                     </div>
@@ -350,7 +563,7 @@ export default function DeliveryPage() {
                         <a href={`tel:${o.userPhone}`} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px", borderRadius: 16, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", fontWeight: 700, fontSize: 14, color: "var(--text-primary)", textDecoration: "none" }}>
                           <i className="fas fa-phone" /> Call
                         </a>
-                        <button className="btn-primary" style={{ borderRadius: 16, padding: "14px", background: "linear-gradient(135deg, #14b8a6, #0d9488)" }} onClick={() => openOtpModal(o.id, o.deliveryOtp)}>
+                        <button className="btn-slide-primary" style={{ borderRadius: 16, padding: "14px", background: "linear-gradient(135deg, #14b8a6, #0d9488)" }} onClick={() => openOtpModal(o.id, o.deliveryOtp)}>
                           Complete
                         </button>
                       </div>
@@ -376,10 +589,10 @@ export default function DeliveryPage() {
                 placeholder="0000"
                 style={{ textAlign: "center", fontSize: 32, fontWeight: 900, letterSpacing: 12, padding: "20px" }}
               />
-              <button className="btn-primary" style={{ marginTop: 20, borderRadius: 16, background: "linear-gradient(135deg, #14b8a6, #0d9488)" }} onClick={confirmDelivery}>
+              <button className="btn-slide-primary" style={{ marginTop: 20, borderRadius: 16, background: "linear-gradient(135deg, #14b8a6, #0d9488)" }} onClick={confirmDelivery}>
                 Complete Delivery
               </button>
-              <button className="btn-ghost" style={{ width: "100%", marginTop: 8, textAlign: "center", color: "var(--text-tertiary)" }} onClick={() => setShowOtp(false)}>
+              <button className="btn-slide-ghost" style={{ width: "100%", marginTop: 8, textAlign: "center", color: "var(--text-tertiary)" }} onClick={() => setShowOtp(false)}>
                 Cancel
               </button>
             </div>
@@ -392,9 +605,10 @@ export default function DeliveryPage() {
 
 const s = {
   authCard: {
-    width: "100%", maxWidth: 420, background: "rgba(255, 255, 255, 0.9)", backdropFilter: "blur(40px)",
-    border: "1px solid rgba(0,0,0,0.06)", borderRadius: 36, padding: 40,
-    display: "flex", flexDirection: "column", gap: 28,
+    width: "100%", maxWidth: 460, background: "var(--white)",
+    border: "1px solid var(--border)", padding: "48px 40px",
+    display: "flex", flexDirection: "column", gap: 24, position: "relative",
+    boxShadow: "0 20px 60px rgba(20,33,61,0.08)",
   },
   authLogo: {
     width: 72, height: 72, borderRadius: 24, display: "flex", alignItems: "center", justifyContent: "center",
@@ -407,7 +621,7 @@ const s = {
     borderBottom: "1px solid rgba(0,0,0,0.05)",
   },
   earningsCard: {
-    background: "linear-gradient(135deg, var(--blue-vivid), var(--blue-electric), var(--blue-bright))",
+    background: "linear-gradient(135deg, var(--gold), var(--navy), var(--blue-bright))",
     padding: "28px 24px",
     borderRadius: 28,
     color: "white",
@@ -424,3 +638,4 @@ const s = {
     textAlign: "center", padding: 60, display: "flex", flexDirection: "column", alignItems: "center",
   },
 };
+

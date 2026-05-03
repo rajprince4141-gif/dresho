@@ -30,7 +30,7 @@ export const metadata = {
 };
 
 export const viewport = {
-  themeColor: "#F5F4F0",
+  themeColor: "#14213D",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
@@ -52,7 +52,7 @@ export default function RootLayout({ children }) {
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap"
           rel="stylesheet"
         />
         {/* PWA */}
@@ -66,7 +66,7 @@ export default function RootLayout({ children }) {
         <meta name="msapplication-TileColor" content="#1A0DDC" />
         <meta name="format-detection" content="telephone=no" />
       </head>
-      <body>{children}</body>
+      <body suppressHydrationWarning>{children}</body>
     </html>
   );
 }
