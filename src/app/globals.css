@@ -475,6 +475,11 @@ footer{background:var(--ivory2);border-top:1px solid var(--border);}
   /* Modal full-screen on mobile */
   .modal-content{max-width:100%;margin:0;border-radius:20px 20px 0 0;position:fixed;bottom:0;left:0;right:0;}
   .modal-overlay{align-items:flex-end;}
+
+  .auth-card {
+    padding: 32px 20px !important;
+    gap: 16px !important;
+  }
 }
 
 /* Small phones (max 375px) */
@@ -487,4 +492,82 @@ footer{background:var(--ivory2);border-top:1px solid var(--border);}
   .hero-banner{height:240px;}
   .hero-slide{height:240px;padding:20px 16px;}
   .slide-title{font-size:24px;}
+}
+
+/* ═══ AUTH FORMS ═══ */
+.auth-card {
+  width: 100%;
+  max-width: 460px;
+  background: var(--white);
+  border: 1px solid var(--border);
+  padding: 48px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  position: relative;
+  box-shadow: 0 20px 60px rgba(20,33,61,0.08);
+}
+
+.glass-input {
+  width: 100%;
+  padding: 16px 20px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1.5px solid rgba(20, 33, 61, 0.1);
+  border-radius: 12px;
+  font-family: var(--font-b);
+  font-size: 14px;
+  color: var(--navy);
+  outline: none;
+  transition: all 0.3s ease;
+}
+.glass-input::placeholder {
+  color: var(--muted);
+}
+.glass-input:focus {
+  border-color: var(--gold);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 4px 16px rgba(176, 125, 58, 0.1);
+}
+
+.auth-btn-ghost {
+  background: transparent;
+  color: var(--navy);
+  border: 1.5px solid rgba(20, 33, 61, 0.15);
+  padding: 14px 28px;
+  border-radius: 12px;
+  font-family: var(--font-b);
+  font-size: 12px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.auth-btn-ghost:hover {
+  border-color: var(--navy);
+  background: rgba(20, 33, 61, 0.04);
+}
+
+.auth-btn-primary {
+  background: var(--navy);
+  color: #fff;
+  border: none;
+  padding: 14px 28px;
+  border-radius: 12px;
+  font-family: var(--font-b);
+  font-size: 12px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.auth-btn-primary:hover {
+  background: var(--gold);
 }
