@@ -605,7 +605,7 @@ footer{background:var(--ivory2);border-top:1px solid var(--border);padding-botto
   .admin-sidebar {
     transform: translateX(-100%);
     transition: transform 0.3s ease;
-    background: var(--ivory) !important;
+    background: #EAE6DF !important; /* matching the image background */
   }
   .admin-sidebar.open {
     transform: translateX(0);
@@ -613,9 +613,105 @@ footer{background:var(--ivory2);border-top:1px solid var(--border);padding-botto
   .admin-main {
     margin-left: 0 !important;
     padding: 24px 20px !important;
+    background: #EAE6DF;
+    min-height: 100vh;
   }
   .admin-menu-btn {
-    display: block !important;
-    margin-bottom: 24px;
+    display: none !important; /* Disable old button */
+  }
+}
+
+.admin-mobile-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 32px;
+}
+.admin-menu-btn-new {
+  width: 44px;
+  height: 44px;
+  background: white;
+  border-radius: 12px;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+}
+.admin-menu-btn-new div {
+  width: 18px;
+  height: 3px;
+  background: var(--navy);
+  margin: 2px 0;
+  border-radius: 2px;
+}
+.admin-avatar {
+  width: 44px;
+  height: 44px;
+  background: var(--navy);
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 18px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.admin-mobile-status-pill {
+  background: white;
+  border-radius: 16px;
+  padding: 14px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+  margin-bottom: 24px;
+}
+
+.admin-mobile-card {
+  background: white;
+  border-radius: 24px;
+  padding: 24px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.04);
+  margin-bottom: 16px;
+  position: relative;
+}
+.admin-mobile-card-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.admin-order-card {
+  background: white;
+  border-radius: 20px;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.03);
+  margin-bottom: 12px;
+}
+.admin-order-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 16px;
+}
+
+@media (max-width: 1024px) {
+  .admin-desktop-grid {
+    display: flex !important;
+    flex-direction: column !important;
   }
 }

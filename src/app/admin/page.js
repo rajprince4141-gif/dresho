@@ -303,57 +303,70 @@ export default function AdminPage() {
         {/* MAIN CONTENT */}
         <main className="admin-main" style={{ flex: 1, marginLeft: 240, padding: "32px 40px", overflowX: "hidden" }}>
           
-          <button className="admin-menu-btn" onClick={() => setIsMobileSidebarOpen(true)}>
-            <i className="fas fa-bars"></i>
-          </button>
+          <div className="admin-mobile-header">
+            <button className="admin-menu-btn-new" onClick={() => setIsMobileSidebarOpen(true)}>
+              <div />
+              <div />
+            </button>
+            <div className="admin-avatar">
+              N
+            </div>
+          </div>
 
           {/* DASHBOARD */}
           {tab === "dash" && (
 
             <div className="animate-fade-in">
-              <div style={{ marginBottom: 32 }}>
-                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1 }}>Platform Overview</h1>
-                <p style={{ color: "var(--text-tertiary)", marginTop: 4 }}>Real-time stats across all operations</p>
+              <div style={{ marginBottom: 24 }}>
+                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Platform<br/>Overview</h1>
+                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Real-time stats across all operations</p>
               </div>
 
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 32 }}>
-                <span className="badge badge-emerald">
-                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", marginRight: 6, display: "inline-block" }} />
+              <div className="admin-mobile-status-pill">
+                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700, color: "var(--navy)" }}>
+                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#10b981", display: "inline-block" }} />
                   System Online
-                </span>
+                </div>
+                <div style={{ background: "#ccfbf1", color: "#10b981", fontSize: 10, fontWeight: 800, padding: "4px 10px", borderRadius: 12, letterSpacing: 1 }}>
+                  LIVE
+                </div>
               </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 20, marginBottom: 32 }}>
+              <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 20, marginBottom: 32 }}>
                 {[
-                  { label: "Total Revenue", value: `₹${stats.revenue.toLocaleString("en-IN")}`, color: "var(--navy)", icon: "fa-indian-rupee-sign" },
-                  { label: "Active Orders", value: stats.active, color: "#06b6d4", icon: "fa-clock" },
-                  { label: "Sellers", value: stats.sellers, color: "#10b981", icon: "fa-store" },
-                  { label: "Delivery Fleet", value: stats.fleet, color: "#f59e0b", icon: "fa-motorcycle" },
+                  { label: "TOTAL REVENUE", value: `₹${stats.revenue.toLocaleString("en-IN")}`, color: "#14b8a6", bg: "#ccfbf1", icon: "fa-indian-rupee-sign", sub: "Updated just now" },
+                  { label: "ACTIVE ORDERS", value: stats.active, color: "#f59e0b", bg: "#fef3c7", icon: "fa-clock", sub: "In progress" },
+                  { label: "SELLERS", value: stats.sellers, color: "#3b82f6", bg: "#dbeafe", icon: "fa-store", sub: "Registered" },
+                  { label: "DELIVERY FLEET", value: stats.fleet, color: "#8b5cf6", bg: "#ede9fe", icon: "fa-motorcycle", sub: "Riders available" },
                 ].map((card, i) => (
-                  <div key={i} className="premium-card" style={{ padding: 28, borderRadius: 24, cursor: "default" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                      <div>
-                        <p className="section-label">{card.label}</p>
-                        <h3 style={{ fontSize: 32, fontWeight: 900, marginTop: 8, color: card.color }}>{card.value}</h3>
-                      </div>
-                      <div style={{ width: 48, height: 48, borderRadius: 16, background: `${card.color}15`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <i className={`fas ${card.icon}`} style={{ color: card.color, fontSize: 18 }} />
-                      </div>
+                  <div key={i} className="admin-mobile-card">
+                    <div className="admin-mobile-card-icon" style={{ background: card.bg }}>
+                      <i className={`fas ${card.icon}`} style={{ color: card.color, fontSize: 16 }} />
                     </div>
+                    <p style={{ fontSize: 11, fontWeight: 800, color: "#8a93a4", letterSpacing: 1, marginBottom: 4 }}>{card.label}</p>
+                    <h3 style={{ fontSize: 32, fontWeight: 900, color: card.color, marginBottom: 4 }}>{card.value}</h3>
+                    <p style={{ fontSize: 11, color: "#cbd5e1", fontWeight: 500 }}>{card.sub}</p>
                   </div>
                 ))}
               </div>
 
               {/* Order breakdown cards */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+              <p style={{ fontSize: 11, fontWeight: 800, color: "#8a93a4", letterSpacing: 1, marginBottom: 12, textTransform: "uppercase" }}>Order Status</p>
+              <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
                 {[
-                  { label: "Delivered", value: stats.delivered, color: "#10b981" },
-                  { label: "Pending", value: stats.pending, color: "#f59e0b" },
-                  { label: "Shipped", value: stats.shipped, color: "#8b5cf6" },
+                  { label: "Delivered", value: stats.delivered, color: "#10b981", bg: "#d1fae5", icon: "fa-check-double", sub: "Successfully completed" },
+                  { label: "Pending", value: stats.pending, color: "#f59e0b", bg: "#fef3c7", icon: "fa-hourglass-half", sub: "Awaiting dispatch" },
+                  { label: "Shipped", value: stats.shipped, color: "#8b5cf6", bg: "#ede9fe", icon: "fa-box-open", sub: "Out for delivery" },
                 ].map((item, i) => (
-                  <div key={i} className="glass-card" style={{ padding: 22, borderRadius: 20, cursor: "default", borderLeft: `3px solid ${item.color}` }}>
-                    <p style={{ fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)" }}>{item.label}</p>
-                    <h4 style={{ fontSize: 28, fontWeight: 900, color: item.color, marginTop: 6 }}>{item.value}</h4>
+                  <div key={i} className="admin-order-card" style={{ borderLeft: `6px solid ${item.color}` }}>
+                    <div className="admin-order-icon" style={{ background: item.bg }}>
+                      <i className={`fas ${item.icon}`} style={{ color: item.color, fontSize: 18 }} />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <h4 style={{ fontSize: 15, fontWeight: 800, color: "var(--navy)" }}>{item.label}</h4>
+                      <p style={{ fontSize: 11, color: "#8a93a4", fontWeight: 500, marginTop: 2 }}>{item.sub}</p>
+                    </div>
+                    <h4 style={{ fontSize: 24, fontWeight: 900, color: item.color }}>{item.value}</h4>
                   </div>
                 ))}
               </div>
@@ -364,9 +377,11 @@ export default function AdminPage() {
           {tab === "sellers" && (
 
             <div className="animate-fade-in">
-              <h1 style={{ fontSize: 28, fontWeight: 900, marginBottom: 8 }}>Seller Management</h1>
-              <p style={{ color: "var(--text-tertiary)", fontSize: 13, marginBottom: 24 }}>Approve, suspend, or remove sellers from the Dresho platform.</p>
-              <div className="glass-card" style={{ borderRadius: 24, overflow: "hidden", cursor: "default" }}>
+              <div style={{ marginBottom: 24 }}>
+                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Seller<br/>Management</h1>
+                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Approve, suspend, or remove sellers from the Dresho platform.</p>
+              </div>
+              <div className="admin-mobile-card" style={{ padding: 0, overflow: "hidden" }}>
                 <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
@@ -416,15 +431,18 @@ export default function AdminPage() {
           {/* LIVE ORDERS */}
           {tab === "orders" && (
             <div className="animate-fade-in">
-              <h1 style={{ fontSize: 28, fontWeight: 900, marginBottom: 24 }}>Global Live Orders</h1>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
+              <div style={{ marginBottom: 24 }}>
+                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Global<br/>Live Orders</h1>
+                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Monitor and track all ongoing orders</p>
+              </div>
+              <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
                 {orders.length === 0 ? (
-                  <p style={{ gridColumn: "1/-1", textAlign: "center", padding: 40, color: "var(--text-tertiary)", fontWeight: 600 }}>No orders yet</p>
+                  <p style={{ gridColumn: "1/-1", textAlign: "center", padding: 40, color: "#8a93a4", fontWeight: 600 }}>No orders yet</p>
                 ) : (
                   orders.map((o) => {
                     const sty = getStatusStyle(o.status);
                     return (
-                      <div key={o.id} className="glass-card" style={{ padding: "22px 24px", borderRadius: 24, cursor: "default" }}>
+                      <div key={o.id} className="admin-mobile-card" style={{ padding: "20px 24px" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                           <span style={{ fontSize: 11, fontWeight: 800, color: "var(--text-tertiary)", letterSpacing: 1 }}>ORDER #{o.trackingId}</span>
                           <span className="badge" style={{ background: sty.bg, color: sty.color, border: `1px solid ${sty.border}` }}>{o.status}</span>
@@ -448,8 +466,11 @@ export default function AdminPage() {
           {/* USERS */}
           {tab === "users" && (
             <div className="animate-fade-in">
-              <h1 style={{ fontSize: 28, fontWeight: 900, marginBottom: 24 }}>Registered Users</h1>
-              <div className="glass-card" style={{ borderRadius: 24, overflow: "hidden", cursor: "default" }}>
+              <div style={{ marginBottom: 24 }}>
+                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Registered<br/>Users</h1>
+                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Customer database and details</p>
+              </div>
+              <div className="admin-mobile-card" style={{ padding: 0, overflow: "hidden" }}>
                 <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
@@ -485,13 +506,16 @@ export default function AdminPage() {
           {/* DELIVERY FLEET */}
           {tab === "fleet" && (
             <div className="animate-fade-in">
-              <h1 style={{ fontSize: 28, fontWeight: 900, marginBottom: 24 }}>Delivery Fleet</h1>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+              <div style={{ marginBottom: 24 }}>
+                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Delivery<br/>Fleet</h1>
+                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Manage your delivery partners</p>
+              </div>
+              <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
                 {deliveryAgents.length === 0 ? (
-                  <p style={{ gridColumn: "1/-1", textAlign: "center", padding: 40, color: "var(--text-tertiary)", fontWeight: 600 }}>No delivery agents yet</p>
+                  <p style={{ gridColumn: "1/-1", textAlign: "center", padding: 40, color: "#8a93a4", fontWeight: 600 }}>No delivery agents yet</p>
                 ) : (
                   deliveryAgents.map((d) => (
-                    <div key={d.id} className="glass-card" style={{ padding: "22px 24px", borderRadius: 22, cursor: "default" }}>
+                    <div key={d.id} className="admin-mobile-card" style={{ padding: "20px 24px" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
                         <div style={{ width: 48, height: 48, borderRadius: 16, background: d.online ? "rgba(16,185,129,0.15)" : "rgba(255,255,255,0.04)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                           <i className="fas fa-motorcycle" style={{ color: d.online ? "#10b981" : "var(--text-tertiary)", fontSize: 18 }} />
@@ -517,15 +541,16 @@ export default function AdminPage() {
           {/* REVIEWS & FEEDBACK */}
           {tab === "reviews" && (
             <div className="animate-fade-in">
-              <h1 style={{ fontSize: 28, fontWeight: 900, marginBottom: 8 }}>Customer Feedback</h1>
-              <p style={{ color: "var(--text-tertiary)", fontSize: 13, marginBottom: 24 }}>Reviews and suggestions submitted by users from the website footer.</p>
-              
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+              <div style={{ marginBottom: 24 }}>
+                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Customer<br/>Feedback</h1>
+                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Reviews and suggestions submitted by users</p>
+              </div>
+              <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
                 {feedbacks.length === 0 ? (
-                  <p style={{ gridColumn: "1/-1", textAlign: "center", padding: 40, color: "var(--text-tertiary)", fontWeight: 600 }}>No feedback received yet.</p>
+                  <p style={{ gridColumn: "1/-1", textAlign: "center", padding: 40, color: "#8a93a4", fontWeight: 600 }}>No feedback received yet.</p>
                 ) : (
                   feedbacks.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).map((f) => (
-                    <div key={f.id} className="glass-card" style={{ padding: "22px 24px", borderRadius: 22, cursor: "default" }}>
+                    <div key={f.id} className="admin-mobile-card" style={{ padding: "20px 24px" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
                         <div>
                           <h4 style={{ fontWeight: 700, fontSize: 14 }}>{f.userName || "Guest User"}</h4>
@@ -548,18 +573,20 @@ export default function AdminPage() {
           {/* BANNER MANAGEMENT */}
           {tab === "banners" && (
             <div className="animate-fade-in">
-              <h1 style={{ fontSize: 28, fontWeight: 900, marginBottom: 8 }}>Banner Management</h1>
-              <p style={{ color: "var(--text-tertiary)", fontSize: 13, marginBottom: 24 }}>Control all 5 homepage banner slots and review seller advertising requests.</p>
+              <div style={{ marginBottom: 24 }}>
+                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Banner<br/>Management</h1>
+                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Control all 5 homepage banner slots</p>
+              </div>
 
               {/* LIVE BANNER SLOTS */}
-              <h2 style={{ fontSize: 18, fontWeight: 800, marginBottom: 16 }}>Live Banner Slots</h2>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 40 }}>
+              <p style={{ fontSize: 11, fontWeight: 800, color: "#8a93a4", letterSpacing: 1, marginBottom: 12, textTransform: "uppercase" }}>Live Banner Slots</p>
+              <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 40 }}>
                 {["banner_1", "banner_2", "banner_3", "banner_4", "banner_5"].map((bid, i) => {
                   const b = banners[bid] || {};
                   const labels = ["Hero Slide 1", "Hero Slide 2", "Hero Slide 3", "Mini Left", "Mini Right"];
                   const isExpired = b.expiry && new Date(b.expiry) < new Date();
                   return (
-                    <div key={bid} className="glass-card" style={{ padding: 22, borderRadius: 20, cursor: "default", border: isExpired ? "2px solid #fb7185" : "1px solid rgba(0,0,0,0.06)" }}>
+                    <div key={bid} className="admin-mobile-card" style={{ padding: 22, border: isExpired ? "2px solid #fb7185" : "none" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                         <div>
                           <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.5, color: "var(--text-tertiary)", textTransform: "uppercase" }}>SLOT {i + 1}</span>
@@ -633,16 +660,16 @@ export default function AdminPage() {
               )}
 
               {/* SELLER BANNER REQUESTS */}
-              <h2 style={{ fontSize: 18, fontWeight: 800, marginBottom: 16 }}>Seller Advertising Requests</h2>
+              <p style={{ fontSize: 11, fontWeight: 800, color: "#8a93a4", letterSpacing: 1, marginBottom: 12, textTransform: "uppercase" }}>Seller Ad Requests</p>
               {bannerRequests.length === 0 ? (
-                <div className="glass-card" style={{ padding: 40, textAlign: "center", borderRadius: 20, color: "var(--text-tertiary)", fontWeight: 600, cursor: "default" }}>No banner requests yet</div>
+                <div className="admin-mobile-card" style={{ padding: 40, textAlign: "center", color: "#8a93a4", fontWeight: 600 }}>No banner requests yet</div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
                   {bannerRequests.map((req) => {
-                    const statusColors = { pending: { bg: "rgba(245,158,11,0.1)", color: "#f59e0b" }, approved: { bg: "rgba(16,185,129,0.1)", color: "#10b981" }, rejected: { bg: "rgba(251,113,133,0.1)", color: "#fb7185" } };
+                    const statusColors = { pending: { bg: "#fef3c7", color: "#f59e0b" }, approved: { bg: "#d1fae5", color: "#10b981" }, rejected: { bg: "#ffe4e6", color: "#fb7185" } };
                     const sc = statusColors[req.status] || statusColors.pending;
                     return (
-                      <div key={req.id} className="glass-card" style={{ padding: 22, borderRadius: 20, cursor: "default" }}>
+                      <div key={req.id} className="admin-mobile-card" style={{ padding: 22 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                           <div>
                             <span style={{ fontSize: 13, fontWeight: 700 }}>{req.sellerName || req.sellerId}</span>
