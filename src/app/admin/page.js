@@ -504,6 +504,37 @@ export default function AdminPage() {
             </div>
           )}
 
+          {/* REVIEWS & FEEDBACK */}
+          {tab === "reviews" && (
+            <div className="animate-fade-in">
+              <h1 style={{ fontSize: 28, fontWeight: 900, marginBottom: 8 }}>Customer Feedback</h1>
+              <p style={{ color: "var(--text-tertiary)", fontSize: 13, marginBottom: 24 }}>Reviews and suggestions submitted by users from the website footer.</p>
+              
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+                {feedbacks.length === 0 ? (
+                  <p style={{ gridColumn: "1/-1", textAlign: "center", padding: 40, color: "var(--text-tertiary)", fontWeight: 600 }}>No feedback received yet.</p>
+                ) : (
+                  feedbacks.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).map((f) => (
+                    <div key={f.id} className="glass-card" style={{ padding: "22px 24px", borderRadius: 22, cursor: "default" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                        <div>
+                          <h4 style={{ fontWeight: 700, fontSize: 14 }}>{f.userName || "Guest User"}</h4>
+                          <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{f.createdAt?.toDate ? f.createdAt.toDate().toLocaleDateString() : ""}</span>
+                        </div>
+                        <div style={{ color: "var(--gold)", fontSize: 14, letterSpacing: 2 }}>
+                          {"★".repeat(f.rating)}{"☆".repeat(5 - f.rating)}
+                        </div>
+                      </div>
+                      <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5, background: "rgba(0,0,0,0.02)", padding: 12, borderRadius: 12, marginTop: 12 }}>
+                        "{f.text}"
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
           {/* BANNER MANAGEMENT */}
           {tab === "banners" && (
             <div className="animate-fade-in">

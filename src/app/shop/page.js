@@ -35,6 +35,10 @@ export default function ShopPage() {
   const [isAdminLogin, setIsAdminLogin] = useState(false);
   const [activeSlide, setActiveSlide] = useState(0);
   const [showAuth, setShowAuth] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [fbRating, setFbRating] = useState(0);
+  const [fbText, setFbText] = useState("");
+  const [fbSubmitting, setFbSubmitting] = useState(false);
   const router = useRouter();
 
   // ── Custom Cursor State ──
@@ -80,6 +84,7 @@ export default function ShopPage() {
   const [checkoutPincode, setCheckoutPincode] = useState("");
   const [checkoutCoordinates, setCheckoutCoordinates] = useState("");
   const [deliveryFee, setDeliveryFee] = useState(0);
+  const [checkoutPhone, setCheckoutPhone] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("COD"); // COD | UPI
   const [placing, setPlacing] = useState(false);
 
@@ -290,6 +295,10 @@ export default function ShopPage() {
 
   // ── Cart helpers ──
   const addToCart = useCallback((product, size) => {
+    if (!user) {
+      setShowAuth(true);
+      return;
+    }
     setCart((prev) => {
       const key = product.id + (size || "");
       const existing = prev.find((item) => item.id + (item.selectedSize || "") === key);
@@ -303,7 +312,7 @@ export default function ShopPage() {
       return [...prev, { ...product, qty: 1, selectedSize: size || "M" }];
     });
     setViewProduct(null);
-  }, []);
+  }, [user]);
 
   const changeQty = (index, delta) => {
     setCart((prev) => {
@@ -578,6 +587,25 @@ export default function ShopPage() {
     </div>
   );
 
+  const submitFeedback = async () => {
+    if (fbRating === 0 || !fbText.trim()) return alert("Please provide a rating and review text.");
+    setFbSubmitting(true);
+    try {
+      await addDoc(collection(db, "feedback"), {
+        userId: user?.uid || "anonymous",
+        userName: userData?.name || "Guest",
+        rating: fbRating,
+        text: fbText,
+        createdAt: new Date(),
+      });
+      alert("Thank you for your feedback!");
+      setShowFeedback(false);
+      setFbRating(0);
+      setFbText("");
+    } catch (e) { alert("Error submitting feedback: " + e.message); }
+    setFbSubmitting(false);
+  };
+
   // ══════════════════════════
   //   MAIN APP
   // ══════════════════════════
@@ -595,19 +623,16 @@ export default function ShopPage() {
           <div className="strip-track">
             {[1, 2].map((group) => (
               <div key={group} style={{ display: 'flex' }}>
-                <div className="strip-item"><span>Free Delivery on ₹999+</span><div className="strip-dot"></div></div>
+                <div className="strip-item"><span>🚚 Free Delivery on Your First 3 Orders</span><div className="strip-dot"></div></div>
                 <div className="strip-item"><span>⚡ 30 Min Express Delivery</span><div className="strip-dot"></div></div>
-                <div className="strip-item"><span>500+ Premium Brands</span><div className="strip-dot"></div></div>
-                <div className="strip-item"><span>7-Day Easy Returns</span><div className="strip-dot"></div></div>
-                <div className="strip-item"><span>100% Authentic Products</span><div className="strip-dot"></div></div>
-                <div className="strip-item"><span>Now Live in 12 Cities</span><div className="strip-dot"></div></div>
+                <div className="strip-item"><span>🏷️ Flat 20% Off — New Arrivals</span><div className="strip-dot"></div></div>
               </div>
             ))}
           </div>
         </div>
 
         {/* ── Main Navbar ── */}
-        <nav>
+        <nav className="shop-nav">
           <div className="nav-top">
             <div onClick={() => setCurrentSection("home")} className="nav-logo" style={{ cursor: "pointer" }}>
               Dres<span>h</span>o
@@ -660,46 +685,37 @@ export default function ShopPage() {
             </div>
           </div>
           
-          <div className="nav-bottom">
-            <div onClick={() => {setCurrentCategory("All"); setCurrentSection("home");}} className={`nav-cat-link ${currentCategory === "All" || !currentCategory ? 'active' : ''}`} style={{cursor:"pointer"}}><span>👗</span> Women</div>
-            <div onClick={() => {setCurrentCategory("Men's Wear"); setCurrentSection("home");}} className={`nav-cat-link ${currentCategory === "Men's Wear" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>👖</span> Men</div>
-            <div onClick={() => {setCurrentCategory("Ethnic"); setCurrentSection("home");}} className={`nav-cat-link ${currentCategory === "Ethnic" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>🥻</span> Ethnic Wear</div>
-            <div onClick={() => {setCurrentCategory("Footwear"); setCurrentSection("home");}} className={`nav-cat-link ${currentCategory === "Footwear" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>🥿</span> Footwear</div>
-            <div onClick={() => {setCurrentCategory("Kids Wear"); setCurrentSection("home");}} className={`nav-cat-link ${currentCategory === "Kids Wear" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>👶</span> Kids</div>
-            <div onClick={() => {setCurrentCategory("Accessories"); setCurrentSection("home");}} className={`nav-cat-link ${currentCategory === "Accessories" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>💍</span> Accessories</div>
-            <div onClick={() => {setCurrentCategory("Beauty"); setCurrentSection("home");}} className={`nav-cat-link ${currentCategory === "Beauty" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>💄</span> Beauty</div>
-            <div onClick={() => {setCurrentCategory("Sale"); setCurrentSection("home");}} className={`nav-cat-link ${currentCategory === "Sale" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>🏷️</span> Sale <em>SALE</em></div>
-            <div onClick={() => {setCurrentCategory("New Arrivals"); setCurrentSection("home");}} className={`nav-cat-link ${currentCategory === "New Arrivals" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>✨</span> New Arrivals <em>NEW</em></div>
-            <Link href="/seller" className="nav-cat-link" style={{ marginLeft: "auto", color: "var(--gold)" }}>
-              <span>🏪</span> Become a Seller
-            </Link>
-            <Link href="/delivery" className="nav-cat-link" style={{ color: "var(--gold)" }}>
-              <span>🛵</span> Become a Rider
-            </Link>
-          </div>
         </nav>
 
         {/* ── HOME ── */}
         {currentSection === "home" && (
           <div style={{ paddingBottom: 60 }}>
             
-            {/* QUICK CATEGORY PILLS */}
-            <div className="quick-cats">
-              <div className="quick-cats-inner">
-                <div className="qcat" onClick={() => setCurrentCategory("Kurtas")}><div className="qcat-icon">👗</div><div className="qcat-name">Kurtas</div></div>
-                <div className="qcat" onClick={() => setCurrentCategory("Sarees")}><div className="qcat-icon">🥻</div><div className="qcat-name">Sarees</div></div>
-                <div className="qcat" onClick={() => setCurrentCategory("Lehengas")}><div className="qcat-icon">👗</div><div className="qcat-name">Lehengas</div></div>
-                <div className="qcat" onClick={() => setCurrentCategory("Jackets")}><div className="qcat-icon">🧥</div><div className="qcat-name">Jackets</div></div>
-                <div className="qcat" onClick={() => setCurrentCategory("Shirts")}><div className="qcat-icon">👔</div><div className="qcat-name">Shirts</div></div>
-                <div className="qcat" onClick={() => setCurrentCategory("Trousers")}><div className="qcat-icon">👖</div><div className="qcat-name">Trousers</div></div>
-                <div className="qcat" onClick={() => setCurrentCategory("Sneakers")}><div className="qcat-icon">👟</div><div className="qcat-name">Sneakers</div></div>
-                <div className="qcat" onClick={() => setCurrentCategory("Heels")}><div className="qcat-icon">👠</div><div className="qcat-name">Heels</div></div>
-                <div className="qcat" onClick={() => setCurrentCategory("Handbags")}><div className="qcat-icon">👜</div><div className="qcat-name">Handbags</div></div>
-                <div className="qcat" onClick={() => setCurrentCategory("Sunglasses")}><div className="qcat-icon">🕶️</div><div className="qcat-name">Sunglasses</div></div>
-                <div className="qcat" onClick={() => setCurrentCategory("Watches")}><div className="qcat-icon">⌚</div><div className="qcat-name">Watches</div></div>
-                <div className="qcat" onClick={() => setCurrentCategory("Jewellery")}><div className="qcat-icon">💍</div><div className="qcat-name">Jewellery</div></div>
-                <div className="qcat" onClick={() => setCurrentCategory("Scarves")}><div className="qcat-icon">🧣</div><div className="qcat-name">Scarves</div></div>
-                <div className="qcat" onClick={() => setCurrentCategory("Activewear")}><div className="qcat-icon">🎽</div><div className="qcat-name">Activewear</div></div>
+            {/* CATEGORY BOARD */}
+            <div className="category-board-wrapper">
+              <div className="category-board">
+                <div className="nav-bottom">
+                  <Link href="/shop/category/all" className={`nav-cat-link ${currentCategory === "All" || !currentCategory ? 'active' : ''}`} style={{cursor:"pointer"}}><span>✨</span> All Included</Link>
+                  <Link href="/shop/category/womens-wear" className={`nav-cat-link ${currentCategory === "Women's Wear" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>👗</span> Women</Link>
+                  <Link href="/shop/category/mens-wear" className={`nav-cat-link ${currentCategory === "Men's Wear" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>👔</span> Men</Link>
+                  <Link href="/shop/category/ethnic" className={`nav-cat-link ${currentCategory === "Ethnic" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>🥻</span> Ethnic Wear</Link>
+                  <Link href="/shop/category/footwear" className={`nav-cat-link ${currentCategory === "Footwear" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>👟</span> Footwear</Link>
+                  <Link href="/shop/category/kids-wear" className={`nav-cat-link ${currentCategory === "Kids Wear" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>👶</span> Kids</Link>
+                  <Link href="/shop/category/accessories" className={`nav-cat-link ${currentCategory === "Accessories" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>💍</span> Accessories</Link>
+                  <Link href="/partner" style={{ marginLeft: "auto" }}>
+                    <button className="nav-pill-btn">Become a Partner</button>
+                  </Link>
+                </div>
+                <div className="quick-cats">
+                  <div className="quick-cats-inner">
+                    <Link href="/shop/category/kurtas"><div className="qcat-pill"><div className="qcat-pill-icon">👗</div><div className="qcat-pill-text">Kurtas</div></div></Link>
+                    <Link href="/shop/category/sarees"><div className="qcat-pill"><div className="qcat-pill-icon">🥻</div><div className="qcat-pill-text">Sarees</div></div></Link>
+                    <Link href="/shop/category/lehengas"><div className="qcat-pill"><div className="qcat-pill-icon">👘</div><div className="qcat-pill-text">Lehengas</div></div></Link>
+                    <Link href="/shop/category/jackets"><div className="qcat-pill"><div className="qcat-pill-icon">🧥</div><div className="qcat-pill-text">Jackets</div></div></Link>
+                    <Link href="/shop/category/shirts"><div className="qcat-pill"><div className="qcat-pill-icon">👔</div><div className="qcat-pill-text">Shirts</div></div></Link>
+                    <Link href="/shop/category/trousers"><div className="qcat-pill"><div className="qcat-pill-icon">👖</div><div className="qcat-pill-text">Trousers</div></div></Link>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -713,7 +729,7 @@ export default function ShopPage() {
                     <h1 className="slide-title">Style Arrives<br/><em>in 30 Minutes</em></h1>
                     <p className="slide-sub">Premium brands. Real-time inventory.<br/>Delivered to your door faster than you think.</p>
                     <div className="slide-cta">
-                      <Link href="/shop/category/all"><button className="btn-slide-primary">Shop Now</button></Link>
+                      <button className="btn-slide-primary" onClick={(e) => { e.stopPropagation(); window.location.href = '/shop/category/all'; }}>Shop Now</button>
                     </div>
                   </div>
                   <div className="slide-img-area">
@@ -728,7 +744,7 @@ export default function ShopPage() {
                     <h1 className="slide-title">Celebrate Every<br/><em>Occasion</em></h1>
                     <p className="slide-sub">Handpicked ethnic wear from India's finest designers.<br/>From ₹999 onwards — delivered instantly.</p>
                     <div className="slide-cta">
-                      <button className="btn-slide-primary" onClick={() => setCurrentSection('search')}>Shop Now</button>
+                      <button className="btn-slide-primary" onClick={(e) => { e.stopPropagation(); window.location.href = '/shop/category/all'; }}>Shop Now</button>
                     </div>
                   </div>
                   <div className="slide-img-area">
@@ -743,7 +759,7 @@ export default function ShopPage() {
                     <h1 className="slide-title">Dress Sharp.<br/><em>Every Day.</em></h1>
                     <p className="slide-sub">Premium formals, casuals & ethnic wear for men.<br/>Top brands. Lightning delivery.</p>
                     <div className="slide-cta">
-                      <button className="btn-slide-primary" onClick={() => setCurrentSection('search')}>Shop Now</button>
+                      <button className="btn-slide-primary" onClick={(e) => { e.stopPropagation(); window.location.href = '/shop/category/all'; }}>Shop Now</button>
                     </div>
                   </div>
                   <div className="slide-img-area">
@@ -864,13 +880,13 @@ export default function ShopPage() {
                   <div className="sec-eyebrow"><div className="sec-eyebrow-line"></div><span>Browse</span></div>
                   <h2 className="sec-title">Shop by <em>Category</em></h2>
                 </div>
-                <div className="sec-link" style={{ cursor: "pointer" }} onClick={() => setCurrentCategory("All")}>All Categories →</div>
+                <div className="sec-link" style={{ cursor: "pointer" }} onClick={() => window.location.href='/shop/category/all'}>All Categories →</div>
               </div>
               <div className="cat-grid reveal in">
-                <Link href="/shop/category/womens-wear"><div className="cat-card"><img src="https://images.unsplash.com/photo-1567401893414-76b7b1e5a7a5?w=800&q=80" alt="Women" /><div className="cat-overlay"></div><div className="cat-arrow">→</div><div className="cat-content"><div className="cat-label">Explore</div><div className="cat-name">Women's<br/>Collection</div><div className="cat-count">1,240 styles</div></div></div></Link>
-                <Link href="/shop/category/mens-wear"><div className="cat-card"><img src="https://images.unsplash.com/photo-1617137968427-85924c800a22?w=600&q=80" alt="Men" /><div className="cat-overlay"></div><div className="cat-arrow">→</div><div className="cat-content"><div className="cat-label">Explore</div><div className="cat-name">Men's Wear</div><div className="cat-count">980 styles</div></div></div></Link>
-                <Link href="/shop/category/ethnic"><div className="cat-card"><img src="https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=600&q=80" alt="Ethnic" /><div className="cat-overlay"></div><div className="cat-arrow">→</div><div className="cat-content"><div className="cat-label">Explore</div><div className="cat-name">Ethnic & Fusion</div><div className="cat-count">2,100 styles</div></div></div></Link>
-                <Link href="/shop/category/kids-wear"><div className="cat-card" style={{gridColumn:"span 2"}}><img src="https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=600&q=80" alt="Kids" /><div className="cat-overlay"></div><div className="cat-arrow">→</div><div className="cat-content"><div className="cat-label">Explore</div><div className="cat-name">Kids & Teen</div><div className="cat-count">450 styles</div></div></div></Link>
+                <div className="cat-card" onClick={() => window.location.href='/shop/category/womens-wear'} style={{cursor:"pointer"}}><img src="https://images.unsplash.com/photo-1567401893414-76b7b1e5a7a5?w=800&q=80" alt="Women" /><div className="cat-overlay"></div><div className="cat-arrow">→</div><div className="cat-content"><div className="cat-label">Explore</div><div className="cat-name">Women's<br/>Collection</div><div className="cat-count">1,240 styles</div></div></div>
+                <div className="cat-card" onClick={() => window.location.href='/shop/category/mens-wear'} style={{cursor:"pointer"}}><img src="https://images.unsplash.com/photo-1617137968427-85924c800a22?w=600&q=80" alt="Men" /><div className="cat-overlay"></div><div className="cat-arrow">→</div><div className="cat-content"><div className="cat-label">Explore</div><div className="cat-name">Men's Wear</div><div className="cat-count">980 styles</div></div></div>
+                <div className="cat-card" onClick={() => window.location.href='/shop/category/ethnic'} style={{cursor:"pointer"}}><img src="https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=600&q=80" alt="Ethnic" /><div className="cat-overlay"></div><div className="cat-arrow">→</div><div className="cat-content"><div className="cat-label">Explore</div><div className="cat-name">Ethnic & Fusion</div><div className="cat-count">2,100 styles</div></div></div>
+                <div className="cat-card" onClick={() => window.location.href='/shop/category/kids-wear'} style={{cursor:"pointer", gridColumn:"span 2"}}><img src="https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=600&q=80" alt="Kids" /><div className="cat-overlay"></div><div className="cat-arrow">→</div><div className="cat-content"><div className="cat-label">Explore</div><div className="cat-name">Kids & Teen</div><div className="cat-count">450 styles</div></div></div>
               </div>
             </section>
 
@@ -898,46 +914,28 @@ export default function ShopPage() {
               </div>
             </section>
 
-            {/* PARTNER / SELLER / RIDER SECTION */}
+            {/* BECOME A PARTNER SECTION */}
             <section className="section partner-section">
-              <div className="sec-head reveal in" style={{ marginBottom: 36 }}>
-                <div className="sec-head-left">
-                  <div className="sec-eyebrow"><div className="sec-eyebrow-line"></div><span>Join Us</span></div>
-                  <h2 className="sec-title">Grow with <em>Dresho</em></h2>
-                </div>
-              </div>
-              <div className="partner-grid">
-                <div className="partner-card reveal in">
-                  <div className="partner-pill"><span>🏪 For Brands & Sellers</span></div>
-                  <h3 className="partner-title">Become a<br/><em>Dresho Seller</em></h3>
-                  <p className="partner-desc">List your clothing brand on India's fastest growing quick commerce fashion platform. Reach millions of style-conscious customers across 12 cities and growing.</p>
+              <div className="partner-banner reveal in">
+                <div className="partner-banner-bg"></div>
+                <div className="partner-banner-content">
+                  <div className="partner-pill"><span>🤝 Partner Program</span></div>
+                  <h2 className="partner-title">Become a <em>Dresho Partner</em></h2>
+                  <p className="partner-desc">Whether you're a boutique owner, a brand, or want to deliver fashion — join thousands of partners already growing with India's fastest quick commerce fashion platform.</p>
                   <div className="partner-perks">
-                    <div className="partner-perk"><div className="perk-check">✓</div><span>Zero listing fee for your first 3 months</span></div>
-                    <div className="partner-perk"><div className="perk-check">✓</div><span>Dedicated seller dashboard and analytics</span></div>
-                    <div className="partner-perk"><div className="perk-check">✓</div><span>Dresho handles all delivery and returns</span></div>
-                    <div className="partner-perk"><div className="perk-check">✓</div><span>Weekly payouts, no hidden charges</span></div>
-                    <div className="partner-perk"><div className="perk-check">✓</div><span>24/7 seller support team</span></div>
+                    <div className="partner-perk"><div className="perk-check">✓</div><span>List products & reach lakhs of customers instantly</span></div>
+                    <div className="partner-perk"><div className="perk-check">✓</div><span>Flexible hours for delivery partners</span></div>
+                    <div className="partner-perk"><div className="perk-check">✓</div><span>Weekly payouts & dedicated support</span></div>
+                    <div className="partner-perk"><div className="perk-check">✓</div><span>Zero listing fees for your first 3 months</span></div>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-                    <Link href="/seller"><button className="btn-partner">Start Selling</button></Link>
-                  </div>
-
+                  <Link href="/partner"><button className="btn-partner">Become a Partner →</button></Link>
                 </div>
-                <div className="partner-card reveal in d2">
-                  <div className="partner-pill"><span>🛵 For Delivery Partners</span></div>
-                  <h3 className="partner-title">Become a<br/><em>Dresho Rider</em></h3>
-                  <p className="partner-desc">Join India's most rewarding delivery network. Flexible hours, guaranteed earnings, and the pride of delivering style to thousands of customers every day.</p>
-                  <div className="partner-perks">
-
-                    <div className="partner-perk"><div className="perk-check">✓</div><span>Flexible shift timings — you choose your hours</span></div>
-                    <div className="partner-perk"><div className="perk-check">✓</div><span>Weekly salary + performance bonuses</span></div>
-                    <div className="partner-perk"><div className="perk-check">✓</div><span>Free Dresho uniform and delivery gear</span></div>
-                    <div className="partner-perk"><div className="perk-check">✓</div><span>Health insurance and accident cover</span></div>
+                <div className="partner-banner-visual">
+                  <div className="partner-stat-group">
+                    <div className="partner-stat-card"><div className="p-stat-icon">🏪</div><div className="p-stat-label">Sell your products to customers across your city</div></div>
+                    <div className="partner-stat-card"><div className="p-stat-icon">🛵</div><div className="p-stat-label">Deliver fashion & earn on your own schedule</div></div>
+                    <div className="partner-stat-card"><div className="p-stat-icon">📈</div><div className="p-stat-label">Grow your business with Dresho's platform</div></div>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-                    <Link href="/delivery"><button className="btn-partner">Apply Now</button></Link>
-                  </div>
-
                 </div>
               </div>
             </section>
@@ -952,20 +950,17 @@ export default function ShopPage() {
                   <p className="footer-tagline">India's first luxury quick commerce fashion platform. Premium brands, delivered in 30 minutes.</p>
                   <div className="footer-social"><a href="https://www.instagram.com/dresho.in/" target="_blank" rel="noopener noreferrer" className="soc" style={{ width: "auto", padding: "0 16px", textDecoration: "none" }}>instagram</a></div>
                 </div>
-                <div><div className="footer-col-title">Help</div><ul className="footer-links"><li onClick={() => { if(!user) setShowAuth(true); else setCurrentSection('orders'); }} style={{ cursor: "pointer" }}>Track Order</li><li onClick={() => setCurrentSection('about')} style={{ cursor: "pointer" }}>About Us</li><li><a href="mailto:prinxadmin29@gmail.com" style={{ color: "inherit", textDecoration: "none" }}>Contact Us</a></li></ul></div>
-                <div><div className="footer-col-title">Sellers</div><ul className="footer-links"><li><Link href="/seller">Sell on Dresho</Link></li><li><Link href="/seller">Seller Login</Link></li></ul></div>
+                <div><div className="footer-col-title">Help</div><ul className="footer-links"><li onClick={() => { if(!user) setShowAuth(true); else setCurrentSection('orders'); }} style={{ cursor: "pointer" }}>Track Order</li><li onClick={() => setCurrentSection('about')} style={{ cursor: "pointer" }}>About Us</li><li><a href="mailto:prinxadmin29@gmail.com" style={{ color: "inherit", textDecoration: "none" }}>Contact Us</a></li><li onClick={() => setShowFeedback(true)} style={{ cursor: "pointer" }}>Feedback</li></ul></div>
+                <div><div className="footer-col-title">Partners</div><ul className="footer-links"><li><Link href="/partner">Become a Partner</Link></li></ul></div>
                 <div><div className="footer-col-title">Cities</div><ul className="footer-links"><li>Hazaribagh</li></ul></div>
+                <div><div className="footer-col-title">Quick Links</div><ul className="footer-links"><li><Link href="/shop/category/all" style={{ color: "inherit", textDecoration: "none" }}>Shop All</Link></li><li><Link href="/shop/category/womens-wear" style={{ color: "inherit", textDecoration: "none" }}>Women's Wear</Link></li><li><Link href="/shop/category/mens-wear" style={{ color: "inherit", textDecoration: "none" }}>Men's Wear</Link></li><li><Link href="/shop/category/ethnic" style={{ color: "inherit", textDecoration: "none" }}>Ethnic Wear</Link></li></ul></div>
               </div>
               <div className="footer-bottom">
                 <div className="footer-bottom-left">
-                  <span>© 2026 Dresho Technologies Pvt. Ltd.</span>
-                  <span>CIN: U74999MH2026PTC000001</span>
+                  <span>© 2026 Dresho Technologies</span>
                 </div>
                 <div className="footer-bottom-right">
-                  <span>Privacy Policy</span>
-                  <span>Terms of Service</span>
-                  <span>Cookie Policy</span>
-                  <span>Grievance</span>
+                  <Link href="/privacy-policy" style={{ color: "inherit", textDecoration: "none" }}><span style={{ cursor: "pointer" }}>Privacy Policy</span></Link>
                 </div>
               </div>
             </footer>
@@ -1348,6 +1343,38 @@ export default function ShopPage() {
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* ── FEEDBACK MODAL ── */}
+        {showFeedback && (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setShowFeedback(false)}>
+            <div style={s.authCard} onClick={e => e.stopPropagation()}>
+              <div style={s.authHeader}>
+                <h2 style={{ fontSize: 24, fontWeight: 700, fontFamily: "var(--font-d)" }}>Your Feedback</h2>
+                <p style={{ color: "var(--sub)", fontSize: 13, textAlign: "center" }}>Help us improve Dresho by sharing your experience.</p>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                <div style={{ display: "flex", justifyContent: "center", gap: 8, fontSize: 32, cursor: "pointer" }}>
+                  {[1, 2, 3, 4, 5].map(star => (
+                    <span key={star} onClick={() => setFbRating(star)} style={{ color: star <= fbRating ? "var(--gold)" : "#ddd" }}>★</span>
+                  ))}
+                </div>
+                <textarea
+                  placeholder="Write your review here..."
+                  value={fbText}
+                  onChange={(e) => setFbText(e.target.value)}
+                  style={{ width: "100%", height: 100, padding: 12, border: "1px solid var(--border)", borderRadius: 12, outline: "none", resize: "none", fontFamily: "var(--font-b)", fontSize: 14 }}
+                />
+                <button
+                  onClick={submitFeedback}
+                  disabled={fbSubmitting || fbRating === 0 || !fbText.trim()}
+                  style={{ background: "var(--navy)", color: "#fff", border: "none", padding: "14px", fontSize: 12, letterSpacing: 2, textTransform: "uppercase", fontWeight: 500, cursor: "pointer", borderRadius: 12, opacity: (fbSubmitting || fbRating === 0 || !fbText.trim()) ? 0.5 : 1 }}
+                >
+                  {fbSubmitting ? "Submitting..." : "Submit Review"}
+                </button>
+              </div>
             </div>
           </div>
         )}

@@ -11,13 +11,15 @@ const securityHeaders = [
   { key: 'Permissions-Policy', value: 'camera=(), microphone=(), payment=(self), geolocation=(self)' },
   // Force HTTPS (production only — safe to keep on always)
   { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
+  // Allow Google Popups for Auth
+  { key: 'Cross-Origin-Opener-Policy', value: 'same-origin-allow-popups' },
   // Content Security Policy
   {
     key: 'Content-Security-Policy',
     value: [
       "default-src 'self'",
-      // React needs unsafe-inline for hydration; Razorpay SDK + Font Awesome
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://cdnjs.cloudflare.com https://apis.google.com https://www.gstatic.com",
+      // React needs unsafe-inline for hydration; Razorpay SDK + Font Awesome + Vercel
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://cdnjs.cloudflare.com https://apis.google.com https://www.gstatic.com https://vercel.live",
       // Google Fonts + Font Awesome CDN
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com",
       // Product images from Unsplash, ImgBB, Firebase Storage

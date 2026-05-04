@@ -461,7 +461,7 @@ export default function AboutPage() {
               <br />
               <strong>WhatsApp:</strong> +91 9128926837 (10 AM \u2013 8 PM)
               <br />
-              <strong>Registered as:</strong> Dresho Technologies Pvt. Ltd.
+              <strong>Will be Registered as:</strong> DRESHO
             </p>
           </div>
         </div>
@@ -475,7 +475,7 @@ export default function AboutPage() {
 
         {/* ── Footer ── */}
         <div className="about-footer">
-          \u00A9 2026 Dresho Technologies Pvt. Ltd. \u2022 CIN: U74999MH2026PTC000001
+          \u00A9 2026 DRESHO.
         </div>
       </div>
     </>
