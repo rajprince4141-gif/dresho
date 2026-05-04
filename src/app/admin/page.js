@@ -376,7 +376,9 @@ export default function AdminPage() {
             <div className="animate-fade-in">
               <div style={{ marginBottom: 24 }}>
                 <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Seller<br/>Management</h1>
-                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Approve, suspend, or remove sellers from the Dresho platform.</p>              <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Approve, suspend, or remove sellers from the Dresho platform.</p>
+              </div>
+              <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                 {sellers.length === 0 ? (
                   <p style={{ gridColumn: "1/-1", textAlign: "center", padding: 40, color: "#8a93a4", fontWeight: 600 }}>No sellers registered yet</p>
                 ) : (
