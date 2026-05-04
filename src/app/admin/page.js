@@ -308,9 +308,6 @@ export default function AdminPage() {
               <div />
               <div />
             </button>
-            <div className="admin-avatar">
-              N
-            </div>
           </div>
 
           {/* DASHBOARD */}
@@ -379,50 +376,41 @@ export default function AdminPage() {
             <div className="animate-fade-in">
               <div style={{ marginBottom: 24 }}>
                 <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Seller<br/>Management</h1>
-                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Approve, suspend, or remove sellers from the Dresho platform.</p>
-              </div>
-              <div className="admin-mobile-card" style={{ padding: 0, overflow: "hidden" }}>
-                <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                      {["Store Name", "Owner", "Email", "Status", "Actions"].map((h) => (
-                        <th key={h} style={{ padding: "18px 20px", fontSize: 11, fontWeight: 800, color: "var(--text-tertiary)", letterSpacing: 1.5, textTransform: "uppercase" }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sellers.map((s) => (
-                      <tr key={s.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
-                        <td style={{ padding: "16px 20px", fontWeight: 700 }}>{s.storeName}</td>
-                        <td style={{ padding: "16px 20px", color: "var(--text-secondary)" }}>{s.name}</td>
-                        <td style={{ padding: "16px 20px", color: "var(--text-tertiary)", fontSize: 12 }}>{s.email}</td>
-                        <td style={{ padding: "16px 20px" }}>
-                          <span className={`badge ${s.approved ? "badge-emerald" : "badge-amber"}`}>
-                            {s.approved ? "✓ Active" : "Pending"}
-                          </span>
-                        </td>
-                        <td style={{ padding: "16px 20px" }}>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            {!s.approved ? (
-                              <button className="btn-slide-primary" style={{ width: "auto", padding: "7px 16px", borderRadius: 8, fontSize: 11, background: "linear-gradient(135deg, #6366f1, #4f46e5)" }} onClick={() => approveSeller(s.id)}>
-                                ✓ Approve
-                              </button>
-                            ) : (
-                              <button style={{ padding: "7px 16px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: "rgba(245,158,11,0.1)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.2)", cursor: "pointer" }} onClick={() => suspendSeller(s.id, true)}>
-                                ⏸ Suspend
-                              </button>
-                            )}
-                            <button style={{ padding: "7px 16px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: "rgba(251,113,133,0.1)", color: "#fb7185", border: "1px solid rgba(251,113,133,0.2)", cursor: "pointer" }} onClick={() => removeSeller(s.id, s.storeName)}>
-                              ✕ Remove
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {sellers.length === 0 && (
-                  <p style={{ textAlign: "center", padding: 40, color: "var(--text-tertiary)", fontWeight: 600 }}>No sellers registered yet</p>
+                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Approve, suspend, or remove sellers from the Dresho platform.</p>              <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                {sellers.length === 0 ? (
+                  <p style={{ gridColumn: "1/-1", textAlign: "center", padding: 40, color: "#8a93a4", fontWeight: 600 }}>No sellers registered yet</p>
+                ) : (
+                  sellers.map((s) => (
+                    <div key={s.id} className="admin-mobile-card" style={{ padding: 22 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+                        <div>
+                          <h3 style={{ fontSize: 18, fontWeight: 800, color: "var(--navy)" }}>{s.storeName}</h3>
+                          <p style={{ fontSize: 12, color: "#8a93a4", marginTop: 2 }}>{s.name}</p>
+                        </div>
+                        <span className={`badge ${s.approved ? "badge-emerald" : "badge-amber"}`} style={{ fontSize: 10 }}>
+                          {s.approved ? "✓ ACTIVE" : "PENDING"}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)", marginBottom: 20 }}>
+                        <i className="fas fa-envelope" style={{ color: "#cbd5e1" }} />
+                        <span style={{ wordBreak: "break-all" }}>{s.email}</span>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", paddingTop: 16, borderTop: "1px solid #f1f5f9" }}>
+                        {!s.approved ? (
+                          <button className="btn-slide-primary" style={{ flex: 1, padding: "10px", borderRadius: 10, fontSize: 12, background: "linear-gradient(135deg, #10b981, #059669)" }} onClick={() => approveSeller(s.id)}>
+                            ✓ Approve
+                          </button>
+                        ) : (
+                          <button style={{ flex: 1, padding: "10px", borderRadius: 10, fontSize: 12, fontWeight: 700, background: "#fef3c7", color: "#f59e0b", border: "1px solid #fde68a", cursor: "pointer" }} onClick={() => suspendSeller(s.id, true)}>
+                            ⏸ Suspend
+                          </button>
+                        )}
+                        <button style={{ flex: 1, padding: "10px", borderRadius: 10, fontSize: 12, fontWeight: 700, background: "#ffe4e6", color: "#fb7185", border: "1px solid #fecdd3", cursor: "pointer" }} onClick={() => removeSeller(s.id, s.storeName)}>
+                          ✕ Remove
+                        </button>
+                      </div>
+                    </div>
+                  ))
                 )}
               </div>
             </div>
@@ -470,34 +458,35 @@ export default function AdminPage() {
                 <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Registered<br/>Users</h1>
                 <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Customer database and details</p>
               </div>
-              <div className="admin-mobile-card" style={{ padding: 0, overflow: "hidden" }}>
-                <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                      {["Name", "Email", "Phone", "Address"].map((h) => (
-                        <th key={h} style={{ padding: "18px 24px", fontSize: 11, fontWeight: 800, color: "var(--text-tertiary)", letterSpacing: 1.5, textTransform: "uppercase" }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {users.map((u) => (
-                      <tr key={u.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
-                        <td style={{ padding: "16px 24px", fontWeight: 700 }}>{u.name}</td>
-                        <td style={{ padding: "16px 24px", color: "var(--text-secondary)" }}>{u.email}</td>
-                        <td style={{ padding: "16px 24px", color: "var(--text-secondary)" }}>{u.phone || "—"}</td>
-                        <td style={{ padding: "16px 24px", color: "var(--text-secondary)", fontSize: 13, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {u.address
-                            ? (typeof u.address === "object"
-                                ? [u.address.line, u.address.landmark, u.address.city, u.address.pincode].filter(Boolean).join(", ")
-                                : u.address)
-                            : "—"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {users.length === 0 && (
-                  <p style={{ textAlign: "center", padding: 40, color: "var(--text-tertiary)", fontWeight: 600 }}>No users registered yet</p>
+              <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                {users.length === 0 ? (
+                  <p style={{ gridColumn: "1/-1", textAlign: "center", padding: 40, color: "#8a93a4", fontWeight: 600 }}>No users registered yet</p>
+                ) : (
+                  users.map((u) => (
+                    <div key={u.id} className="admin-mobile-card" style={{ padding: 22 }}>
+                      <h3 style={{ fontSize: 16, fontWeight: 800, color: "var(--navy)", marginBottom: 12 }}>{u.name}</h3>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)" }}>
+                          <i className="fas fa-envelope" style={{ color: "#cbd5e1", width: 16 }} />
+                          <span style={{ wordBreak: "break-all" }}>{u.email}</span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)" }}>
+                          <i className="fas fa-phone" style={{ color: "#cbd5e1", width: 16 }} />
+                          <span>{u.phone || "—"}</span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, color: "var(--text-secondary)" }}>
+                          <i className="fas fa-location-dot" style={{ color: "#cbd5e1", width: 16, marginTop: 4 }} />
+                          <span style={{ flex: 1 }}>
+                            {u.address
+                              ? (typeof u.address === "object"
+                                  ? [u.address.line, u.address.landmark, u.address.city, u.address.pincode].filter(Boolean).join(", ")
+                                  : u.address)
+                              : "—"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))
                 )}
               </div>
             </div>
