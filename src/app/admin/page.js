@@ -21,6 +21,7 @@ export default function AdminPage() {
   const [orders, setOrders] = useState([]);
   const [users, setUsers] = useState([]);
   const [deliveryAgents, setDeliveryAgents] = useState([]);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   // Banner Management State
   const [banners, setBanners] = useState({});
@@ -263,8 +264,13 @@ export default function AdminPage() {
     <>
       <div className=""><div className="" /></div>
       <div className="page-content " style={{ display: "flex", minHeight: "100vh", position: "relative", zIndex: 1 }}>
+        {/* MOBILE OVERLAY */}
+        {isMobileSidebarOpen && (
+          <div className="admin-overlay" onClick={() => setIsMobileSidebarOpen(false)}></div>
+        )}
+
         {/* SIDEBAR */}
-        <nav style={s.sidebar} className="premium-sidebar">
+        <nav style={s.sidebar} className={`premium-sidebar admin-sidebar ${isMobileSidebarOpen ? "open" : ""}`}>
           <div style={{ padding: "24px 16px 32px", textAlign: "center" }}>
             <Link href="/" style={{ textDecoration: "none" }}>
               <h2 style={{ fontSize: 20, fontWeight: 900, color: "var(--gold)", letterSpacing: 3, cursor: "pointer" }}>Dresho</h2>
@@ -277,7 +283,7 @@ export default function AdminPage() {
           </Link>
           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6, padding: "0 8px" }}>
             {sidebarItems.map((item) => (
-              <button key={item.id} onClick={() => setTab(item.id)} style={{
+              <button key={item.id} onClick={() => { setTab(item.id); setIsMobileSidebarOpen(false); }} style={{
                 ...s.sidebarBtn,
                 ...(tab === item.id ? s.sidebarBtnActive : {}),
               }}>
@@ -295,7 +301,11 @@ export default function AdminPage() {
         </nav>
 
         {/* MAIN CONTENT */}
-        <main style={{ flex: 1, marginLeft: 240, padding: "32px 40px" }}>
+        <main className="admin-main" style={{ flex: 1, marginLeft: 240, padding: "32px 40px", overflowX: "hidden" }}>
+          
+          <button className="admin-menu-btn" onClick={() => setIsMobileSidebarOpen(true)}>
+            <i className="fas fa-bars"></i>
+          </button>
 
           {/* DASHBOARD */}
           {tab === "dash" && (

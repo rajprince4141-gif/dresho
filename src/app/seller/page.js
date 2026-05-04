@@ -267,14 +267,12 @@ export default function SellerPage() {
       let bankProofUrl = "";
       if (idProofFile) idProofUrl = await uploadToImgBB(idProofFile);
       if (shopPhotoFile) shopPhotoUrl = await uploadToImgBB(shopPhotoFile);
-      if (businessProofFile) businessProofUrl = await uploadToImgBB(businessProofFile);
-      if (bankProofFile) bankProofUrl = await uploadToImgBB(bankProofFile);
 
       await setDoc(doc(db, "sellers_profile", auth.currentUser.uid), {
         phone: "+91" + authPhone,
         ownerName, storeName, email,
         shopAddress, locality, shopType, coordinates,
-        idProofUrl, shopPhotoUrl, businessProofUrl, bankProofUrl,
+        idProofUrl, shopPhotoUrl,
         openingTime, closingTime, availableDays, upiId,
         role: "seller", approved: false, sales: 0, isShopOpen: false,
         createdAt: new Date(),
@@ -432,29 +430,11 @@ export default function SellerPage() {
                       {shopPhotoPreview ? <img src={shopPhotoPreview} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 16 }} /> : <p style={{ fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)" }}>Tap to upload</p>}
                     </div>
                   </div>
-                  <div>
-                    <p style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>BUSINESS PROOF (GST/License)</p>
-                    <input type="file" accept="image/*" onChange={(e) => {
-                      const f = e.target.files[0]; if (f) { setBusinessProofFile(f); setBusinessProofPreview(URL.createObjectURL(f)); }
-                    }} style={{ display: "none" }} id="businessUpload" />
-                    <div style={{ ...s.imageUpload, minHeight: 100, border: "2px dashed var(--border2)", borderRadius: 16, background: "rgba(255,255,255,0.5)", margin: 0 }} onClick={() => document.getElementById("businessUpload").click()}>
-                      {businessProofPreview ? <img src={businessProofPreview} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 16 }} /> : <p style={{ fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)" }}>Tap to upload</p>}
-                    </div>
-                  </div>
-                  <div>
-                    <p style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>BANK PROOF (Cheque/Passbook)</p>
-                    <input type="file" accept="image/*" onChange={(e) => {
-                      const f = e.target.files[0]; if (f) { setBankProofFile(f); setBankProofPreview(URL.createObjectURL(f)); }
-                    }} style={{ display: "none" }} id="bankUpload" />
-                    <div style={{ ...s.imageUpload, minHeight: 100, border: "2px dashed var(--border2)", borderRadius: 16, background: "rgba(255,255,255,0.5)", margin: 0 }} onClick={() => document.getElementById("bankUpload").click()}>
-                      {bankProofPreview ? <img src={bankProofPreview} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 16 }} /> : <p style={{ fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)" }}>Tap to upload</p>}
-                    </div>
-                  </div>
                 </div>
                 <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
                   <button className="auth-btn-ghost" onClick={() => setAuthStep("business")} style={{ flex: 1 }}>Back</button>
                   <button className="auth-btn-primary" onClick={() => {
-                    if (!idProofFile || !shopPhotoFile || !businessProofFile || !bankProofFile) return alert("All four documents are required to proceed");
+                    if (!idProofFile || !shopPhotoFile) return alert("ID Proof and Shop Photo are required to proceed");
                     setAuthStep("operations");
                   }} style={{ flex: 1 }}>Next</button>
                 </div>

@@ -193,16 +193,14 @@ export default function DeliveryPage() {
     try {
       let idProofUrl = "";
       let drivingLicenseUrl = "";
-      let rcBookUrl = "";
       if (idProofFile) idProofUrl = await uploadToImgBB(idProofFile);
       if (drivingLicenseFile) drivingLicenseUrl = await uploadToImgBB(drivingLicenseFile);
-      if (rcBookFile) rcBookUrl = await uploadToImgBB(rcBookFile);
 
       await setDoc(doc(db, "delivery_profile", auth.currentUser.uid), {
         phone: "+91" + authPhone,
         name: riderName, address, email,
         vehicleType, vehicleNumber,
-        idProofUrl, drivingLicenseUrl, rcBookUrl,
+        idProofUrl, drivingLicenseUrl,
         workingHours, preferredZone, upiId,
         role: "delivery", approved: false, online: false, earnings: 0, deliveryCount: 0,
         createdAt: new Date(),
@@ -354,19 +352,10 @@ export default function DeliveryPage() {
                     </div>
                   </div>
                 </div>
-                <div>
-                  <p style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>VEHICLE RC BOOK</p>
-                  <input type="file" accept="image/*" onChange={(e) => {
-                    const f = e.target.files[0]; if(f) { setRcBookFile(f); setRcBookPreview(URL.createObjectURL(f)); }
-                  }} style={{ display: "none" }} id="rcUpload" />
-                  <div onClick={() => document.getElementById("rcUpload").click()} style={{ minHeight: 100, border: "2px dashed var(--border2)", borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", cursor: "pointer", background: "rgba(255,255,255,0.5)", transition: "all 0.3s ease" }}>
-                    {rcBookPreview ? <img src={rcBookPreview} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 16 }} /> : <p style={{ fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)" }}>Tap to upload</p>}
-                  </div>
-                </div>
                 <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
                   <button className="auth-btn-ghost" onClick={() => setAuthStep("vehicle")} style={{ flex: 1 }}>Back</button>
                   <button className="auth-btn-primary" onClick={() => {
-                    if(!idProofFile || !drivingLicenseFile || !rcBookFile) return alert("ID, Driving License, and RC Book are required");
+                    if(!idProofFile || !drivingLicenseFile) return alert("ID and Driving License are required");
                     setAuthStep("availability");
                   }} style={{ flex: 1 }}>Next</button>
                 </div>
