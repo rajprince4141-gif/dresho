@@ -408,7 +408,7 @@ export default function ShopPage() {
         await new Promise((resolve, reject) => {
           const options = {
             key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
-            amount: grandTotal * 100, // paise
+            amount: Math.round(grandTotal * 100), // paise
             currency: "INR",
             name: "Dresho",
             description: `Order — ${cart.length} item(s)`,
