@@ -27,6 +27,9 @@ export default function ShopPage() {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [agreedTerms, setAgreedTerms] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
+  const [showContactModal, setShowContactModal] = useState(false);
+  const [showReturnModal, setShowReturnModal] = useState(false);
+  const [showTCModal, setShowTCModal] = useState(false);
   const [user, setUser] = useState(null);
   const [userData, setUserData] = useState(null);
   const [authLoading, setAuthLoading] = useState(false);
@@ -959,8 +962,14 @@ export default function ShopPage() {
                 <div className="footer-bottom-left">
                   <span>© 2026 Dresho Technologies</span>
                 </div>
-                <div className="footer-bottom-right">
-                  <Link href="/privacy-policy" style={{ color: "inherit", textDecoration: "none" }}><span style={{ cursor: "pointer" }}>Privacy Policy</span></Link>
+                <div className="footer-bottom-right" style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                  <span style={{ cursor: "pointer", fontSize: 12, color: "inherit", opacity: 0.7, transition: "opacity 0.2s" }} onClick={() => setShowContactModal(true)} onMouseOver={e => e.target.style.opacity=1} onMouseOut={e => e.target.style.opacity=0.7}>Contact & Support</span>
+                  <span style={{ opacity: 0.3, fontSize: 10 }}>|</span>
+                  <span style={{ cursor: "pointer", fontSize: 12, color: "inherit", opacity: 0.7, transition: "opacity 0.2s" }} onClick={() => setShowReturnModal(true)} onMouseOver={e => e.target.style.opacity=1} onMouseOut={e => e.target.style.opacity=0.7}>Return Policy</span>
+                  <span style={{ opacity: 0.3, fontSize: 10 }}>|</span>
+                  <span style={{ cursor: "pointer", fontSize: 12, color: "inherit", opacity: 0.7, transition: "opacity 0.2s" }} onClick={() => setShowTCModal(true)} onMouseOver={e => e.target.style.opacity=1} onMouseOut={e => e.target.style.opacity=0.7}>Terms & Conditions</span>
+                  <span style={{ opacity: 0.3, fontSize: 10 }}>|</span>
+                  <Link href="/privacy-policy" style={{ color: "inherit", textDecoration: "none" }}><span style={{ cursor: "pointer", fontSize: 12, opacity: 0.7 }}>Privacy Policy</span></Link>
                 </div>
               </div>
             </footer>
@@ -1151,6 +1160,128 @@ export default function ShopPage() {
             </div>
           </div>
         )}
+
+        {/* ── FOOTER POLICY MODALS ── */}
+        <FooterModal open={showContactModal} onClose={() => setShowContactModal(false)} title="DRESHO – Contact & Support">
+          <div style={{ fontSize: 14, color: "#333", lineHeight: 1.8 }}>
+            <div style={{ background: "#f8f7f4", borderRadius: 16, padding: "20px", marginBottom: 16 }}>
+              <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>📞 Get in Touch</p>
+              <p>We're here to help you with anything—orders, delivery, or general queries.</p>
+            </div>
+            <div style={{ background: "#f8f7f4", borderRadius: 16, padding: "20px", marginBottom: 16 }}>
+              <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>📧 Email Support</p>
+              <p>For business, support, or queries:</p>
+              <a href="mailto:dresho.business@gmail.com" style={{ color: "#b07d3a", fontWeight: 600, textDecoration: "none" }}>dresho.business@gmail.com</a>
+            </div>
+            <div style={{ background: "#f8f7f4", borderRadius: 16, padding: "20px", marginBottom: 16 }}>
+              <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>💬 WhatsApp Support</p>
+              <p>Chat with us directly for quick help:</p>
+              <a href="https://wa.me/919128926837" target="_blank" rel="noopener noreferrer" style={{ color: "#25d366", fontWeight: 600, textDecoration: "none" }}>+91 9128926837</a>
+              <p style={{ marginTop: 8, fontSize: 12, color: "#888" }}>👉 Available: 10:00 AM – 8:00 PM (All Days)</p>
+            </div>
+            <div style={{ background: "#f8f7f4", borderRadius: 16, padding: "20px", marginBottom: 16 }}>
+              <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>🛍️ Order Support</p>
+              <p>If you have issues related to your order:</p>
+              <ul style={{ paddingLeft: 20, margin: "8px 0" }}>
+                <li>Delayed delivery</li>
+                <li>Wrong or damaged product</li>
+                <li>Replacement request</li>
+              </ul>
+              <p style={{ fontSize: 12, color: "#888" }}>👉 Contact us via WhatsApp for fastest resolution</p>
+            </div>
+            <div style={{ background: "#f8f7f4", borderRadius: 16, padding: "20px", marginBottom: 16 }}>
+              <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>🤝 Seller & Partnership Queries</p>
+              <p>Want to sell on Dresho or collaborate? Reach out via email with details and our team will get back to you.</p>
+            </div>
+            <div style={{ background: "#f8f7f4", borderRadius: 16, padding: "20px", marginBottom: 16 }}>
+              <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>⚡ Quick Response Promise</p>
+              <p>We aim to respond:</p>
+              <ul style={{ paddingLeft: 20, margin: "8px 0" }}>
+                <li><strong>WhatsApp:</strong> Within 1–2 hours</li>
+                <li><strong>Email:</strong> Within 24 hours</li>
+              </ul>
+            </div>
+            <div style={{ background: "#f8f7f4", borderRadius: 16, padding: "20px" }}>
+              <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>📍 Service Area</p>
+              <p>Currently serving: <strong>Hazaribagh, Jharkhand</strong></p>
+            </div>
+          </div>
+        </FooterModal>
+
+        <FooterModal open={showReturnModal} onClose={() => setShowReturnModal(false)} title="Return / Replacement Policy">
+          <div style={{ fontSize: 14, color: "#333", lineHeight: 1.8 }}>
+            <div style={{ background: "#fff3cd", borderRadius: 16, padding: "16px 20px", marginBottom: 16, border: "1px solid #ffc107" }}>
+              <p style={{ fontWeight: 700, color: "#856404" }}>⚠️ IMPORTANT: No refunds. Replacement only.</p>
+            </div>
+            <div style={{ background: "#f8f7f4", borderRadius: 16, padding: "20px", marginBottom: 16 }}>
+              <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>✅ We offer:</p>
+              <p>Replacement only (No refunds)</p>
+            </div>
+            <div style={{ background: "#f8f7f4", borderRadius: 16, padding: "20px", marginBottom: 16 }}>
+              <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>🔁 Eligible cases:</p>
+              <ul style={{ paddingLeft: 20, margin: "8px 0" }}>
+                <li>Wrong item delivered</li>
+                <li>Damaged product</li>
+                <li>Size issue (if applicable)</li>
+              </ul>
+            </div>
+            <div style={{ background: "#f8f7f4", borderRadius: 16, padding: "20px", marginBottom: 16 }}>
+              <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>⏱ Time:</p>
+              <p>Request within <strong>24 hours</strong> of delivery</p>
+            </div>
+            <div style={{ background: "#f8f7f4", borderRadius: 16, padding: "20px", marginBottom: 16 }}>
+              <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>📦 Conditions:</p>
+              <ul style={{ paddingLeft: 20, margin: "8px 0" }}>
+                <li>Product must be unused</li>
+                <li>Original packaging required</li>
+              </ul>
+            </div>
+            <div style={{ background: "#fde8e8", borderRadius: 16, padding: "20px", marginBottom: 16, border: "1px solid #f5c6cb" }}>
+              <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: "#721c24" }}>❌ Not eligible:</p>
+              <ul style={{ paddingLeft: 20, margin: "8px 0", color: "#721c24" }}>
+                <li>Change of mind</li>
+                <li>Used products</li>
+              </ul>
+            </div>
+            <div style={{ background: "#f8f7f4", borderRadius: 16, padding: "20px" }}>
+              <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>🔄 Process:</p>
+              <ol style={{ paddingLeft: 20, margin: "8px 0" }}>
+                <li>User raises request</li>
+                <li>Product picked up</li>
+                <li>Replacement delivered</li>
+              </ol>
+            </div>
+          </div>
+        </FooterModal>
+
+        <FooterModal open={showTCModal} onClose={() => setShowTCModal(false)} title="Terms & Conditions">
+          <div style={{ fontSize: 14, color: "#333", lineHeight: 1.8 }}>
+            <p style={{ fontSize: 12, color: "#888", marginBottom: 16 }}>DRESHO – Terms of Use for Buyers</p>
+            <div style={{ background: "#f8f7f4", borderRadius: 16, padding: "20px", marginBottom: 16 }}>
+              <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>1. Orders</p>
+              <p>Orders once placed cannot be cancelled after dispatch.</p>
+            </div>
+            <div style={{ background: "#f8f7f4", borderRadius: 16, padding: "20px", marginBottom: 16 }}>
+              <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>2. Pricing</p>
+              <p>Prices are set by sellers and may vary.</p>
+            </div>
+            <div style={{ background: "#f8f7f4", borderRadius: 16, padding: "20px", marginBottom: 16 }}>
+              <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>3. Delivery</p>
+              <p>Delivery time is estimated, not guaranteed.</p>
+            </div>
+            <div style={{ background: "#f8f7f4", borderRadius: 16, padding: "20px", marginBottom: 16 }}>
+              <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>4. COD Orders</p>
+              <ul style={{ paddingLeft: 20, margin: "8px 0" }}>
+                <li>Users must be available to receive orders</li>
+                <li>Repeated refusal may lead to account restriction</li>
+              </ul>
+            </div>
+            <div style={{ background: "#f8f7f4", borderRadius: 16, padding: "20px" }}>
+              <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>5. Liability</p>
+              <p>Dresho acts as a platform connecting buyers and sellers.</p>
+            </div>
+          </div>
+        </FooterModal>
 
         {/* ── BOTTOM NAV ── */}
         <div style={s.bottomNav}>
@@ -1564,5 +1695,21 @@ const s = {
     justifyContent: "center",
   },
 };
+
+/* ─── FOOTER MODALS ─── */
+function FooterModal({ open, onClose, title, children }) {
+  if (!open) return null;
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: 0 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: "24px 24px 0 0", width: "100%", maxWidth: 600, maxHeight: "80vh", overflowY: "auto", padding: "32px 28px 48px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 900, color: "#1a1a2e", margin: 0 }}>{title}</h2>
+          <button onClick={onClose} style={{ background: "#f1f5f9", border: "none", borderRadius: "50%", width: 36, height: 36, cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 
