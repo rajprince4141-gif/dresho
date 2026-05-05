@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { auth, db, IMGBB_API_KEY } from "@/lib/firebase";
 import {
-  RecaptchaVerifier, linkWithPhoneNumber, GoogleAuthProvider, signInWithPopup,
+  GoogleAuthProvider, signInWithPopup,
   onAuthStateChanged, signOut,
 } from "firebase/auth";
 import {
@@ -18,10 +18,8 @@ export default function SellerPage() {
   const [isPending, setIsPending] = useState(false);
 
   // Auth flow states
-  const [authStep, setAuthStep] = useState("google"); // google, basic, business, documents, operations, phone, otp
+  const [authStep, setAuthStep] = useState("google"); // google, basic, business, documents, operations
   const [authPhone, setAuthPhone] = useState("");
-  const [authOtp, setAuthOtp] = useState(["", "", "", "", "", ""]);
-  const [confirmResult, setConfirmResult] = useState(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [agreedTerms, setAgreedTerms] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
@@ -169,15 +167,6 @@ export default function SellerPage() {
     setAdvSubmitting(false);
   };
 
-  const setupRecaptcha = () => {
-    if (window.recaptchaVerifier) {
-      window.recaptchaVerifier.clear();
-      window.recaptchaVerifier = null;
-    }
-    window.recaptchaVerifier = new RecaptchaVerifier(auth, "recaptcha-container", { size: "invisible" });
-    return window.recaptchaVerifier;
-  };
-
   const handleGoogleSignIn = async () => {
     setAuthLoading(true);
     try {
@@ -189,55 +178,6 @@ export default function SellerPage() {
       }
     }
     setAuthLoading(false);
-  };
-
-  const handleSendOtp = async () => {
-    if (authPhone.length !== 10) return alert("Enter a valid 10-digit number.");
-    setAuthLoading(true);
-    try {
-      const fullPhone = "+91" + authPhone;
-      const appVerifier = setupRecaptcha();
-      const result = await linkWithPhoneNumber(auth.currentUser, fullPhone, appVerifier);
-      setConfirmResult(result);
-      setAuthStep("otp");
-    } catch (e) {
-      alert("Error: " + e.message);
-      if (window.recaptchaVerifier) { window.recaptchaVerifier.clear(); window.recaptchaVerifier = null; }
-    }
-    setAuthLoading(false);
-  };
-
-  const handleVerifyOtp = async () => {
-    const otp = authOtp.join("");
-    if (otp.length < 6) return alert("Enter the 6-digit OTP.");
-    setAuthLoading(true);
-    try {
-      await confirmResult.confirm(otp);
-      await submitRegistration();
-    } catch (e) {
-      alert("Invalid OTP or error. Please try again.");
-      setAuthOtp(["", "", "", "", "", ""]);
-    }
-    setAuthLoading(false);
-  };
-
-  const handleOtpChange = (index, value) => {
-    if (value.length > 1) value = value.slice(-1);
-    if (value && !/^\d$/.test(value)) return;
-    const newOtp = [...authOtp];
-    newOtp[index] = value;
-    setAuthOtp(newOtp);
-    if (value && index < 5) {
-      const next = document.getElementById(`otp-${index + 1}`);
-      if (next) next.focus();
-    }
-  };
-
-  const handleOtpKeyDown = (index, e) => {
-    if (e.key === "Backspace" && !authOtp[index] && index > 0) {
-      const prev = document.getElementById(`otp-${index - 1}`);
-      if (prev) prev.focus();
-    }
   };
 
   const fetchLocation = () => {
@@ -259,7 +199,8 @@ export default function SellerPage() {
 
   const submitRegistration = async () => {
     if (!agreedTerms) return alert("You must agree to the Seller Terms.");
-    // No need to set authLoading here because handleVerifyOtp already did it.
+    if (authPhone.length !== 10) return alert("Enter a valid 10-digit phone number.");
+    setAuthLoading(true);
     try {
       let idProofUrl = "";
       let shopPhotoUrl = "";
@@ -279,6 +220,7 @@ export default function SellerPage() {
       });
       setIsPending(true);
     } catch (e) { alert("Registration failed: " + e.message); }
+    setAuthLoading(false);
   };
 
   const handleImageSelect = (e) => {
@@ -323,7 +265,6 @@ export default function SellerPage() {
     return (
       <>
         <div className=""><div className="" /></div>
-        <div id="recaptcha-container" />
         <div className="page-content " style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 20, position: "relative", zIndex: 1 }}>
           <Link href="/" style={{ position: "fixed", top: 20, left: 20, zIndex: 100, width: 42, height: 42, borderRadius: 12, background: "rgba(255,255,255,0.85)", border: "1px solid rgba(0,0,0,0.08)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "var(--gold)", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", transition: "all 0.3s ease", display: "none" }}>
             <i className="fas fa-house" style={{ fontSize: 16 }} />
@@ -341,7 +282,7 @@ export default function SellerPage() {
             </div>
 
             {/* Steps Indicator */}
-            {authStep !== "google" && authStep !== "phone" && authStep !== "otp" && (
+            {authStep !== "google" && (
               <div style={{ display: "flex", gap: 6, justifyContent: "center", marginTop: -10 }}>
                 {["basic", "business", "documents", "operations"].map((stepItem) => (
                   <div key={stepItem} style={{ width: authStep === stepItem ? 20 : 8, height: 8, borderRadius: 4, background: authStep === stepItem ? "var(--navy)" : "rgba(139,69,19,0.15)", transition: "all 0.3s ease" }} />
@@ -465,6 +406,13 @@ export default function SellerPage() {
                   </div>
                 </div>
                 <input className="glass-input" placeholder="UPI ID (For Payments)" value={upiId} onChange={(e) => setUpiId(e.target.value)} />
+                <div>
+                  <p style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>PHONE NUMBER</p>
+                  <div style={{ position: "relative" }}>
+                    <span style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", color: "var(--navy)", fontWeight: 500, fontSize: 15 }}>+91</span>
+                    <input type="tel" maxLength={10} className="glass-input" placeholder="Mobile Number" value={authPhone} onChange={(e) => setAuthPhone(e.target.value.replace(/\D/g, ""))} style={{ paddingLeft: 52 }} />
+                  </div>
+                </div>
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginTop: 4 }}>
                   <input type="checkbox" checked={agreedTerms} onChange={(e) => setAgreedTerms(e.target.checked)} style={{ marginTop: 3, accentColor: "var(--gold)", width: 18, height: 18, cursor: "pointer" }} />
                   <p style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
@@ -473,48 +421,14 @@ export default function SellerPage() {
                 </div>
                 <div style={{ display: "flex", gap: 10 }}>
                   <button className="auth-btn-ghost" onClick={() => setAuthStep("documents")} style={{ flex: 1 }}>Back</button>
-                  <button className="auth-btn-primary" onClick={() => {
-                    if (!agreedTerms) return alert("You must agree to the Terms & Conditions.");
-                    setAuthStep("phone");
-                  }} disabled={authLoading} style={{ flex: 1 }}>
-                    Continue to Verify Phone
+                  <button className="auth-btn-primary" onClick={submitRegistration} disabled={authLoading} style={{ flex: 1 }}>
+                    {authLoading ? <i className="fas fa-circle-notch fa-spin" /> : "Submit Application"}
                   </button>
                 </div>
               </div>
             )}
 
-            {/* ── STEP 6: Phone Verification ── */}
-            {authStep === "phone" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                <p style={{ fontSize: 13, color: "var(--text-tertiary)", textAlign: "center" }}>Almost done! Verify your phone number.</p>
-                <div style={{ position: "relative" }}>
-                  <span style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", color: "var(--navy)", fontWeight: 500, fontSize: 15 }}>+91</span>
-                  <input type="tel" maxLength={10} placeholder="Mobile Number" value={authPhone} onChange={(e) => setAuthPhone(e.target.value.replace(/\D/g, ""))} style={{ width: "100%", padding: "18px 16px 18px 52px", background: "#f0f4f8", border: "none", fontSize: 15, color: "var(--navy)", outline: "none" }} autoFocus />
-                </div>
-                <div style={{ display: "flex", gap: 10 }}>
-                  <button className="auth-btn-ghost" onClick={() => setAuthStep("operations")} style={{ flex: 1 }}>Back</button>
-                  <button className="auth-btn-primary" style={{ flex: 1 }} onClick={handleSendOtp} disabled={authLoading}>
-                    {authLoading ? <i className="fas fa-circle-notch fa-spin" /> : "Send OTP"}
-                  </button>
-                </div>
-              </div>
-            )}
 
-            {/* ── STEP 7: OTP ── */}
-            {authStep === "otp" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                <p style={{ textAlign: "center", fontSize: 13, color: "var(--text-tertiary)" }}>Sent to +91 {authPhone}</p>
-                <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
-                  {authOtp.map((digit, i) => (
-                    <input key={i} id={`otp-${i}`} type="tel" maxLength={1} value={digit} onChange={(e) => handleOtpChange(i, e.target.value)} onKeyDown={(e) => handleOtpKeyDown(i, e)} style={{ width: 44, height: 52, borderRadius: 12, border: "1px solid rgba(0,0,0,0.08)", textAlign: "center", fontSize: 20, fontWeight: 700, background: "rgba(255,255,255,0.8)" }} />
-                  ))}
-                </div>
-                <button className="auth-btn-primary" onClick={handleVerifyOtp} disabled={authLoading}>
-                  {authLoading ? <i className="fas fa-circle-notch fa-spin" /> : "Verify & Submit Application"}
-                </button>
-                <button className="auth-btn-ghost" onClick={() => setAuthStep("phone")} style={{ fontSize: 12 }}>Change Number</button>
-              </div>
-            )}
           </div>
           {showTermsModal && (
             <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setShowTermsModal(false)}>

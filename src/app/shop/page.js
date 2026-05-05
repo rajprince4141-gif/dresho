@@ -960,14 +960,14 @@ export default function ShopPage() {
                 <div className="footer-bottom-left">
                   <span>© 2026 Dresho Technologies</span>
                 </div>
-                <div className="footer-bottom-right" style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
-                  <span style={{ cursor: "pointer", fontSize: 12, color: "inherit", opacity: 0.7, transition: "opacity 0.2s" }} onClick={() => setShowContactModal(true)} onMouseOver={e => e.target.style.opacity=1} onMouseOut={e => e.target.style.opacity=0.7}>Contact & Support</span>
-                  <span style={{ opacity: 0.3, fontSize: 10 }}>|</span>
-                  <span style={{ cursor: "pointer", fontSize: 12, color: "inherit", opacity: 0.7, transition: "opacity 0.2s" }} onClick={() => setShowReturnModal(true)} onMouseOver={e => e.target.style.opacity=1} onMouseOut={e => e.target.style.opacity=0.7}>Return Policy</span>
-                  <span style={{ opacity: 0.3, fontSize: 10 }}>|</span>
-                  <span style={{ cursor: "pointer", fontSize: 12, color: "inherit", opacity: 0.7, transition: "opacity 0.2s" }} onClick={() => setShowTCModal(true)} onMouseOver={e => e.target.style.opacity=1} onMouseOut={e => e.target.style.opacity=0.7}>Terms & Conditions</span>
-                  <span style={{ opacity: 0.3, fontSize: 10 }}>|</span>
-                  <Link href="/privacy-policy" style={{ color: "inherit", textDecoration: "none" }}><span style={{ cursor: "pointer", fontSize: 12, opacity: 0.7 }}>Privacy Policy</span></Link>
+                <div className="footer-bottom-right">
+                  <span className="footer-link-btn" onClick={() => setShowContactModal(true)}>Contact & Support</span>
+                  <span className="footer-sep">|</span>
+                  <span className="footer-link-btn" onClick={() => setShowReturnModal(true)}>Return Policy</span>
+                  <span className="footer-sep">|</span>
+                  <span className="footer-link-btn" onClick={() => setShowTCModal(true)}>Terms & Conditions</span>
+                  <span className="footer-sep">|</span>
+                  <Link href="/privacy-policy" style={{ color: "inherit", textDecoration: "none" }}><span className="footer-link-btn">Privacy Policy</span></Link>
                 </div>
               </div>
             </footer>
