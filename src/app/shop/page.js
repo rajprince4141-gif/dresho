@@ -680,9 +680,7 @@ export default function ShopPage() {
                 <span className="nav-action-icon">🛍{cart.length > 0 && <span className="nav-badge">{cart.length}</span>}</span>
                 <span className="nav-action-label">Cart</span>
               </button>
-              {userData ? (
-                <button onClick={() => signOut(auth)} className="btn-signin" style={{ background: "transparent", color: "var(--navy)", border: "1px solid var(--border)" }}>Logout</button>
-              ) : (
+              {!userData && (
                 <button onClick={() => setShowAuth(true)} className="btn-signin">Sign In</button>
               )}
             </div>
