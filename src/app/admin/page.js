@@ -845,22 +845,51 @@ export default function AdminPage() {
                 {feedbacks.length === 0 ? (
                   <p style={{ gridColumn: "1/-1", textAlign: "center", padding: 40, color: "#8a93a4", fontWeight: 600 }}>No feedback received yet.</p>
                 ) : (
-                  feedbacks.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).map((f) => (
-                    <div key={f.id} className="admin-mobile-card" style={{ padding: "20px 24px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-                        <div>
-                          <h4 style={{ fontWeight: 700, fontSize: 14 }}>{f.userName || "Guest User"}</h4>
-                          <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{f.createdAt?.toDate ? f.createdAt.toDate().toLocaleDateString() : ""}</span>
+                  feedbacks.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).map((f) => {
+                    const fbUser = users.find((u) => u.id === f.userId) || {};
+                    let addr = "No Address Provided";
+                    if (fbUser.address) {
+                      addr = typeof fbUser.address === "string" ? fbUser.address : [fbUser.address.line, fbUser.address.city, fbUser.address.pincode].filter(Boolean).join(", ");
+                    }
+
+                    return (
+                      <div key={f.id} className="admin-mobile-card" style={{ padding: "24px", background: "white", borderRadius: "16px", boxShadow: "0 4px 16px rgba(0,0,0,0.04)", border: "1px solid #e2e8f0", display: "flex", flexDirection: "column", gap: "16px" }}>
+                        {/* HEADER: User Info */}
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: "12px" }}>
+                          <div style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--navy)", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700, flexShrink: 0 }}>
+                            {(f.userName || fbUser.name || "G").charAt(0).toUpperCase()}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <h4 style={{ fontWeight: 700, fontSize: 15, color: "var(--navy)", margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.userName || fbUser.name || "Guest User"}</h4>
+                            <p style={{ fontSize: 12, color: "#64748b", margin: "2px 0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{fbUser.email || "No Email"}</p>
+                            <p style={{ fontSize: 11, color: "#94a3b8", margin: 0, display: "flex", alignItems: "flex-start", gap: 4, lineHeight: 1.4 }}>
+                              <span style={{ fontSize: 10, marginTop: 1 }}>📍</span> 
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{addr}</span>
+                            </p>
+                          </div>
+                          <div style={{ background: "#fffbeb", padding: "6px 12px", borderRadius: "20px", display: "flex", alignItems: "center", gap: 4, border: "1px solid #fde68a", flexShrink: 0 }}>
+                            <span style={{ fontSize: 14, color: "#f59e0b", fontWeight: 800 }}>{f.rating}.0</span>
+                            <span style={{ color: "#f59e0b", fontSize: 14 }}>★</span>
+                          </div>
                         </div>
-                        <div style={{ color: "var(--gold)", fontSize: 14, letterSpacing: 2 }}>
-                          {"★".repeat(f.rating)}{"☆".repeat(5 - f.rating)}
+                        
+                        {/* BODY: Review Text */}
+                        <div style={{ position: "relative", background: "#f8fafc", padding: "16px", borderRadius: "12px", border: "1px solid #f1f5f9", marginTop: 4 }}>
+                          <span style={{ position: "absolute", top: -8, left: 16, background: "white", padding: "0 8px", fontSize: 10, fontWeight: 700, color: "#cbd5e1", letterSpacing: 1, textTransform: "uppercase" }}>Review</span>
+                          <p style={{ fontSize: 13, color: "#475569", lineHeight: 1.6, margin: 0, fontStyle: "italic" }}>
+                            "{f.text}"
+                          </p>
+                        </div>
+
+                        {/* FOOTER: Date */}
+                        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                          <span style={{ fontSize: 11, color: "#cbd5e1", fontWeight: 500 }}>
+                            {f.createdAt?.toDate ? f.createdAt.toDate().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute:'2-digit' }) : ""}
+                          </span>
                         </div>
                       </div>
-                      <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5, background: "rgba(0,0,0,0.02)", padding: 12, borderRadius: 12, marginTop: 12 }}>
-                        "{f.text}"
-                      </p>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </div>
