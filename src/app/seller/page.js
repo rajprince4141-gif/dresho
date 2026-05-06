@@ -480,7 +480,7 @@ export default function SellerPage() {
             <div style={{ fontSize: 64 }}>⏳</div>
             <h2 style={{ fontSize: 24, fontWeight: 900 }}>Application Pending</h2>
             <p style={{ color: "var(--text-secondary)", lineHeight: 1.7 }}>
-              The DRĀP Admin is reviewing your store. You&apos;ll gain access once approved.
+              The Dresho Admin is reviewing your store. You&apos;ll gain access once approved.
             </p>
             <button className="auth-btn-ghost" onClick={() => signOut(auth)}>Try Different Account</button>
           </div>

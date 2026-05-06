@@ -44,32 +44,6 @@ export default function ShopPage() {
   const [fbSubmitting, setFbSubmitting] = useState(false);
   const router = useRouter();
 
-  // ── Custom Cursor State ──
-  const [cursorPos, setCursorPos] = useState({ x: -100, y: -100 });
-  const [dotPos, setDotPos] = useState({ x: -100, y: -100 });
-
-  useEffect(() => {
-    const onMouseMove = (e) => {
-      setCursorPos({ x: e.clientX, y: e.clientY });
-    };
-    window.addEventListener("mousemove", onMouseMove);
-    return () => window.removeEventListener("mousemove", onMouseMove);
-  }, []);
-
-  useEffect(() => {
-    let animationFrame;
-    const updateDot = () => {
-      setDotPos((prev) => {
-        const dx = cursorPos.x - prev.x;
-        const dy = cursorPos.y - prev.y;
-        return { x: prev.x + dx * 0.15, y: prev.y + dy * 0.15 };
-      });
-      animationFrame = requestAnimationFrame(updateDot);
-    };
-    animationFrame = requestAnimationFrame(updateDot);
-    return () => cancelAnimationFrame(animationFrame);
-  }, [cursorPos]);
-
   // ── App State ──
   const [currentSection, setCurrentSection] = useState("home");
   const [products, setProducts] = useState([]);
@@ -614,10 +588,6 @@ export default function ShopPage() {
   // ══════════════════════════
   return (
     <>
-      {/* ── Custom Cursor ── */}
-      <div style={{ position: "fixed", left: dotPos.x, top: dotPos.y, width: 32, height: 32, background: "rgba(139,69,19,0.15)", borderRadius: "50%", pointerEvents: "none", transform: "translate(-50%, -50%)", zIndex: 99999, transition: "width 0.2s, height 0.2s" }} />
-      <div style={{ position: "fixed", left: cursorPos.x, top: cursorPos.y, width: 8, height: 8, background: "rgba(139,69,19,0.8)", borderRadius: "50%", pointerEvents: "none", transform: "translate(-50%, -50%)", zIndex: 100000 }} />
-
       {authModal}
       <div style={{ paddingBottom: 90, position: "relative", zIndex: 1, minHeight: "100vh", background: "var(--ivory)", color: "var(--text)" }}>
 

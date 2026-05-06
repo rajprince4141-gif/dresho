@@ -189,7 +189,8 @@ export default function DeliveryPage() {
 
   const submitRegistration = async () => {
     if (!agreedTerms) return alert("You must agree to the Terms & Conditions.");
-    // No need to set authLoading here because handleVerifyOtp already did it.
+    if (authPhone.length !== 10) return alert("Enter a valid 10-digit phone number.");
+    setAuthLoading(true);
     try {
       let idProofUrl = "";
       let drivingLicenseUrl = "";
@@ -207,6 +208,7 @@ export default function DeliveryPage() {
       });
       setIsPending(true);
     } catch (e) { alert("Registration failed: " + e.message); }
+    setAuthLoading(false);
   };
 
   const toggleOnline = async () => {
@@ -396,28 +398,14 @@ export default function DeliveryPage() {
                 </div>
                 <div style={{ display: "flex", gap: 10 }}>
                   <button className="auth-btn-ghost" onClick={() => setAuthStep("availability")} style={{ flex: 1 }}>Back</button>
-                  <button className="auth-btn-primary" style={{ flex: 1 }} onClick={handleSendOtp} disabled={authLoading}>
-                    {authLoading ? <i className="fas fa-circle-notch fa-spin" /> : "Send OTP"}
+                  <button className="auth-btn-primary" style={{ flex: 1 }} onClick={submitRegistration} disabled={authLoading}>
+                    {authLoading ? <i className="fas fa-circle-notch fa-spin" /> : "Continue"}
                   </button>
                 </div>
               </div>
             )}
 
-            {/* ── STEP 7: OTP ── */}
-            {authStep === "otp" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                <p style={{ textAlign: "center", fontSize: 13, color: "var(--text-tertiary)" }}>Sent to +91 {authPhone}</p>
-                <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
-                  {authOtp.map((digit, i) => (
-                    <input key={i} id={`otp-${i}`} type="tel" maxLength={1} value={digit} onChange={(e) => handleOtpChange(i, e.target.value)} onKeyDown={(e) => handleOtpKeyDown(i, e)} style={{ width: 44, height: 52, borderRadius: 12, border: "1px solid rgba(0,0,0,0.08)", textAlign: "center", fontSize: 20, fontWeight: 700, background: "rgba(255,255,255,0.8)" }} />
-                  ))}
-                </div>
-                <button className="auth-btn-primary" onClick={handleVerifyOtp} disabled={authLoading}>
-                  {authLoading ? <i className="fas fa-circle-notch fa-spin" /> : "Verify & Submit Application"}
-                </button>
-                <button className="auth-btn-ghost" onClick={() => setAuthStep("phone")} style={{ fontSize: 12 }}>Change Number</button>
-              </div>
-            )}
+
           </div>
           {showTermsModal && (
             <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setShowTermsModal(false)}>

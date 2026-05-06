@@ -22,11 +22,6 @@ export const metadata = {
     description: "Premium clothing from local boutiques, delivered in 30 minutes.",
     images: ["/logo.jpeg"],
   },
-  icons: {
-    icon: "/logo.jpeg",
-    shortcut: "/logo.jpeg",
-    apple: "/logo.jpeg",
-  },
 };
 
 export const viewport = {

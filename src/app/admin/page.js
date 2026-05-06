@@ -22,6 +22,8 @@ export default function AdminPage() {
   const [users, setUsers] = useState([]);
   const [deliveryAgents, setDeliveryAgents] = useState([]);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [selectedSeller, setSelectedSeller] = useState(null);
+  const [selectedRider, setSelectedRider] = useState(null);
 
   // Banner Management State
   const [banners, setBanners] = useState({});
@@ -141,6 +143,22 @@ export default function AdminPage() {
   const suspendSeller = async (id, current) => {
     await updateDoc(doc(db, "sellers_profile", id), { approved: !current });
     alert(current ? "Seller suspended." : "Seller reactivated! ✅");
+  };
+
+  const approveRider = async (id) => {
+    await updateDoc(doc(db, "delivery_profile", id), { approved: true });
+    alert("Rider Approved! ✅");
+  };
+
+  const removeRider = async (id, name) => {
+    if (!confirm(`Remove rider "${name}" from Dresho? This cannot be undone.`)) return;
+    await deleteDoc(doc(db, "delivery_profile", id));
+    alert("Rider removed.");
+  };
+
+  const suspendRider = async (id, current) => {
+    await updateDoc(doc(db, "delivery_profile", id), { approved: !current });
+    alert(current ? "Rider suspended." : "Rider reactivated! ✅");
   };
 
   // Banner Management Functions
@@ -372,49 +390,197 @@ export default function AdminPage() {
 
           {/* SELLERS */}
           {tab === "sellers" && (
-
             <div className="animate-fade-in">
               <div style={{ marginBottom: 24 }}>
                 <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Seller<br/>Management</h1>
-                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Approve, suspend, or remove sellers from the Dresho platform.</p>
+                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>
+                  Review and manage seller applications.
+                  <span style={{ marginLeft: 12, padding: "3px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: "#fef3c7", color: "#f59e0b" }}>
+                    {sellers.filter(s => !s.approved).length} Pending
+                  </span>
+                </p>
               </div>
+
               <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                 {sellers.length === 0 ? (
                   <p style={{ gridColumn: "1/-1", textAlign: "center", padding: 40, color: "#8a93a4", fontWeight: 600 }}>No sellers registered yet</p>
                 ) : (
                   sellers.map((s) => (
                     <div key={s.id} className="admin-mobile-card" style={{ padding: 22 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+                      {/* Status badge + name */}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
                         <div>
-                          <h3 style={{ fontSize: 18, fontWeight: 800, color: "var(--navy)" }}>{s.storeName}</h3>
-                          <p style={{ fontSize: 12, color: "#8a93a4", marginTop: 2 }}>{s.name}</p>
+                          <h3 style={{ fontSize: 17, fontWeight: 800, color: "var(--navy)" }}>{s.storeName}</h3>
+                          <p style={{ fontSize: 12, color: "#8a93a4", marginTop: 2 }}>👤 {s.ownerName || s.name || "—"}</p>
                         </div>
-                        <span className={`badge ${s.approved ? "badge-emerald" : "badge-amber"}`} style={{ fontSize: 10 }}>
-                          {s.approved ? "✓ ACTIVE" : "PENDING"}
+                        <span style={{
+                          padding: "4px 10px", borderRadius: 8, fontSize: 10, fontWeight: 800, letterSpacing: 1,
+                          background: s.approved ? "#d1fae5" : "#fef3c7",
+                          color: s.approved ? "#059669" : "#d97706",
+                        }}>
+                          {s.approved ? "✓ ACTIVE" : "⏳ PENDING"}
                         </span>
                       </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)", marginBottom: 20 }}>
-                        <i className="fas fa-envelope" style={{ color: "#cbd5e1" }} />
-                        <span style={{ wordBreak: "break-all" }}>{s.email}</span>
+
+                      {/* Quick info row */}
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+                        {s.phone && (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text-secondary)" }}>
+                            <i className="fas fa-phone" style={{ color: "var(--gold)", width: 14 }} />
+                            <span>{s.phone}</span>
+                          </div>
+                        )}
+                        {s.locality && (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text-secondary)" }}>
+                            <i className="fas fa-location-dot" style={{ color: "var(--gold)", width: 14 }} />
+                            <span>{s.locality}</span>
+                          </div>
+                        )}
+                        {s.shopType && (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text-secondary)" }}>
+                            <i className="fas fa-tag" style={{ color: "var(--gold)", width: 14 }} />
+                            <span>{s.shopType}</span>
+                          </div>
+                        )}
                       </div>
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", paddingTop: 16, borderTop: "1px solid #f1f5f9" }}>
+
+                      {/* Buttons */}
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button style={{ flex: 1, padding: "9px 12px", borderRadius: 10, fontSize: 12, fontWeight: 700, background: "var(--navy)", color: "white", border: "none", cursor: "pointer" }}
+                          onClick={() => setSelectedSeller(s)}>
+                          🔍 More Info
+                        </button>
                         {!s.approved ? (
-                          <button className="btn-slide-primary" style={{ flex: 1, padding: "10px", borderRadius: 10, fontSize: 12, background: "linear-gradient(135deg, #10b981, #059669)" }} onClick={() => approveSeller(s.id)}>
+                          <button className="btn-slide-primary" style={{ flex: 1, padding: "9px", borderRadius: 10, fontSize: 12, background: "linear-gradient(135deg, #10b981, #059669)" }}
+                            onClick={() => approveSeller(s.id)}>
                             ✓ Approve
                           </button>
                         ) : (
-                          <button style={{ flex: 1, padding: "10px", borderRadius: 10, fontSize: 12, fontWeight: 700, background: "#fef3c7", color: "#f59e0b", border: "1px solid #fde68a", cursor: "pointer" }} onClick={() => suspendSeller(s.id, true)}>
+                          <button style={{ flex: 1, padding: "9px", borderRadius: 10, fontSize: 12, fontWeight: 700, background: "#fef3c7", color: "#d97706", border: "1px solid #fde68a", cursor: "pointer" }}
+                            onClick={() => suspendSeller(s.id, true)}>
                             ⏸ Suspend
                           </button>
                         )}
-                        <button style={{ flex: 1, padding: "10px", borderRadius: 10, fontSize: 12, fontWeight: 700, background: "#ffe4e6", color: "#fb7185", border: "1px solid #fecdd3", cursor: "pointer" }} onClick={() => removeSeller(s.id, s.storeName)}>
-                          ✕ Remove
-                        </button>
                       </div>
                     </div>
                   ))
                 )}
               </div>
+
+              {/* ── SELLER DETAIL MODAL ── */}
+              {selectedSeller && (
+                <div style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+                  onClick={() => setSelectedSeller(null)}>
+                  <div onClick={(e) => e.stopPropagation()} style={{ background: "white", borderRadius: 28, padding: 32, maxWidth: 560, width: "100%", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 24px 80px rgba(0,0,0,0.18)" }}>
+
+                    {/* Modal Header */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
+                      <div>
+                        <h2 style={{ fontSize: 22, fontWeight: 900, color: "var(--navy)" }}>{selectedSeller.storeName}</h2>
+                        <p style={{ fontSize: 13, color: "#8a93a4", marginTop: 3 }}>👤 {selectedSeller.ownerName || selectedSeller.name || "—"}</p>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ padding: "5px 12px", borderRadius: 8, fontSize: 11, fontWeight: 800, background: selectedSeller.approved ? "#d1fae5" : "#fef3c7", color: selectedSeller.approved ? "#059669" : "#d97706" }}>
+                          {selectedSeller.approved ? "✓ ACTIVE" : "⏳ PENDING"}
+                        </span>
+                        <button onClick={() => setSelectedSeller(null)} style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid #e5e7eb", background: "#f9fafb", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+                      </div>
+                    </div>
+
+                    {/* Documents */}
+                    <p style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.5, color: "#aaa", marginBottom: 10, textTransform: "uppercase" }}>Uploaded Documents</p>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24 }}>
+                      <div>
+                        <p style={{ fontSize: 10, fontWeight: 700, color: "#aaa", marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>🪪 ID Proof</p>
+                        {selectedSeller.idProofUrl ? (
+                          <a href={selectedSeller.idProofUrl} target="_blank" rel="noopener noreferrer">
+                            <img src={selectedSeller.idProofUrl} alt="ID Proof"
+                              style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 12, border: "2px solid #e8d8be", cursor: "pointer" }}
+                              onError={(e) => { e.target.style.display = "none"; }} />
+                          </a>
+                        ) : (
+                          <div style={{ width: "100%", height: 140, borderRadius: 12, background: "#f5f0e8", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 6, color: "#bbb", fontSize: 12 }}>
+                            <i className="fas fa-image" style={{ fontSize: 24 }} /><span>Not Uploaded</span>
+                          </div>
+                        )}
+                      </div>
+                      <div>
+                        <p style={{ fontSize: 10, fontWeight: 700, color: "#aaa", marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>🏪 Shop Photo</p>
+                        {selectedSeller.shopPhotoUrl ? (
+                          <a href={selectedSeller.shopPhotoUrl} target="_blank" rel="noopener noreferrer">
+                            <img src={selectedSeller.shopPhotoUrl} alt="Shop"
+                              style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 12, border: "2px solid #e8d8be", cursor: "pointer" }}
+                              onError={(e) => { e.target.style.display = "none"; }} />
+                          </a>
+                        ) : (
+                          <div style={{ width: "100%", height: 140, borderRadius: 12, background: "#f5f0e8", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 6, color: "#bbb", fontSize: 12 }}>
+                            <i className="fas fa-store" style={{ fontSize: 24 }} /><span>Not Uploaded</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Info Grid */}
+                    <p style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.5, color: "#aaa", marginBottom: 10, textTransform: "uppercase" }}>Seller Details</p>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, background: "#faf7f2", borderRadius: 16, padding: "18px 20px", marginBottom: 20 }}>
+                      {[
+                        { icon: "fa-phone", label: "Phone", value: selectedSeller.phone },
+                        { icon: "fa-envelope", label: "Email", value: selectedSeller.email },
+                        { icon: "fa-location-dot", label: "Address", value: selectedSeller.shopAddress },
+                        { icon: "fa-map-pin", label: "Locality", value: selectedSeller.locality },
+                        { icon: "fa-tag", label: "Shop Type", value: selectedSeller.shopType },
+                        { icon: "fa-wallet", label: "UPI ID", value: selectedSeller.upiId },
+                        { icon: "fa-clock", label: "Hours", value: selectedSeller.openingTime && selectedSeller.closingTime ? `${selectedSeller.openingTime} – ${selectedSeller.closingTime}` : null },
+                        { icon: "fa-calendar-days", label: "Working Days", value: Array.isArray(selectedSeller.availableDays) && selectedSeller.availableDays.length ? selectedSeller.availableDays.join(", ") : null },
+                      ].map((item, i) => (
+                        <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                          <i className={`fas ${item.icon}`} style={{ color: "var(--gold)", width: 14, marginTop: 3, fontSize: 12 }} />
+                          <div>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: "#aaa", display: "block" }}>{item.label}</span>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: "var(--navy)", wordBreak: "break-all" }}>{item.value || "—"}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Applied date */}
+                    {selectedSeller.createdAt && (
+                      <p style={{ fontSize: 11, color: "#aaa", marginBottom: 20 }}>
+                        📅 Applied: {selectedSeller.createdAt?.toDate
+                          ? selectedSeller.createdAt.toDate().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+                          : new Date(selectedSeller.createdAt?.seconds * 1000).toLocaleDateString("en-IN")}
+                      </p>
+                    )}
+
+                    {/* Modal Action Buttons */}
+                    <div style={{ display: "flex", gap: 10 }}>
+                      {!selectedSeller.approved ? (
+                        <>
+                          <button className="btn-slide-primary" style={{ flex: 1, padding: 14, borderRadius: 14, fontSize: 14, background: "linear-gradient(135deg, #10b981, #059669)" }}
+                            onClick={() => { approveSeller(selectedSeller.id); setSelectedSeller(null); }}>
+                            ✓ Approve Seller
+                          </button>
+                          <button style={{ flex: 1, padding: 14, borderRadius: 14, fontSize: 14, fontWeight: 700, background: "#ffe4e6", color: "#fb7185", border: "1px solid #fecdd3", cursor: "pointer" }}
+                            onClick={() => { removeSeller(selectedSeller.id, selectedSeller.storeName); setSelectedSeller(null); }}>
+                            ✕ Reject & Remove
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button style={{ flex: 1, padding: 14, borderRadius: 14, fontSize: 14, fontWeight: 700, background: "#fef3c7", color: "#d97706", border: "1px solid #fde68a", cursor: "pointer" }}
+                            onClick={() => { suspendSeller(selectedSeller.id, true); setSelectedSeller(null); }}>
+                            ⏸ Suspend
+                          </button>
+                          <button style={{ flex: 1, padding: 14, borderRadius: 14, fontSize: 14, fontWeight: 700, background: "#ffe4e6", color: "#fb7185", border: "1px solid #fecdd3", cursor: "pointer" }}
+                            onClick={() => { removeSeller(selectedSeller.id, selectedSeller.storeName); setSelectedSeller(null); }}>
+                            ✕ Remove
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -499,33 +665,172 @@ export default function AdminPage() {
             <div className="animate-fade-in">
               <div style={{ marginBottom: 24 }}>
                 <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Delivery<br/>Fleet</h1>
-                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Manage your delivery partners</p>
+                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>
+                  Manage your delivery partners.
+                  <span style={{ marginLeft: 12, padding: "3px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: "#fef3c7", color: "#f59e0b" }}>
+                    {deliveryAgents.filter(d => !d.approved).length} Pending
+                  </span>
+                </p>
               </div>
-              <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+              <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                 {deliveryAgents.length === 0 ? (
                   <p style={{ gridColumn: "1/-1", textAlign: "center", padding: 40, color: "#8a93a4", fontWeight: 600 }}>No delivery agents yet</p>
                 ) : (
                   deliveryAgents.map((d) => (
-                    <div key={d.id} className="admin-mobile-card" style={{ padding: "20px 24px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
+                    <div key={d.id} className="admin-mobile-card" style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
+                      
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                        <div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                            <h3 style={{ fontSize: 18, fontWeight: 800, color: "var(--navy)" }}>{d.name}</h3>
+                            {d.approved ? (
+                              <span style={{ padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 800, background: "#ecfdf5", color: "#10b981", border: "1px solid #d1fae5" }}>ACTIVE</span>
+                            ) : (
+                              <span style={{ padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 800, background: "#fef3c7", color: "#d97706", border: "1px solid #fde68a" }}>PENDING</span>
+                            )}
+                          </div>
+                          <p style={{ fontSize: 13, color: "var(--text-secondary)", fontWeight: 500 }}>{d.phone || "No Phone"}</p>
+                          <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>{d.vehicleType || "Vehicle"} • {d.vehicleNumber || ""}</p>
+                        </div>
                         <div style={{ width: 48, height: 48, borderRadius: 16, background: d.online ? "rgba(16,185,129,0.15)" : "rgba(255,255,255,0.04)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                           <i className="fas fa-motorcycle" style={{ color: d.online ? "#10b981" : "var(--text-tertiary)", fontSize: 18 }} />
                         </div>
-                        <div>
-                          <h4 style={{ fontWeight: 700 }}>{d.name}</h4>
-                          <p style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{d.vehicle || "No vehicle"}</p>
-                        </div>
                       </div>
+                      
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.04)" }}>
-                        <span className={`badge ${d.online ? "badge-emerald" : "badge-rose"}`}>
-                          {d.online ? "Online" : "Offline"}
-                        </span>
-                        <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{d.deliveryCount || 0} deliveries</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span className={`badge ${d.online ? "badge-emerald" : "badge-rose"}`}>
+                            {d.online ? "Online" : "Offline"}
+                          </span>
+                          <span style={{ fontSize: 12, color: "var(--text-tertiary)", fontWeight: 600 }}>{d.deliveryCount || 0} deliveries</span>
+                        </div>
+                        <button className="auth-btn-ghost" style={{ padding: "6px 14px", fontSize: 12, borderRadius: 8, minHeight: 0 }} onClick={() => setSelectedRider(d)}>
+                          <i className="fas fa-search" style={{ marginRight: 6 }} /> More Info
+                        </button>
                       </div>
+
                     </div>
                   ))
                 )}
               </div>
+
+              {/* ── RIDER DETAIL MODAL ── */}
+              {selectedRider && (
+                <div style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+                  onClick={() => setSelectedRider(null)}>
+                  <div onClick={(e) => e.stopPropagation()} style={{ background: "white", borderRadius: 28, padding: 32, maxWidth: 560, width: "100%", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 24px 80px rgba(0,0,0,0.18)" }}>
+                    
+                    {/* Header */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
+                      <div>
+                        <h2 style={{ fontSize: 24, fontWeight: 900, color: "var(--navy)", marginBottom: 4 }}>{selectedRider.name}</h2>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-secondary)" }}>ID: {selectedRider.id.substring(0, 8)}...</span>
+                          {selectedRider.approved ? (
+                            <span style={{ padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 800, background: "#ecfdf5", color: "#10b981", border: "1px solid #d1fae5" }}>ACTIVE</span>
+                          ) : (
+                            <span style={{ padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 800, background: "#fef3c7", color: "#d97706", border: "1px solid #fde68a" }}>PENDING</span>
+                          )}
+                        </div>
+                      </div>
+                      <button onClick={() => setSelectedRider(null)} style={{ background: "#f1f5f9", border: "none", width: 36, height: 36, borderRadius: "50%", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b" }}>
+                        <i className="fas fa-times" />
+                      </button>
+                    </div>
+
+                    {/* Documents Grid */}
+                    <p style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.5, color: "#aaa", marginBottom: 10, textTransform: "uppercase" }}>Verification Documents</p>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 24 }}>
+                      <div>
+                        <p style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 6 }}>ID Proof</p>
+                        {selectedRider.idProofUrl ? (
+                          <a href={selectedRider.idProofUrl} target="_blank" rel="noreferrer">
+                            <img src={selectedRider.idProofUrl} alt="ID Proof" 
+                              style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 12, border: "2px solid #e2e8f0", cursor: "pointer" }}
+                              onError={(e) => { e.target.style.display = "none"; }} />
+                          </a>
+                        ) : (
+                          <div style={{ width: "100%", height: 140, borderRadius: 12, background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 6, color: "#94a3b8", fontSize: 12, border: "2px dashed #e2e8f0" }}>
+                            <i className="fas fa-id-card" style={{ fontSize: 24 }} /><span>Not Uploaded</span>
+                          </div>
+                        )}
+                      </div>
+                      <div>
+                        <p style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 6 }}>Driving License</p>
+                        {selectedRider.drivingLicenseUrl ? (
+                          <a href={selectedRider.drivingLicenseUrl} target="_blank" rel="noreferrer">
+                            <img src={selectedRider.drivingLicenseUrl} alt="Driving License" 
+                              style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 12, border: "2px solid #e2e8f0", cursor: "pointer" }}
+                              onError={(e) => { e.target.style.display = "none"; }} />
+                          </a>
+                        ) : (
+                          <div style={{ width: "100%", height: 140, borderRadius: 12, background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 6, color: "#94a3b8", fontSize: 12, border: "2px dashed #e2e8f0" }}>
+                            <i className="fas fa-id-badge" style={{ fontSize: 24 }} /><span>Not Uploaded</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Info Grid */}
+                    <p style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.5, color: "#aaa", marginBottom: 10, textTransform: "uppercase" }}>Rider Details</p>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, background: "#f8fafc", borderRadius: 16, padding: "18px 20px", marginBottom: 20 }}>
+                      {[
+                        { icon: "fa-phone", label: "Phone", value: selectedRider.phone },
+                        { icon: "fa-envelope", label: "Email", value: selectedRider.email },
+                        { icon: "fa-location-dot", label: "Address", value: selectedRider.address },
+                        { icon: "fa-map", label: "Pref. Zone", value: selectedRider.preferredZone },
+                        { icon: "fa-motorcycle", label: "Vehicle", value: selectedRider.vehicleType },
+                        { icon: "fa-hashtag", label: "Vehicle No.", value: selectedRider.vehicleNumber },
+                        { icon: "fa-wallet", label: "UPI ID", value: selectedRider.upiId },
+                        { icon: "fa-clock", label: "Hours", value: selectedRider.workingHours },
+                        { icon: "fa-coins", label: "Earnings", value: `₹${selectedRider.earnings || 0}` },
+                      ].map((item, i) => (
+                        <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                          <i className={`fas ${item.icon}`} style={{ color: "var(--navy)", width: 14, marginTop: 3, fontSize: 12, opacity: 0.6 }} />
+                          <div>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", display: "block" }}>{item.label}</span>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: "var(--navy)", wordBreak: "break-all" }}>{item.value || "—"}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Applied date */}
+                    {selectedRider.createdAt && (
+                      <p style={{ fontSize: 11, color: "#94a3b8", marginBottom: 20 }}>
+                        Applied: <span style={{ fontWeight: 600 }}>{selectedRider.createdAt.toDate ? selectedRider.createdAt.toDate().toLocaleString() : "Unknown"}</span>
+                      </p>
+                    )}
+
+                    {/* Modal Action Buttons */}
+                    <div style={{ display: "flex", gap: 10 }}>
+                      {!selectedRider.approved ? (
+                        <>
+                          <button style={{ flex: 1, padding: 14, borderRadius: 14, fontSize: 14, fontWeight: 700, background: "#10b981", color: "white", border: "none", cursor: "pointer", boxShadow: "0 4px 12px rgba(16,185,129,0.3)" }}
+                            onClick={() => { approveRider(selectedRider.id); setSelectedRider(null); }}>
+                            ✓ Approve Rider
+                          </button>
+                          <button style={{ flex: 1, padding: 14, borderRadius: 14, fontSize: 14, fontWeight: 700, background: "#ffe4e6", color: "#fb7185", border: "1px solid #fecdd3", cursor: "pointer" }}
+                            onClick={() => { removeRider(selectedRider.id, selectedRider.name); setSelectedRider(null); }}>
+                            ✕ Reject
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button style={{ flex: 1, padding: 14, borderRadius: 14, fontSize: 14, fontWeight: 700, background: "#fef3c7", color: "#d97706", border: "1px solid #fde68a", cursor: "pointer" }}
+                            onClick={() => { suspendRider(selectedRider.id, true); setSelectedRider(null); }}>
+                            ⏸ Suspend
+                          </button>
+                          <button style={{ flex: 1, padding: 14, borderRadius: 14, fontSize: 14, fontWeight: 700, background: "#ffe4e6", color: "#fb7185", border: "1px solid #fecdd3", cursor: "pointer" }}
+                            onClick={() => { removeRider(selectedRider.id, selectedRider.name); setSelectedRider(null); }}>
+                            ✕ Remove
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

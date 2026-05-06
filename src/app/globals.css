@@ -21,10 +21,6 @@ body{background:var(--ivory);color:var(--text);font-family:var(--font-b);font-we
 a{text-decoration:none;color:inherit;}
 img{display:block;max-width:100%;}
 
-/* ═══ CURSOR ═══ */
-#cur{width:10px;height:10px;background:var(--gold);border-radius:50%;position:fixed;top:0;left:0;pointer-events:none;z-index:99999;transition:transform .15s;}
-#cur-ring{width:36px;height:36px;border:1.5px solid var(--gold);border-radius:50%;position:fixed;top:0;left:0;pointer-events:none;z-index:99998;opacity:.55;transition:width .3s,height .3s,opacity .3s;}
-body:has(a:hover) #cur-ring,body:has(button:hover) #cur-ring{width:52px;height:52px;opacity:.3;}
 
 /* ═══ TOP STRIP ═══ */
 .top-strip{background:var(--navy);padding:8px 0;overflow:hidden;}
@@ -389,9 +385,6 @@ footer{background:var(--ivory2);border-top:1px solid var(--border);padding-botto
 
 /* Mobile (max 768px) */
 @media(max-width:768px){
-  /* Hide desktop cursor */
-  #cur,#cur-ring{display:none;}
-
   /* Navbar */
   .nav-top{padding:10px 16px;gap:8px;flex-wrap:nowrap;}
   .nav-logo{font-size:22px;letter-spacing:2px;}
