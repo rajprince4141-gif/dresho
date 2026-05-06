@@ -1,26 +1,49 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "Dresho — Fashion, Delivered instantly.",
+  title: "Dresho — Fashion Delivered in 30 Minutes | Hazaribagh, Jharkhand",
   description:
-    "Shop premium clothing from India's best local boutiques and get it delivered to your doorstep in 30 minutes. Quick-commerce fashion by Dresho.",
+    "Dresho is Hazaribagh's first quick-commerce fashion platform. Order trending clothes, kurtas, ethnic wear & more from local boutiques — delivered to your door in just 30 minutes. Fast. Fresh. Local.",
   keywords:
-    "quick commerce fashion, clothing delivery, 30 minute delivery, fashion app India, boutiques, Dresho, dresho.in",
+    "Dresho, dresho.in, fashion delivery Hazaribagh, 30 minute delivery Hazaribagh, quick commerce fashion Jharkhand, online clothes Hazaribagh, kurta delivery, ethnic wear delivery, local boutique Hazaribagh, fast fashion delivery India",
+  icons: {
+    icon: [
+      { url: "/logo.jpeg", type: "image/jpeg" },
+    ],
+    apple: [
+      { url: "/logo.jpeg", type: "image/jpeg" },
+    ],
+    shortcut: "/logo.jpeg",
+  },
   openGraph: {
-    title: "Dresho — Fashion, Delivered instantly.",
+    title: "Dresho — Fashion Delivered in 30 Minutes | Hazaribagh, Jharkhand",
     description:
-      "Premium clothing from local boutiques, delivered in 30 minutes. Discover Dresho.",
+      "Order trending clothes from Hazaribagh's top local boutiques and get them delivered in 30 minutes. Kurtas, ethnic wear, western fashion & more — all at your doorstep, fast. Shop at dresho.in.",
     url: "https://www.dresho.in",
     siteName: "Dresho",
-    images: [{ url: "/logo.jpeg", width: 1024, height: 1024, alt: "Dresho Logo" }],
+    images: [{ url: "/logo.jpeg", width: 1024, height: 1024, alt: "Dresho — Quick Fashion Delivery Hazaribagh" }],
     locale: "en_IN",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Dresho — Fashion, Delivered instantly.",
-    description: "Premium clothing from local boutiques, delivered in 30 minutes.",
+    title: "Dresho — Fashion Delivered in 30 Minutes | Hazaribagh",
+    description:
+      "Hazaribagh's first quick-commerce fashion app. Get clothes from local boutiques delivered to your door in 30 minutes. Shop at dresho.in.",
     images: ["/logo.jpeg"],
+  },
+  alternates: {
+    canonical: "https://www.dresho.in",
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-snippet": -1,
+      "max-image-preview": "large",
+    },
   },
 };
 
@@ -50,6 +73,9 @@ export default function RootLayout({ children }) {
           href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap"
           rel="stylesheet"
         />
+        {/* Favicon */}
+        <link rel="icon" href="/logo.jpeg" type="image/jpeg" />
+        <link rel="shortcut icon" href="/logo.jpeg" type="image/jpeg" />
         {/* PWA */}
         <link rel="manifest" href="/manifest.json" />
         <meta name="mobile-web-app-capable" content="yes" />

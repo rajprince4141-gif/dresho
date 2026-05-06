@@ -677,16 +677,7 @@ export default function ShopPage() {
                     <button className="nav-pill-btn">Become a Partner</button>
                   </Link>
                 </div>
-                <div className="quick-cats">
-                  <div className="quick-cats-inner">
-                    <Link href="/shop/category/kurtas"><div className="qcat-pill"><div className="qcat-pill-icon">👗</div><div className="qcat-pill-text">Kurtas</div></div></Link>
-                    <Link href="/shop/category/sarees"><div className="qcat-pill"><div className="qcat-pill-icon">🥻</div><div className="qcat-pill-text">Sarees</div></div></Link>
-                    <Link href="/shop/category/lehengas"><div className="qcat-pill"><div className="qcat-pill-icon">👘</div><div className="qcat-pill-text">Lehengas</div></div></Link>
-                    <Link href="/shop/category/jackets"><div className="qcat-pill"><div className="qcat-pill-icon">🧥</div><div className="qcat-pill-text">Jackets</div></div></Link>
-                    <Link href="/shop/category/shirts"><div className="qcat-pill"><div className="qcat-pill-icon">👔</div><div className="qcat-pill-text">Shirts</div></div></Link>
-                    <Link href="/shop/category/trousers"><div className="qcat-pill"><div className="qcat-pill-icon">👖</div><div className="qcat-pill-text">Trousers</div></div></Link>
-                  </div>
-                </div>
+
               </div>
             </div>
 
@@ -796,14 +787,24 @@ export default function ShopPage() {
                   filteredProducts.slice(0, 10).map((p, i) => (
                     <div key={p.id} className={`deal-card reveal in d${i}`} onClick={() => { setViewProduct(p); setSelectedSize(p.sizes?.[0] || "M"); }}>
                       <div className="deal-img-wrap">
-                        <img src={p.image} alt={p.name} onError={(e) => { e.target.style.display = "none"; }} />
+                        <img src={p.image} alt={p.name} style={{ opacity: (p.outOfStock || p.stock === 0) ? 0.4 : 1 }} onError={(e) => { e.target.style.display = "none"; }} />
+                        {(p.outOfStock || p.stock === 0) && (
+                          <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "rgba(0,0,0,0.6)", color: "white", padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 900, zIndex: 10, letterSpacing: 1, whiteSpace: "nowrap", backdropFilter: "blur(2px)" }}>
+                            OUT OF STOCK
+                          </div>
+                        )}
                         <div className="deal-badge-wrap">
+                          {p.stock > 0 && p.stock <= 5 && !p.outOfStock && (
+                            <span style={{ background: "#ef4444", color: "white", padding: "4px 8px", borderRadius: 4, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Only {p.stock} left</span>
+                          )}
                           {i === 0 && <span className="badge-new">New</span>}
                           {i === 1 && <span className="badge-hot">Hot</span>}
                           <span className="badge-off">−38%</span>
                         </div>
                         <button className="wishlist-btn">♡</button>
-                        <div className="deal-quick" onClick={(e) => { e.stopPropagation(); addToCart(p, p.sizes?.[0] || "M"); }}>⚡ Quick Add</div>
+                        {!(p.outOfStock || p.stock === 0) && (
+                          <div className="deal-quick" onClick={(e) => { e.stopPropagation(); addToCart(p, p.sizes?.[0] || "M"); }}>⚡ Quick Add</div>
+                        )}
                       </div>
                       <div className="deal-info">
                         <div className="deal-brand">{p.storeName || "DRESHO"}</div>
@@ -818,8 +819,9 @@ export default function ShopPage() {
               </div>
             </section>
 
-            {/* TRENDING NOW */}
-            <section className="section">
+            {/* SPACE RESERVED FOR NEW ARRIVALS */}
+            <section className="section" style={{ minHeight: "80px" }}>
+              {/* 
               <div className="sec-head reveal in">
                 <div className="sec-head-left">
                   <div className="sec-eyebrow"><div className="sec-eyebrow-line"></div><span>Trending</span></div>
@@ -842,6 +844,7 @@ export default function ShopPage() {
                   </div>
                 ))}
               </div>
+              */}
             </section>
 
             {/* SHOP BY CATEGORY */}
@@ -1277,12 +1280,22 @@ export default function ShopPage() {
           <div style={{ position: "fixed", inset: 0, zIndex: 600, background: "rgba(20,33,61,0.6)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setViewProduct(null)}>
             <div className="animate-scale-in" onClick={(e) => e.stopPropagation()} style={{ background: "var(--white)", width: "100%", maxWidth: 420, padding: 32, boxShadow: "var(--shadow-lg)" }}>
               <div style={{ height: 260, background: "var(--ivory2)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 24, position: "relative" }}>
-                <img src={viewProduct.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", position: "absolute" }} onError={(e) => { e.target.style.display = "none"; }} />
+                <img src={viewProduct.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", position: "absolute", opacity: (viewProduct.outOfStock || viewProduct.stock === 0) ? 0.4 : 1 }} onError={(e) => { e.target.style.display = "none"; }} />
+                {(viewProduct.outOfStock || viewProduct.stock === 0) && (
+                  <div style={{ position: "absolute", background: "rgba(0,0,0,0.6)", color: "white", padding: "10px 24px", borderRadius: 8, fontSize: 16, fontWeight: 900, zIndex: 10, letterSpacing: 2, backdropFilter: "blur(2px)" }}>
+                    OUT OF STOCK
+                  </div>
+                )}
                 <span style={{ fontSize: 40, color: "var(--sub)", opacity: 0.3 }}>👗</span>
               </div>
               <p style={{ fontSize: 10, fontWeight: 600, color: "var(--gold)", letterSpacing: 2, textTransform: "uppercase" }}>{viewProduct.storeName || "DRESHO"}</p>
               <h3 style={{ fontFamily: "var(--font-d)", fontSize: 24, color: "var(--navy)", marginTop: 4 }}>{viewProduct.name}</h3>
-              <p style={{ fontSize: 22, fontWeight: 600, color: "var(--navy)", marginTop: 8 }}>₹{viewProduct.price}</p>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8 }}>
+                <p style={{ fontSize: 22, fontWeight: 600, color: "var(--navy)" }}>₹{viewProduct.price}</p>
+                {viewProduct.stock > 0 && viewProduct.stock <= 5 && !viewProduct.outOfStock && (
+                  <span style={{ color: "#ef4444", fontSize: 13, fontWeight: 700 }}>Only {viewProduct.stock} left!</span>
+                )}
+              </div>
 
               {/* Size Selector */}
               <div style={{ marginTop: 20 }}>
@@ -1308,8 +1321,11 @@ export default function ShopPage() {
 
               <div style={{ display: "flex", gap: 12, marginTop: 32 }}>
                 <button style={{ flex: 1, background: "transparent", color: "var(--navy)", border: "1px solid var(--border2)", padding: 14, fontSize: 11, textTransform: "uppercase", letterSpacing: 1, cursor: "pointer", transition: "all 0.3s" }} onClick={() => setViewProduct(null)}>Close</button>
-                <button style={{ flex: 2, background: "var(--gold)", color: "white", border: "none", padding: 14, fontSize: 11, textTransform: "uppercase", letterSpacing: 2, cursor: "pointer", transition: "background 0.3s" }} onClick={() => addToCart(viewProduct, selectedSize)}>
-                  Add to Cart
+                <button 
+                  disabled={viewProduct.outOfStock || viewProduct.stock === 0}
+                  style={{ flex: 2, background: (viewProduct.outOfStock || viewProduct.stock === 0) ? "#cbd5e1" : "var(--gold)", color: "white", border: "none", padding: 14, fontSize: 11, textTransform: "uppercase", letterSpacing: 2, cursor: (viewProduct.outOfStock || viewProduct.stock === 0) ? "not-allowed" : "pointer", transition: "background 0.3s" }} 
+                  onClick={() => addToCart(viewProduct, selectedSize)}>
+                  {(viewProduct.outOfStock || viewProduct.stock === 0) ? "Unavailable" : "Add to Cart"}
                 </button>
               </div>
             </div>

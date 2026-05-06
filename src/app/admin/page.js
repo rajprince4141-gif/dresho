@@ -1,6 +1,7 @@
 "use client";
 export const dynamic = 'force-dynamic';
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { auth, db } from "@/lib/firebase";
 import {
@@ -20,6 +21,7 @@ export default function AdminPage() {
   const [sellers, setSellers] = useState([]);
   const [orders, setOrders] = useState([]);
   const [users, setUsers] = useState([]);
+  const [products, setProducts] = useState([]);
   const [deliveryAgents, setDeliveryAgents] = useState([]);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [selectedSeller, setSelectedSeller] = useState(null);
@@ -46,7 +48,7 @@ export default function AdminPage() {
         }
         // 2️⃣ Firestore role check — second line of defence
         let snap = await getDoc(doc(db, "admin_roles", user.uid));
-        
+
         // Race condition fix
         if (!snap.exists()) {
           await new Promise(r => setTimeout(r, 2000));
@@ -55,9 +57,9 @@ export default function AdminPage() {
 
         if (snap.exists() && snap.data().role === "admin") {
           setAuthenticated(true);
-        } else if (snap.exists()) { 
-          await signOut(auth); 
-          alert("Unauthorized access"); 
+        } else if (snap.exists()) {
+          await signOut(auth);
+          alert("Unauthorized access");
         }
       } else { setAuthenticated(false); }
     });
@@ -110,6 +112,12 @@ export default function AdminPage() {
       setUsers(u);
     }));
 
+    // Products
+    unsubs.push(onSnapshot(collection(db, "products"), (snap) => {
+      const p = []; snap.forEach((d) => p.push({ id: d.id, ...d.data() }));
+      setProducts(p);
+    }));
+
     // Banners (docs: banner_1 through banner_5)
     ["banner_1", "banner_2", "banner_3", "banner_4", "banner_5"].forEach((id) => {
       unsubs.push(onSnapshot(doc(db, "banners", id), (snap) => {
@@ -138,6 +146,14 @@ export default function AdminPage() {
     if (!confirm(`Remove "${name}" from Dresho? This cannot be undone.`)) return;
     await deleteDoc(doc(db, "sellers_profile", id));
     alert("Seller removed.");
+  };
+
+  const removeAdminProduct = async (id, name) => {
+    if (!confirm(`Permanently delete the product "${name}"?`)) return;
+    try {
+      await deleteDoc(doc(db, "products", id));
+      alert("Product deleted.");
+    } catch (e) { alert("Failed to delete product: " + e.message); }
   };
 
   const suspendSeller = async (id, current) => {
@@ -267,7 +283,7 @@ export default function AdminPage() {
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <input className="glass-input" type="email" placeholder="Admin Email" value={email} onChange={(e) => setEmail(e.target.value)} />
               <input className="glass-input" type="password" placeholder="Password" value={pass} onChange={(e) => setPass(e.target.value)} />
-                <button className="btn-slide-primary" onClick={async () => { try { await signInWithEmailAndPassword(auth, email, pass); } catch (err) { alert("Login failed: " + (err.code || err.message)); } }}>
+              <button className="btn-slide-primary" onClick={async () => { try { await signInWithEmailAndPassword(auth, email, pass); } catch (err) { alert("Login failed: " + (err.code || err.message)); } }}>
                 Verify Identity
               </button>
             </div>
@@ -320,7 +336,7 @@ export default function AdminPage() {
 
         {/* MAIN CONTENT */}
         <main className="admin-main" style={{ flex: 1, marginLeft: 240, padding: "32px 40px", overflowX: "hidden" }}>
-          
+
           <div className="admin-mobile-header">
             <button className="admin-menu-btn-new" onClick={() => setIsMobileSidebarOpen(true)}>
               <div />
@@ -333,7 +349,7 @@ export default function AdminPage() {
 
             <div className="animate-fade-in">
               <div style={{ marginBottom: 24 }}>
-                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Platform<br/>Overview</h1>
+                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Platform<br />Overview</h1>
                 <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Real-time stats across all operations</p>
               </div>
 
@@ -392,7 +408,7 @@ export default function AdminPage() {
           {tab === "sellers" && (
             <div className="animate-fade-in">
               <div style={{ marginBottom: 24 }}>
-                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Seller<br/>Management</h1>
+                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Seller<br />Management</h1>
                 <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>
                   Review and manage seller applications.
                   <span style={{ marginLeft: 12, padding: "3px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: "#fef3c7", color: "#f59e0b" }}>
@@ -468,13 +484,13 @@ export default function AdminPage() {
               </div>
 
               {/* ── SELLER DETAIL MODAL ── */}
-              {selectedSeller && (
-                <div style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+              {selectedSeller && typeof document !== "undefined" && createPortal(
+                <div style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "40px 20px", overflowY: "auto" }}
                   onClick={() => setSelectedSeller(null)}>
-                  <div onClick={(e) => e.stopPropagation()} style={{ background: "white", borderRadius: 28, padding: 32, maxWidth: 560, width: "100%", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 24px 80px rgba(0,0,0,0.18)" }}>
+                  <div onClick={(e) => e.stopPropagation()} style={{ background: "white", borderRadius: 24, padding: 24, maxWidth: 560, width: "100%", margin: "0 auto", boxShadow: "0 24px 80px rgba(0,0,0,0.18)" }}>
 
                     {/* Modal Header */}
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
                       <div>
                         <h2 style={{ fontSize: 22, fontWeight: 900, color: "var(--navy)" }}>{selectedSeller.storeName}</h2>
                         <p style={{ fontSize: 13, color: "#8a93a4", marginTop: 3 }}>👤 {selectedSeller.ownerName || selectedSeller.name || "—"}</p>
@@ -488,19 +504,19 @@ export default function AdminPage() {
                     </div>
 
                     {/* Documents */}
-                    <p style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.5, color: "#aaa", marginBottom: 10, textTransform: "uppercase" }}>Uploaded Documents</p>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24 }}>
+                    <p style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.5, color: "#aaa", marginBottom: 8, textTransform: "uppercase" }}>Uploaded Documents</p>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
                       <div>
                         <p style={{ fontSize: 10, fontWeight: 700, color: "#aaa", marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>🪪 ID Proof</p>
                         {selectedSeller.idProofUrl ? (
                           <a href={selectedSeller.idProofUrl} target="_blank" rel="noopener noreferrer">
                             <img src={selectedSeller.idProofUrl} alt="ID Proof"
-                              style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 12, border: "2px solid #e8d8be", cursor: "pointer" }}
+                              style={{ width: "100%", height: 110, objectFit: "cover", borderRadius: 12, border: "2px solid #e8d8be", cursor: "pointer" }}
                               onError={(e) => { e.target.style.display = "none"; }} />
                           </a>
                         ) : (
-                          <div style={{ width: "100%", height: 140, borderRadius: 12, background: "#f5f0e8", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 6, color: "#bbb", fontSize: 12 }}>
-                            <i className="fas fa-image" style={{ fontSize: 24 }} /><span>Not Uploaded</span>
+                          <div style={{ width: "100%", padding: "12px", borderRadius: 12, background: "#f5f0e8", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: "#bbb", fontSize: 12 }}>
+                            <i className="fas fa-image" style={{ fontSize: 16 }} /><span>Not Uploaded</span>
                           </div>
                         )}
                       </div>
@@ -509,20 +525,20 @@ export default function AdminPage() {
                         {selectedSeller.shopPhotoUrl ? (
                           <a href={selectedSeller.shopPhotoUrl} target="_blank" rel="noopener noreferrer">
                             <img src={selectedSeller.shopPhotoUrl} alt="Shop"
-                              style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 12, border: "2px solid #e8d8be", cursor: "pointer" }}
+                              style={{ width: "100%", height: 110, objectFit: "cover", borderRadius: 12, border: "2px solid #e8d8be", cursor: "pointer" }}
                               onError={(e) => { e.target.style.display = "none"; }} />
                           </a>
                         ) : (
-                          <div style={{ width: "100%", height: 140, borderRadius: 12, background: "#f5f0e8", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 6, color: "#bbb", fontSize: 12 }}>
-                            <i className="fas fa-store" style={{ fontSize: 24 }} /><span>Not Uploaded</span>
+                          <div style={{ width: "100%", padding: "12px", borderRadius: 12, background: "#f5f0e8", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: "#bbb", fontSize: 12 }}>
+                            <i className="fas fa-store" style={{ fontSize: 16 }} /><span>Not Uploaded</span>
                           </div>
                         )}
                       </div>
                     </div>
 
                     {/* Info Grid */}
-                    <p style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.5, color: "#aaa", marginBottom: 10, textTransform: "uppercase" }}>Seller Details</p>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, background: "#faf7f2", borderRadius: 16, padding: "18px 20px", marginBottom: 20 }}>
+                    <p style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.5, color: "#aaa", marginBottom: 8, textTransform: "uppercase" }}>Seller Details</p>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, background: "#faf7f2", borderRadius: 16, padding: "12px 16px", marginBottom: 16 }}>
                       {[
                         { icon: "fa-phone", label: "Phone", value: selectedSeller.phone },
                         { icon: "fa-envelope", label: "Email", value: selectedSeller.email },
@@ -552,6 +568,33 @@ export default function AdminPage() {
                       </p>
                     )}
 
+                    {/* Seller Products */}
+                    {(() => {
+                      const sellerProducts = products.filter(p => p.sellerId === selectedSeller.id);
+                      if (sellerProducts.length === 0) return null;
+                      return (
+                        <div style={{ marginBottom: 20 }}>
+                          <p style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.5, color: "#aaa", marginBottom: 10, textTransform: "uppercase" }}>
+                            Uploaded Products ({sellerProducts.length})
+                          </p>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 200, overflowY: "auto", paddingRight: 5 }}>
+                            {sellerProducts.map(p => (
+                              <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px", background: "#f8fafc", borderRadius: 12, border: "1px solid #e2e8f0" }}>
+                                <img src={p.image} alt={p.name} style={{ width: 40, height: 40, borderRadius: 8, objectFit: "cover" }} />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 13, fontWeight: 700, color: "var(--navy)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
+                                  <div style={{ fontSize: 11, color: "#64748b" }}>₹{p.price} • Stock: {p.stock} {p.outOfStock && <span style={{ color: "#ef4444", fontWeight: "bold" }}>(Out of Stock)</span>}</div>
+                                </div>
+                                <button onClick={() => removeAdminProduct(p.id, p.name)} style={{ background: "#fee2e2", color: "#ef4444", border: "none", width: 32, height: 32, borderRadius: "50%", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                  <i className="fas fa-trash" style={{ fontSize: 12 }} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     {/* Modal Action Buttons */}
                     <div style={{ display: "flex", gap: 10 }}>
                       {!selectedSeller.approved ? (
@@ -579,7 +622,8 @@ export default function AdminPage() {
                       )}
                     </div>
                   </div>
-                </div>
+                </div>,
+                document.body
               )}
             </div>
           )}
@@ -588,7 +632,7 @@ export default function AdminPage() {
           {tab === "orders" && (
             <div className="animate-fade-in">
               <div style={{ marginBottom: 24 }}>
-                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Global<br/>Live Orders</h1>
+                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Global<br />Live Orders</h1>
                 <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Monitor and track all ongoing orders</p>
               </div>
               <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
@@ -623,7 +667,7 @@ export default function AdminPage() {
           {tab === "users" && (
             <div className="animate-fade-in">
               <div style={{ marginBottom: 24 }}>
-                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Registered<br/>Users</h1>
+                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Registered<br />Users</h1>
                 <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Customer database and details</p>
               </div>
               <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
@@ -647,8 +691,8 @@ export default function AdminPage() {
                           <span style={{ flex: 1 }}>
                             {u.address
                               ? (typeof u.address === "object"
-                                  ? [u.address.line, u.address.landmark, u.address.city, u.address.pincode].filter(Boolean).join(", ")
-                                  : u.address)
+                                ? [u.address.line, u.address.landmark, u.address.city, u.address.pincode].filter(Boolean).join(", ")
+                                : u.address)
                               : "—"}
                           </span>
                         </div>
@@ -664,7 +708,7 @@ export default function AdminPage() {
           {tab === "fleet" && (
             <div className="animate-fade-in">
               <div style={{ marginBottom: 24 }}>
-                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Delivery<br/>Fleet</h1>
+                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Delivery<br />Fleet</h1>
                 <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>
                   Manage your delivery partners.
                   <span style={{ marginLeft: 12, padding: "3px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: "#fef3c7", color: "#f59e0b" }}>
@@ -678,7 +722,7 @@ export default function AdminPage() {
                 ) : (
                   deliveryAgents.map((d) => (
                     <div key={d.id} className="admin-mobile-card" style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
-                      
+
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                         <div>
                           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
@@ -696,7 +740,7 @@ export default function AdminPage() {
                           <i className="fas fa-motorcycle" style={{ color: d.online ? "#10b981" : "var(--text-tertiary)", fontSize: 18 }} />
                         </div>
                       </div>
-                      
+
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.04)" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <span className={`badge ${d.online ? "badge-emerald" : "badge-rose"}`}>
@@ -715,13 +759,13 @@ export default function AdminPage() {
               </div>
 
               {/* ── RIDER DETAIL MODAL ── */}
-              {selectedRider && (
-                <div style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+              {selectedRider && typeof document !== "undefined" && createPortal(
+                <div style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "40px 20px", overflowY: "auto" }}
                   onClick={() => setSelectedRider(null)}>
-                  <div onClick={(e) => e.stopPropagation()} style={{ background: "white", borderRadius: 28, padding: 32, maxWidth: 560, width: "100%", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 24px 80px rgba(0,0,0,0.18)" }}>
-                    
+                  <div onClick={(e) => e.stopPropagation()} style={{ background: "white", borderRadius: 24, padding: 24, maxWidth: 560, width: "100%", margin: "0 auto", boxShadow: "0 24px 80px rgba(0,0,0,0.18)" }}>
+
                     {/* Header */}
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
                       <div>
                         <h2 style={{ fontSize: 24, fontWeight: 900, color: "var(--navy)", marginBottom: 4 }}>{selectedRider.name}</h2>
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -739,19 +783,19 @@ export default function AdminPage() {
                     </div>
 
                     {/* Documents Grid */}
-                    <p style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.5, color: "#aaa", marginBottom: 10, textTransform: "uppercase" }}>Verification Documents</p>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 24 }}>
+                    <p style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.5, color: "#aaa", marginBottom: 8, textTransform: "uppercase" }}>Verification Documents</p>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
                       <div>
                         <p style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 6 }}>ID Proof</p>
                         {selectedRider.idProofUrl ? (
                           <a href={selectedRider.idProofUrl} target="_blank" rel="noreferrer">
-                            <img src={selectedRider.idProofUrl} alt="ID Proof" 
-                              style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 12, border: "2px solid #e2e8f0", cursor: "pointer" }}
+                            <img src={selectedRider.idProofUrl} alt="ID Proof"
+                              style={{ width: "100%", height: 110, objectFit: "cover", borderRadius: 12, border: "2px solid #e2e8f0", cursor: "pointer" }}
                               onError={(e) => { e.target.style.display = "none"; }} />
                           </a>
                         ) : (
-                          <div style={{ width: "100%", height: 140, borderRadius: 12, background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 6, color: "#94a3b8", fontSize: 12, border: "2px dashed #e2e8f0" }}>
-                            <i className="fas fa-id-card" style={{ fontSize: 24 }} /><span>Not Uploaded</span>
+                          <div style={{ width: "100%", padding: "12px", borderRadius: 12, background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: "#94a3b8", fontSize: 12, border: "1px dashed #e2e8f0" }}>
+                            <i className="fas fa-id-card" style={{ fontSize: 16 }} /><span>Not Uploaded</span>
                           </div>
                         )}
                       </div>
@@ -759,21 +803,21 @@ export default function AdminPage() {
                         <p style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 6 }}>Driving License</p>
                         {selectedRider.drivingLicenseUrl ? (
                           <a href={selectedRider.drivingLicenseUrl} target="_blank" rel="noreferrer">
-                            <img src={selectedRider.drivingLicenseUrl} alt="Driving License" 
-                              style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 12, border: "2px solid #e2e8f0", cursor: "pointer" }}
+                            <img src={selectedRider.drivingLicenseUrl} alt="Driving License"
+                              style={{ width: "100%", height: 110, objectFit: "cover", borderRadius: 12, border: "2px solid #e2e8f0", cursor: "pointer" }}
                               onError={(e) => { e.target.style.display = "none"; }} />
                           </a>
                         ) : (
-                          <div style={{ width: "100%", height: 140, borderRadius: 12, background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 6, color: "#94a3b8", fontSize: 12, border: "2px dashed #e2e8f0" }}>
-                            <i className="fas fa-id-badge" style={{ fontSize: 24 }} /><span>Not Uploaded</span>
+                          <div style={{ width: "100%", padding: "12px", borderRadius: 12, background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: "#94a3b8", fontSize: 12, border: "1px dashed #e2e8f0" }}>
+                            <i className="fas fa-id-badge" style={{ fontSize: 16 }} /><span>Not Uploaded</span>
                           </div>
                         )}
                       </div>
                     </div>
 
                     {/* Info Grid */}
-                    <p style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.5, color: "#aaa", marginBottom: 10, textTransform: "uppercase" }}>Rider Details</p>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, background: "#f8fafc", borderRadius: 16, padding: "18px 20px", marginBottom: 20 }}>
+                    <p style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.5, color: "#aaa", marginBottom: 8, textTransform: "uppercase" }}>Rider Details</p>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, background: "#f8fafc", borderRadius: 16, padding: "16px", marginBottom: 16 }}>
                       {[
                         { icon: "fa-phone", label: "Phone", value: selectedRider.phone },
                         { icon: "fa-envelope", label: "Email", value: selectedRider.email },
@@ -829,7 +873,8 @@ export default function AdminPage() {
                       )}
                     </div>
                   </div>
-                </div>
+                </div>,
+                document.body
               )}
             </div>
           )}
@@ -838,7 +883,7 @@ export default function AdminPage() {
           {tab === "reviews" && (
             <div className="animate-fade-in">
               <div style={{ marginBottom: 24 }}>
-                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Customer<br/>Feedback</h1>
+                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Customer<br />Feedback</h1>
                 <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Reviews and suggestions submitted by users</p>
               </div>
               <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
@@ -863,7 +908,7 @@ export default function AdminPage() {
                             <h4 style={{ fontWeight: 700, fontSize: 15, color: "var(--navy)", margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.userName || fbUser.name || "Guest User"}</h4>
                             <p style={{ fontSize: 12, color: "#64748b", margin: "2px 0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{fbUser.email || "No Email"}</p>
                             <p style={{ fontSize: 11, color: "#94a3b8", margin: 0, display: "flex", alignItems: "flex-start", gap: 4, lineHeight: 1.4 }}>
-                              <span style={{ fontSize: 10, marginTop: 1 }}>📍</span> 
+                              <span style={{ fontSize: 10, marginTop: 1 }}>📍</span>
                               <span style={{ overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{addr}</span>
                             </p>
                           </div>
@@ -872,7 +917,7 @@ export default function AdminPage() {
                             <span style={{ color: "#f59e0b", fontSize: 14 }}>★</span>
                           </div>
                         </div>
-                        
+
                         {/* BODY: Review Text */}
                         <div style={{ position: "relative", background: "#f8fafc", padding: "16px", borderRadius: "12px", border: "1px solid #f1f5f9", marginTop: 4 }}>
                           <span style={{ position: "absolute", top: -8, left: 16, background: "white", padding: "0 8px", fontSize: 10, fontWeight: 700, color: "#cbd5e1", letterSpacing: 1, textTransform: "uppercase" }}>Review</span>
@@ -884,7 +929,7 @@ export default function AdminPage() {
                         {/* FOOTER: Date */}
                         <div style={{ display: "flex", justifyContent: "flex-end" }}>
                           <span style={{ fontSize: 11, color: "#cbd5e1", fontWeight: 500 }}>
-                            {f.createdAt?.toDate ? f.createdAt.toDate().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute:'2-digit' }) : ""}
+                            {f.createdAt?.toDate ? f.createdAt.toDate().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ""}
                           </span>
                         </div>
                       </div>
@@ -899,7 +944,7 @@ export default function AdminPage() {
           {tab === "banners" && (
             <div className="animate-fade-in">
               <div style={{ marginBottom: 24 }}>
-                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Banner<br/>Management</h1>
+                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Banner<br />Management</h1>
                 <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Control all 5 homepage banner slots</p>
               </div>
 

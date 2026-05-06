@@ -579,13 +579,26 @@ export default function SellerPage() {
                       </div>
                       <div style={{ flex: 1 }}>
                         <h4 style={{ fontSize: 14, fontWeight: 700 }}>{p.name}</h4>
-                        <p style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Stock: {p.stock} · Sizes: {(p.sizes || []).join(", ")}</p>
+                        <p style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Stock: {p.stock} {p.outOfStock && <span style={{ color: "#ef4444", fontWeight: "bold" }}>(OOS)</span>} · Sizes: {(p.sizes || []).join(", ")}</p>
                       </div>
-                      <div style={{ textAlign: "right" }}>
+                      <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
                         <p style={{ fontSize: 16, fontWeight: 900, color: "var(--aurora-cyan)" }}>₹{p.price}</p>
-                        <button onClick={() => { if (confirm("Remove item?")) deleteDoc(doc(db, "products", p.id)); }} style={{ background: "none", border: "none", color: "var(--aurora-rose)", fontSize: 13, cursor: "pointer", marginTop: 4 }}>
-                          <i className="fas fa-trash" />
-                        </button>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button onClick={() => { 
+                            const ns = prompt("Enter new stock quantity:", p.stock);
+                            if(ns !== null) updateDoc(doc(db, "products", p.id), { stock: parseInt(ns) || 0 });
+                          }} style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", color: "white", padding: "4px 8px", borderRadius: 6, fontSize: 11, cursor: "pointer" }}>
+                            Edit Stock
+                          </button>
+                          <button onClick={() => { 
+                            updateDoc(doc(db, "products", p.id), { outOfStock: !p.outOfStock });
+                          }} style={{ background: p.outOfStock ? "rgba(239,68,68,0.2)" : "rgba(255,255,255,0.1)", border: p.outOfStock ? "1px solid #ef4444" : "1px solid rgba(255,255,255,0.2)", color: p.outOfStock ? "#ef4444" : "white", padding: "4px 8px", borderRadius: 6, fontSize: 11, cursor: "pointer" }}>
+                            {p.outOfStock ? "Mark In Stock" : "Out of Stock"}
+                          </button>
+                          <button onClick={() => { if (confirm("Remove item?")) deleteDoc(doc(db, "products", p.id)); }} style={{ background: "rgba(239,68,68,0.1)", border: "none", color: "var(--aurora-rose)", padding: "4px 8px", borderRadius: 6, fontSize: 11, cursor: "pointer" }}>
+                            <i className="fas fa-trash" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}

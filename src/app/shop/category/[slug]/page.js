@@ -293,11 +293,23 @@ export default function CategoryPage() {
             {filtered.map((p) => (
               <div key={p.id} className="cp-card" onClick={() => { setViewProduct(p); setSelectedSize(p.sizes?.[0] || "M"); }}>
                 <div className="cp-card-img">
-                  <img src={p.image} alt={p.name} onError={(e) => { e.target.style.display = "none"; }} />
-                  <div className="cp-quick-add" onClick={(e) => { e.stopPropagation(); addToCart(p, p.sizes?.[0] || "M"); }}>⚡ Quick Add</div>
+                  <img src={p.image} alt={p.name} style={{ opacity: (p.outOfStock || p.stock === 0) ? 0.4 : 1 }} onError={(e) => { e.target.style.display = "none"; }} />
+                  {(p.outOfStock || p.stock === 0) && (
+                    <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "rgba(0,0,0,0.6)", color: "white", padding: "8px 16px", borderRadius: 8, fontSize: 10, fontWeight: 900, zIndex: 10, letterSpacing: 1, whiteSpace: "nowrap", backdropFilter: "blur(2px)" }}>
+                      OUT OF STOCK
+                    </div>
+                  )}
+                  {!(p.outOfStock || p.stock === 0) && (
+                    <div className="cp-quick-add" onClick={(e) => { e.stopPropagation(); addToCart(p, p.sizes?.[0] || "M"); }}>⚡ Quick Add</div>
+                  )}
                 </div>
                 <div className="cp-card-info">
-                  <div className="cp-card-brand">{p.storeName || "DRESHO"}</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                    <div className="cp-card-brand" style={{ marginBottom: 0 }}>{p.storeName || "DRESHO"}</div>
+                    {p.stock > 0 && p.stock <= 5 && !p.outOfStock && (
+                      <span style={{ color: "#ef4444", fontSize: 10, fontWeight: 800 }}>Only {p.stock} left</span>
+                    )}
+                  </div>
                   <div className="cp-card-name">{p.name}</div>
                   <div className="cp-price-row">
                     <span className="cp-price">₹{p.price}</span>
@@ -317,8 +329,20 @@ export default function CategoryPage() {
         <div className="cp-modal-bg" onClick={() => setViewProduct(null)}>
           <div className="cp-modal" onClick={(e) => e.stopPropagation()} style={{ position: "relative" }}>
             <button className="cp-modal-close" onClick={() => setViewProduct(null)}>×</button>
-            <img src={viewProduct.image} alt={viewProduct.name} className="cp-modal-img" onError={(e) => { e.target.style.display = "none"; }} />
-            <div className="cp-modal-brand">{viewProduct.storeName || "DRESHO"}</div>
+            <div style={{ position: "relative" }}>
+              <img src={viewProduct.image} alt={viewProduct.name} className="cp-modal-img" style={{ opacity: (viewProduct.outOfStock || viewProduct.stock === 0) ? 0.4 : 1 }} onError={(e) => { e.target.style.display = "none"; }} />
+              {(viewProduct.outOfStock || viewProduct.stock === 0) && (
+                <div style={{ position: "absolute", top: "45%", left: "50%", transform: "translate(-50%, -50%)", background: "rgba(0,0,0,0.6)", color: "white", padding: "10px 24px", borderRadius: 8, fontSize: 16, fontWeight: 900, zIndex: 10, letterSpacing: 2, backdropFilter: "blur(2px)" }}>
+                  OUT OF STOCK
+                </div>
+              )}
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <div className="cp-modal-brand" style={{ marginBottom: 0 }}>{viewProduct.storeName || "DRESHO"}</div>
+              {viewProduct.stock > 0 && viewProduct.stock <= 5 && !viewProduct.outOfStock && (
+                <span style={{ color: "#ef4444", fontSize: 12, fontWeight: 800 }}>Only {viewProduct.stock} left!</span>
+              )}
+            </div>
             <div className="cp-modal-name">{viewProduct.name}</div>
             <div className="cp-modal-price">₹{viewProduct.price} <span style={{ fontSize: 13, fontWeight: 400, color: "#9CA3AF", textDecoration: "line-through" }}>₹{Math.floor(viewProduct.price * 1.38)}</span></div>
             <div className="cp-size-label">Select Size</div>
@@ -327,7 +351,13 @@ export default function CategoryPage() {
                 <div key={s} className={`cp-size ${selectedSize === s ? "active" : ""}`} onClick={() => setSelectedSize(s)}>{s}</div>
               ))}
             </div>
-            <button className="cp-add-btn" onClick={() => addToCart(viewProduct, selectedSize)}>Add to Cart</button>
+            <button 
+              disabled={viewProduct.outOfStock || viewProduct.stock === 0}
+              className="cp-add-btn" 
+              style={{ background: (viewProduct.outOfStock || viewProduct.stock === 0) ? "#cbd5e1" : "", cursor: (viewProduct.outOfStock || viewProduct.stock === 0) ? "not-allowed" : "pointer" }}
+              onClick={() => addToCart(viewProduct, selectedSize)}>
+              {(viewProduct.outOfStock || viewProduct.stock === 0) ? "Unavailable" : "Add to Cart"}
+            </button>
           </div>
         </div>
       )}
