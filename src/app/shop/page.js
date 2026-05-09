@@ -13,7 +13,7 @@ import {
 } from "firebase/auth";
 import {
   doc, setDoc, getDoc, getDocs, collection, query, where,
-  onSnapshot, addDoc, orderBy,
+  onSnapshot, addDoc, orderBy, arrayUnion, updateDoc
 } from "firebase/firestore";
 
 /* ═══════════════════════════════════════
@@ -52,6 +52,14 @@ export default function ShopPage() {
   const [orders, setOrders] = useState([]);
   const [viewProduct, setViewProduct] = useState(null);
   const [selectedSize, setSelectedSize] = useState("");
+  const [favorites, setFavorites] = useState([]);
+  const [pincode, setPincode] = useState("");
+  const [pincodeStatus, setPincodeStatus] = useState(null);
+  const [checkingPincode, setCheckingPincode] = useState(false);
+  
+  // ── Reviews ──
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [reviewForm, setReviewForm] = useState({ rating: 5, text: "", title: "" });
 
   // ── Checkout ──
   const [showCheckout, setShowCheckout] = useState(false);
@@ -91,6 +99,116 @@ export default function ShopPage() {
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    try {
+      const savedFavs = localStorage.getItem("dreshoFavorites");
+      if (savedFavs) {
+        setFavorites(JSON.parse(savedFavs));
+      }
+    } catch (e) {}
+  }, []);
+
+  const toggleFavorite = (product) => {
+    let newFavs;
+    if (favorites.find(f => f.id === product.id)) {
+      newFavs = favorites.filter(f => f.id !== product.id);
+    } else {
+      newFavs = [...favorites, product];
+    }
+    setFavorites(newFavs);
+    localStorage.setItem("dreshoFavorites", JSON.stringify(newFavs));
+  };
+
+  const calculateDistance = (lat1, lon1, lat2, lon2) => {
+    if (!lat1 || !lon1 || !lat2 || !lon2) return 9999;
+    const R = 6371; // Earth's radius in km
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  };
+
+  const checkDeliveryAvailability = async () => {
+    if (!pincode || pincode.length !== 6) {
+      setPincodeStatus({ type: "error", msg: "Enter a valid 6-digit pincode." });
+      return;
+    }
+    setCheckingPincode(true);
+    setPincodeStatus(null);
+    try {
+      // Geocode Pincode
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?postalcode=${pincode}&country=India&format=json`);
+      const geoData = await res.json();
+      
+      if (!geoData || geoData.length === 0) {
+        setPincodeStatus({ type: "error", msg: "Invalid pincode or location not found." });
+        setCheckingPincode(false);
+        return;
+      }
+      
+      const pinLat = parseFloat(geoData[0].lat);
+      const pinLng = parseFloat(geoData[0].lon);
+
+      // Fetch online riders
+      const q = query(collection(db, "delivery_profile"), where("online", "==", true));
+      const snap = await getDocs(q);
+      
+      let riderNearby = false;
+      snap.forEach((docSnap) => {
+        const data = docSnap.data();
+        if (data.liveLocation && data.liveLocation.lat && data.liveLocation.lng) {
+          const dist = calculateDistance(pinLat, pinLng, data.liveLocation.lat, data.liveLocation.lng);
+          if (dist <= 3) {
+            riderNearby = true;
+          }
+        }
+      });
+      
+      if (riderNearby) {
+        setPincodeStatus({ type: "success", msg: `Yes! Deliverable within 30 mins to ${pincode}.` });
+      } else {
+        setPincodeStatus({ type: "error", msg: `No riders within 3km of ${pincode}. Try again after a few hours.` });
+      }
+    } catch (e) {
+      setPincodeStatus({ type: "error", msg: "Failed to check availability." });
+    }
+    setCheckingPincode(false);
+  };
+
+  const submitReview = async () => {
+    if (!user) {
+      alert("Please login to submit a review.");
+      return setShowCheckout(true);
+    }
+    if (!reviewForm.text.trim()) return alert("Please write a review.");
+    
+    try {
+      const newReview = {
+        authorName: user.displayName || user.email?.split("@")[0] || "Customer",
+        authorId: user.uid,
+        rating: reviewForm.rating,
+        title: reviewForm.title,
+        text: reviewForm.text,
+        date: new Date().toLocaleDateString("en-US", { month: "short", year: "numeric" })
+      };
+      
+      const productRef = doc(db, "products", viewProduct.id);
+      await updateDoc(productRef, {
+        reviews: arrayUnion(newReview)
+      });
+      
+      setViewProduct(prev => ({ ...prev, reviews: [newReview, ...(prev.reviews || [])] }));
+      setShowReviewModal(false);
+      setReviewForm({ rating: 5, text: "", title: "" });
+      alert("Review submitted successfully! Thank you.");
+    } catch(e) {
+      alert("Failed to submit review.");
+    }
+  };
+
   // ── Auth Listener ──
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
@@ -103,13 +221,52 @@ export default function ShopPage() {
           snap = await getDoc(doc(db, "users", u.uid));
         }
 
-        if (snap.exists() && snap.data().role === "user") {
-          setUser(u);
-          setUserData(snap.data());
-        } else if (snap.exists()) {
+        const lastActive = localStorage.getItem("dreshoLastActive");
+        const now = Date.now();
+        if (lastActive && now - parseInt(lastActive) > 10 * 60 * 1000) {
+          localStorage.setItem("dreshoSavedEmail", u.email || "");
           await signOut(auth);
-          alert("Unauthorized role for this panel.");
+          localStorage.removeItem("dreshoLastActive");
+          setUser(null);
+          setUserData(null);
+          alert("Session expired. Please login again.");
+          return;
         }
+        localStorage.setItem("dreshoLastActive", now.toString());
+
+        let currentRole = "user";
+        let finalData = null;
+
+        if (snap.exists() && snap.data().role === "user") {
+          finalData = snap.data();
+        } else {
+          // Check other roles to allow them to be logged in but restricted to their panels
+          const sellerSnap = await getDoc(doc(db, "sellers_profile", u.uid));
+          if (sellerSnap.exists() && sellerSnap.data().role === "seller") {
+            currentRole = "seller";
+            finalData = sellerSnap.data();
+          } else {
+            const riderSnap = await getDoc(doc(db, "delivery_profile", u.uid));
+            if (riderSnap.exists() && riderSnap.data().role === "delivery") {
+              currentRole = "delivery";
+              finalData = riderSnap.data();
+            } else {
+               // Admin fallback if not in users
+               const ADMIN_EMAILS = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "prinxadmin29@gmail.com,krishnaprakash0016@gmail.com").split(",").map(e => e.trim().toLowerCase());
+               if (u.email && ADMIN_EMAILS.includes(u.email.toLowerCase())) {
+                 currentRole = "admin";
+                 finalData = { name: "Admin" };
+               } else if (snap.exists()) {
+                 await signOut(auth);
+                 alert("Unauthorized role for this panel.");
+                 return;
+               }
+            }
+          }
+        }
+
+        setUser(u);
+        setUserData({ ...finalData, role: currentRole });
       } else {
         setUser(null);
         setUserData(null);
@@ -117,6 +274,24 @@ export default function ShopPage() {
     });
     setLoaded(true);
     return () => unsub();
+  }, []);
+
+  // Keep session active for all users
+  useEffect(() => {
+    if (user) {
+      const interval = setInterval(() => {
+        localStorage.setItem("dreshoLastActive", Date.now().toString());
+      }, 60000);
+      return () => clearInterval(interval);
+    }
+  }, [user]);
+
+  // Pre-fill admin email if available
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("dreshoSavedEmail");
+      if (saved) setAdminEmail(saved);
+    }
   }, []);
 
   // ── Intersection Observer for Animations ──
@@ -181,10 +356,13 @@ export default function ShopPage() {
 
   // ── Setup Recaptcha ──
   // ── Google Sign-In for customers ──
-  const handleGoogleSignIn = async () => {
+  const handleGoogleSignIn = async (hintEmail = null) => {
     setAuthLoading(true);
     try {
       const provider = new GoogleAuthProvider();
+      if (typeof hintEmail === "string" && hintEmail.includes("@")) {
+        provider.setCustomParameters({ login_hint: hintEmail });
+      }
       const result = await signInWithPopup(auth, provider);
       const u = result.user;
       const snap = await getDoc(doc(db, "users", u.uid));
@@ -507,8 +685,17 @@ export default function ShopPage() {
         {/* ── CUSTOMER: Google Sign-In ── */}
         {!isAdminLogin && (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {typeof window !== "undefined" && localStorage.getItem("dreshoSavedEmail") && (
+              <button
+                onClick={() => handleGoogleSignIn(localStorage.getItem("dreshoSavedEmail"))}
+                disabled={authLoading}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, width: "100%", padding: "14px 20px", border: "none", background: "var(--navy)", color: "white", cursor: authLoading ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 600, fontFamily: "var(--font-b)" }}
+              >
+                Continue as {localStorage.getItem("dreshoSavedEmail")}
+              </button>
+            )}
             <button
-              onClick={handleGoogleSignIn}
+              onClick={() => handleGoogleSignIn()}
               disabled={authLoading}
               style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, width: "100%", padding: "14px 20px", border: "1.5px solid var(--border2)", background: "var(--white)", cursor: authLoading ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 600, color: "var(--navy)", fontFamily: "var(--font-b)" }}
             >
@@ -518,7 +705,7 @@ export default function ShopPage() {
                 <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
                 <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
               </svg>
-              {authLoading ? "Signing in…" : "Continue with Google"}
+              {typeof window !== "undefined" && localStorage.getItem("dreshoSavedEmail") ? "Sign In with a different account" : (authLoading ? "Signing in…" : "Continue with Google")}
             </button>
             <p style={{ textAlign: "center", fontSize: 11, color: "var(--sub)", margin: 0, lineHeight: 1.6 }}>
               By continuing you agree to Dresho&apos;s Terms of Use.
@@ -633,16 +820,30 @@ export default function ShopPage() {
             </div>
 
             <div className="nav-actions">
-              {userData && (
+              {userData?.role === "user" && (
                 <button onClick={() => setCurrentSection("orders")} className="nav-action-btn">
                   <span className="nav-action-icon">📦</span>
                   <span className="nav-action-label">Orders</span>
                 </button>
               )}
-              {user && (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "").toLowerCase().split(",").map(e => e.trim()).includes(user.email?.toLowerCase()) && (
+              {user && (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "prinxadmin29@gmail.com,krishnaprakash0016@gmail.com").toLowerCase().split(",").map(e => e.trim()).includes(user.email?.toLowerCase()) && (
                 <Link href="/admin">
                   <button className="btn-signin" style={{ background: "var(--gold)", color: "#fff", border: "none", fontSize: 11, padding: "8px 16px", letterSpacing: 1 }}>
                     🛡️ Admin Panel
+                  </button>
+                </Link>
+              )}
+              {userData?.role === "seller" && (
+                <Link href="/seller">
+                  <button className="btn-signin" style={{ background: "var(--gold)", color: "#fff", border: "none", fontSize: 11, padding: "8px 16px", letterSpacing: 1 }}>
+                    🏪 Seller Panel
+                  </button>
+                </Link>
+              )}
+              {userData?.role === "delivery" && (
+                <Link href="/delivery">
+                  <button className="btn-signin" style={{ background: "var(--gold)", color: "#fff", border: "none", fontSize: 11, padding: "8px 16px", letterSpacing: 1 }}>
+                    🛵 Rider Panel
                   </button>
                 </Link>
               )}
@@ -673,9 +874,11 @@ export default function ShopPage() {
                   <Link href="/shop/category/footwear" className={`nav-cat-link ${currentCategory === "Footwear" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>👟</span> Footwear</Link>
                   <Link href="/shop/category/kids-wear" className={`nav-cat-link ${currentCategory === "Kids Wear" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>👶</span> Kids</Link>
                   <Link href="/shop/category/accessories" className={`nav-cat-link ${currentCategory === "Accessories" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>💍</span> Accessories</Link>
-                  <Link href="/partner" style={{ marginLeft: "auto" }}>
-                    <button className="nav-pill-btn">Become a Partner</button>
-                  </Link>
+                  {(!user || (userData?.role === "user" && !(process.env.NEXT_PUBLIC_ADMIN_EMAILS || "prinxadmin29@gmail.com,krishnaprakash0016@gmail.com").toLowerCase().includes(user?.email?.toLowerCase() || ""))) ? (
+                    <Link href="/partner" style={{ marginLeft: "auto" }}>
+                      <button className="nav-pill-btn">Become a Partner</button>
+                    </Link>
+                  ) : <div style={{ marginLeft: "auto" }}></div>}
                 </div>
 
               </div>
@@ -963,6 +1166,54 @@ export default function ShopPage() {
           </div>
         )}
 
+        {/* ── FAVORITES ── */}
+        {currentSection === "favorites" && (
+          <div style={{ padding: "32px 20px" }} className="animate-fade-in">
+            <h3 style={{ fontFamily: "var(--font-d)", fontSize: 28, fontWeight: 400, color: "var(--navy)", marginBottom: 24 }}>Favorites ❤️</h3>
+            {favorites.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "60px 20px", border: "1px dashed var(--border)", background: "var(--ivory2)" }}>
+                <span style={{ fontSize: 40, marginBottom: 12 }}>🤍</span>
+                <p style={{ fontWeight: 500, color: "var(--sub)" }}>No favorites yet.</p>
+                <p style={{ fontSize: 12, color: "var(--sub)", marginTop: 4 }}>Tap the heart icon on any product to save it here.</p>
+              </div>
+            ) : (
+              <div className="deal-grid">
+                {favorites.map((p) => (
+                  <div key={p.id} className="deal-card" onClick={() => { setViewProduct(p); setSelectedSize(p.sizes?.[0] || "M"); }}>
+                    <div className="deal-img-wrap">
+                      <img src={p.image} alt={p.name} style={{ opacity: (p.outOfStock || p.stock === 0) ? 0.4 : 1 }} onError={(e) => { e.target.style.display = "none"; }} />
+                      {(p.outOfStock || p.stock === 0) && (
+                        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "rgba(0,0,0,0.6)", color: "white", padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 900, zIndex: 10, letterSpacing: 1, whiteSpace: "nowrap", backdropFilter: "blur(2px)" }}>
+                          OUT OF STOCK
+                        </div>
+                      )}
+                      <div className="deal-badge-wrap">
+                        {p.stock > 0 && p.stock <= 5 && !p.outOfStock && (
+                          <span style={{ background: "#ef4444", color: "white", padding: "4px 8px", borderRadius: 4, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Only {p.stock} left</span>
+                        )}
+                        <span className="badge-off">−38%</span>
+                      </div>
+                      <button onClick={(e) => { e.stopPropagation(); toggleFavorite(p); }} style={{ position: "absolute", top: 8, right: 8, width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,0.9)", border: "none", color: "#ef4444", zIndex: 10, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }}>
+                        <i className="fas fa-heart" />
+                      </button>
+                      {!(p.outOfStock || p.stock === 0) && (
+                        <div className="deal-quick" onClick={(e) => { e.stopPropagation(); addToCart(p, p.sizes?.[0] || "M"); }}>⚡ Quick Add</div>
+                      )}
+                    </div>
+                    <div className="deal-info">
+                      <div className="deal-brand">{p.storeName || "DRESHO"}</div>
+                      <div className="deal-name" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
+                      <div className="deal-price-row"><span className="deal-price">₹{p.price}</span><span className="deal-mrp">₹{Math.floor(p.price * 1.38)}</span><span className="deal-off">38% off</span></div>
+                      <div className="deal-rating"><span className="deal-rating-stars">★ {p.averageRating || 4.6}</span><span className="deal-rating-count">({p.reviews?.length || "1.2k"})</span></div>
+                      <div className="deal-delivery"><span className="green-dot"></span>Delivery in 28 min</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── CART ── */}
         {currentSection === "cart" && (
           <div style={{ padding: "32px 20px" }} className="animate-fade-in">
@@ -992,11 +1243,31 @@ export default function ShopPage() {
                     </div>
                   </div>
                 ))}
-                <div style={{ background: "var(--card)", border: "1px solid var(--border)", padding: "24px", marginTop: 8 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontWeight: 500, color: "var(--sub)", fontSize: 13, textTransform: "uppercase", letterSpacing: 1 }}>Total Amount</span>
-                    <span style={{ fontSize: 24, fontWeight: 600, color: "var(--navy)" }}>₹{cartTotal}</span>
+                <div style={{ background: "var(--card)", border: "1px solid var(--border)", padding: "24px", marginTop: 8, borderRadius: 12 }}>
+                  <h4 style={{ fontSize: 15, fontWeight: 800, color: "var(--navy)", marginBottom: 16, borderBottom: "1px solid var(--border)", paddingBottom: 12 }}>Price Details ({cart.reduce((acc, item) => acc + item.qty, 0)} Items)</h4>
+                  
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                    <span style={{ fontWeight: 500, color: "var(--sub)", fontSize: 14 }}>Total MRP</span>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: "var(--navy)" }}>₹{cart.reduce((acc, item) => acc + (Math.floor(item.price * 1.38) * item.qty), 0)}</span>
                   </div>
+                  
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                    <span style={{ fontWeight: 500, color: "var(--sub)", fontSize: 14 }}>Discount on MRP</span>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: "#16a34a" }}>−₹{cart.reduce((acc, item) => acc + (Math.floor(item.price * 1.38) * item.qty), 0) - cartTotal}</span>
+                  </div>
+
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                    <span style={{ fontWeight: 500, color: "var(--sub)", fontSize: 14 }}>Delivery Charges</span>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: "#16a34a" }}><span style={{ textDecoration: "line-through", color: "var(--sub)", marginRight: 6 }}>₹49</span>FREE</span>
+                  </div>
+
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 16, borderTop: "1px dashed var(--border)", marginTop: 8 }}>
+                    <span style={{ fontWeight: 800, color: "var(--navy)", fontSize: 16 }}>Final Amount</span>
+                    <span style={{ fontSize: 24, fontWeight: 900, color: "var(--navy)" }}>₹{cartTotal}</span>
+                  </div>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: "#16a34a", marginTop: 12, background: "#dcfce7", padding: "8px 12px", borderRadius: 8, textAlign: "center" }}>
+                    You will save ₹{cart.reduce((acc, item) => acc + (Math.floor(item.price * 1.38) * item.qty), 0) - cartTotal} on this order
+                  </p>
                   <button style={{ background: "var(--navy)", color: "#fff", border: "none", padding: "16px", width: "100%", marginTop: 24, fontSize: 12, letterSpacing: 2, textTransform: "uppercase", fontWeight: 500, cursor: "pointer", transition: "background 0.3s" }} onClick={() => {
                     const addr = userData?.address;
                     setCheckoutAddress(typeof addr === "object" ? addr?.line || "" : addr || "");
@@ -1259,6 +1530,7 @@ export default function ShopPage() {
           {[
             { id: "search", icon: "fa-magnifying-glass", label: "Search" },
             { id: "home", icon: "fa-house", label: "Home" },
+            { id: "favorites", icon: "fa-heart", label: "Favorites", badge: favorites.length },
             { id: "cart", icon: "fa-bag-shopping", label: "Cart", badge: cartCount },
             { id: "orders", icon: "fa-box", label: "Orders" },
             { id: "account", icon: "fa-user", label: "Account" },
@@ -1275,59 +1547,401 @@ export default function ShopPage() {
           ))}
         </div>
 
-        {/* ── PRODUCT DETAIL MODAL ── */}
+        {/* ── PRODUCT DETAIL FULL SCREEN MODAL ── */}
         {viewProduct && (
-          <div style={{ position: "fixed", inset: 0, zIndex: 600, background: "rgba(20,33,61,0.6)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setViewProduct(null)}>
-            <div className="animate-scale-in" onClick={(e) => e.stopPropagation()} style={{ background: "var(--white)", width: "100%", maxWidth: 420, padding: 32, boxShadow: "var(--shadow-lg)" }}>
-              <div style={{ height: 260, background: "var(--ivory2)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 24, position: "relative" }}>
-                <img src={viewProduct.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", position: "absolute", opacity: (viewProduct.outOfStock || viewProduct.stock === 0) ? 0.4 : 1 }} onError={(e) => { e.target.style.display = "none"; }} />
-                {(viewProduct.outOfStock || viewProduct.stock === 0) && (
-                  <div style={{ position: "absolute", background: "rgba(0,0,0,0.6)", color: "white", padding: "10px 24px", borderRadius: 8, fontSize: 16, fontWeight: 900, zIndex: 10, letterSpacing: 2, backdropFilter: "blur(2px)" }}>
-                    OUT OF STOCK
+          <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "var(--white)", overflow: "hidden", display: "flex", flexDirection: "column" }} className="animate-fade-in slide-up">
+            
+            {/* Top Navigation Bar */}
+            <div style={{ flexShrink: 0, zIndex: 10, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", background: "rgba(255,255,255,0.9)", backdropFilter: "blur(10px)", borderBottom: "1px solid var(--border)" }}>
+              <button onClick={() => setViewProduct(null)} style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--ivory2)", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 18, color: "var(--navy)" }}>
+                <i className="fas fa-arrow-left" />
+              </button>
+              <div style={{ display: "flex", gap: 12 }}>
+                <button onClick={() => { if (navigator.share) navigator.share({ title: viewProduct.name, url: window.location.origin }); }} style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--ivory2)", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 16, color: "var(--navy)" }}><i className="fas fa-share-alt" /></button>
+                <button onClick={() => toggleFavorite(viewProduct)} style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--ivory2)", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 16, color: favorites.find(f => f.id === viewProduct.id) ? "#ef4444" : "var(--navy)" }}><i className={favorites.find(f => f.id === viewProduct.id) ? "fas fa-heart" : "far fa-heart"} /></button>
+              </div>
+            </div>
+
+            <div style={{ flex: 1, paddingBottom: 40, overflowY: "auto" }} className="hide-scrollbar">
+              {/* Image Gallery */}
+              <div style={{ width: "100%", height: 450, background: "var(--ivory2)", position: "relative", display: "flex", overflowX: "auto", scrollSnapType: "x mandatory", scrollBehavior: "smooth", WebkitOverflowScrolling: "touch" }} className="hide-scrollbar">
+                {(viewProduct.images && viewProduct.images.length > 0 ? viewProduct.images : [viewProduct.image]).map((img, i) => (
+                  <div key={i} style={{ minWidth: "100%", height: "100%", scrollSnapAlign: "start", position: "relative" }}>
+                    <img src={img} alt="" style={{ width: "100%", height: "100%", objectFit: "contain", opacity: (viewProduct.outOfStock || viewProduct.stock === 0) ? 0.4 : 1 }} onError={(e) => { e.target.style.display = "none"; }} />
+                    {i === 0 && (
+                      <div style={{ position: "absolute", bottom: 40, right: 16, width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,0.9)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--navy)", cursor: "pointer", boxShadow: "0 4px 14px rgba(0,0,0,0.15)" }}>
+                        <i className="fas fa-play" style={{ marginLeft: 3, fontSize: 16 }} />
+                      </div>
+                    )}
+                    {(viewProduct.outOfStock || viewProduct.stock === 0) && (
+                      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "rgba(0,0,0,0.6)", color: "white", padding: "10px 24px", borderRadius: 8, fontSize: 16, fontWeight: 900, zIndex: 10, letterSpacing: 2, backdropFilter: "blur(2px)" }}>OUT OF STOCK</div>
+                    )}
+                  </div>
+                ))}
+                {(viewProduct.images?.length > 1) && (
+                  <div style={{ position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)", background: "rgba(0,0,0,0.4)", color: "white", padding: "4px 12px", borderRadius: 12, fontSize: 11, fontWeight: 700, backdropFilter: "blur(4px)" }}>
+                    Swipe for more ({viewProduct.images.length})
                   </div>
                 )}
-                <span style={{ fontSize: 40, color: "var(--sub)", opacity: 0.3 }}>👗</span>
-              </div>
-              <p style={{ fontSize: 10, fontWeight: 600, color: "var(--gold)", letterSpacing: 2, textTransform: "uppercase" }}>{viewProduct.storeName || "DRESHO"}</p>
-              <h3 style={{ fontFamily: "var(--font-d)", fontSize: 24, color: "var(--navy)", marginTop: 4 }}>{viewProduct.name}</h3>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8 }}>
-                <p style={{ fontSize: 22, fontWeight: 600, color: "var(--navy)" }}>₹{viewProduct.price}</p>
-                {viewProduct.stock > 0 && viewProduct.stock <= 5 && !viewProduct.outOfStock && (
-                  <span style={{ color: "#ef4444", fontSize: 13, fontWeight: 700 }}>Only {viewProduct.stock} left!</span>
-                )}
               </div>
 
-              {/* Size Selector */}
-              <div style={{ marginTop: 20 }}>
-                <p style={{ fontSize: 11, fontWeight: 600, color: "var(--sub)", marginBottom: 12, letterSpacing: 1, textTransform: "uppercase" }}>Select Size</p>
-                <div style={{ display: "flex", gap: 10 }}>
-                  {(viewProduct.sizes || ["S", "M", "L", "XL"]).map((size) => (
-                    <button
-                      key={size}
-                      onClick={() => setSelectedSize(size)}
-                      style={{
-                        width: 44, height: 44, fontSize: 13, fontWeight: 500,
-                        background: selectedSize === size ? "var(--navy)" : "var(--ivory2)",
-                        color: selectedSize === size ? "white" : "var(--navy)",
-                        border: selectedSize === size ? "none" : "1px solid var(--border)",
-                        cursor: "pointer", transition: "all 0.3s ease",
-                      }}
-                    >
-                      {size}
+              {/* Product Info */}
+              <div style={{ padding: "20px 20px 0 20px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div>
+                    <p style={{ fontSize: 12, fontWeight: 700, color: "var(--gold)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                      {viewProduct.storeName || "DRESHO"} <i className="fas fa-check-circle" style={{ color: "#10b981", fontSize: 10 }} />
+                    </p>
+                    <h1 style={{ fontFamily: "var(--font-d)", fontSize: 24, color: "var(--navy)", lineHeight: 1.2, margin: 0 }}>{viewProduct.name}</h1>
+                    {viewProduct.trending && (
+                      <div style={{ marginTop: 8, display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                        <span style={{ fontSize: 11, background: "linear-gradient(135deg, #ef4444, #b91c1c)", color: "white", padding: "4px 8px", borderRadius: 6, fontWeight: 800 }}>🔥 #1 Trending this week</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Price Section */}
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12 }}>
+                  <span style={{ fontSize: 28, fontWeight: 800, color: "var(--navy)" }}>₹{viewProduct.price}</span>
+                  {viewProduct.mrp && viewProduct.mrp > viewProduct.price && (
+                    <>
+                      <span style={{ fontSize: 16, fontWeight: 500, color: "var(--sub)", textDecoration: "line-through" }}>₹{viewProduct.mrp}</span>
+                      <span style={{ padding: "4px 8px", background: "#fef2f2", color: "#ef4444", borderRadius: 6, fontSize: 12, fontWeight: 800 }}>
+                        {Math.round(((viewProduct.mrp - viewProduct.price) / viewProduct.mrp) * 100)}% OFF
+                      </span>
+                    </>
+                  )}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+                  <p style={{ fontSize: 11, color: "var(--sub)" }}>Inclusive of all taxes</p>
+                </div>
+
+                {/* Advanced Delivery Information */}
+                <div style={{ margin: "24px 0", padding: "16px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 16 }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 12 }}>
+                    <div style={{ fontSize: 24 }}>⚡</div>
+                    <div style={{ flex: 1 }}>
+                      <h4 style={{ fontSize: 14, fontWeight: 800, color: "#166534", marginBottom: 2 }}>Fast Delivery Available</h4>
+                      <p style={{ fontSize: 12, color: "#15803d", fontWeight: 600 }}>Live rider tracking provided upon order confirmation.</p>
+                      {viewProduct.stock > 0 && viewProduct.stock <= 5 && !viewProduct.outOfStock && (
+                        <p style={{ fontSize: 12, fontWeight: 700, color: "#ef4444", marginTop: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                          <i className="fas fa-fire" /> Only {viewProduct.stock} left - selling fast!
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 12, borderTop: "1px solid #bbf7d0", paddingTop: 12 }}>
+                    <input type="tel" maxLength={6} value={pincode} onChange={(e) => { setPincode(e.target.value); setPincodeStatus(null); }} placeholder="Enter Pincode" style={{ flex: 1, padding: "10px 12px", borderRadius: 8, border: "1px solid #bbf7d0", fontSize: 13, background: "white", outline: "none", color: "var(--navy)" }} />
+                    <button onClick={checkDeliveryAvailability} disabled={checkingPincode} style={{ padding: "0 16px", background: "#166534", color: "white", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: checkingPincode ? "not-allowed" : "pointer", opacity: checkingPincode ? 0.7 : 1 }}>
+                      {checkingPincode ? "Checking..." : "Check"}
                     </button>
+                  </div>
+                  {pincodeStatus && (
+                    <div style={{ marginTop: 12, padding: "8px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: pincodeStatus.type === "success" ? "#dcfce7" : "#fee2e2", color: pincodeStatus.type === "success" ? "#166534" : "#b91c1c", display: "flex", alignItems: "center", gap: 8 }}>
+                      <span>{pincodeStatus.type === "success" ? "✅" : "❌"}</span>
+                      <span>{pincodeStatus.msg}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Highlights */}
+                <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8, margin: "20px 0" }} className="hide-scrollbar">
+                  {["Premium Fabric", "Breathable", "Easy Wash", "Perfect Fit"].map((hl, i) => (
+                    <div key={i} style={{ padding: "8px 12px", background: "var(--ivory2)", border: "1px solid var(--border)", borderRadius: 12, fontSize: 11, fontWeight: 600, color: "var(--navy)", whiteSpace: "nowrap" }}>{hl}</div>
                   ))}
                 </div>
-              </div>
 
-              <div style={{ display: "flex", gap: 12, marginTop: 32 }}>
-                <button style={{ flex: 1, background: "transparent", color: "var(--navy)", border: "1px solid var(--border2)", padding: 14, fontSize: 11, textTransform: "uppercase", letterSpacing: 1, cursor: "pointer", transition: "all 0.3s" }} onClick={() => setViewProduct(null)}>Close</button>
-                <button 
-                  disabled={viewProduct.outOfStock || viewProduct.stock === 0}
-                  style={{ flex: 2, background: (viewProduct.outOfStock || viewProduct.stock === 0) ? "#cbd5e1" : "var(--gold)", color: "white", border: "none", padding: 14, fontSize: 11, textTransform: "uppercase", letterSpacing: 2, cursor: (viewProduct.outOfStock || viewProduct.stock === 0) ? "not-allowed" : "pointer", transition: "background 0.3s" }} 
-                  onClick={() => addToCart(viewProduct, selectedSize)}>
-                  {(viewProduct.outOfStock || viewProduct.stock === 0) ? "Unavailable" : "Add to Cart"}
-                </button>
+                {/* Size Selection */}
+                <div style={{ margin: "24px 0" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                    <h4 style={{ fontSize: 15, fontWeight: 800, color: "var(--navy)" }}>Select Size</h4>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--gold)", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}><i className="fas fa-ruler" /> Size Guide</span>
+                  </div>
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    {(viewProduct.sizes || ["S", "M", "L", "XL"]).map((size) => (
+                      <button
+                        key={size}
+                        onClick={() => setSelectedSize(size)}
+                        style={{
+                          flex: 1, minWidth: 60, height: 60, borderRadius: 12, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                          background: selectedSize === size ? "var(--navy)" : "white",
+                          color: selectedSize === size ? "white" : "var(--navy)",
+                          border: selectedSize === size ? "2px solid var(--navy)" : "1px solid var(--border)",
+                          cursor: "pointer", transition: "all 0.2s ease",
+                        }}
+                      >
+                        <span style={{ fontSize: 14, fontWeight: 700 }}>{size}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {viewProduct.modelInfo && (
+                    <div style={{ marginTop: 12, padding: "12px", background: "var(--ivory2)", borderRadius: 12, display: "flex", alignItems: "center", gap: 12 }}>
+                      <div style={{ width: 32, height: 32, borderRadius: "50%", background: "var(--white)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>📏</div>
+                      <div>
+                        <p style={{ fontSize: 12, fontWeight: 700, color: "var(--navy)" }}>True to Size</p>
+                        <p style={{ fontSize: 11, color: "var(--sub)" }}>{viewProduct.modelInfo}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Color Variants */}
+                {viewProduct.colors && viewProduct.colors.length > 0 && (
+                  <div style={{ margin: "24px 0" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                      <h4 style={{ fontSize: 15, fontWeight: 800, color: "var(--navy)" }}>Select Color</h4>
+                    </div>
+                    <div style={{ display: "flex", gap: 16 }}>
+                      {viewProduct.colors.map((color, idx) => (
+                        <div key={idx} style={{ width: 44, height: 44, borderRadius: "50%", padding: 3, border: "1px solid var(--border)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <div style={{ width: "100%", height: "100%", borderRadius: "50%", background: color.hex || "#000", boxShadow: "inset 0 2px 4px rgba(0,0,0,0.2)" }} title={color.name} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Why You'll Love This */}
+                {viewProduct.highlights && viewProduct.highlights.length > 0 && (
+                  <div style={{ margin: "24px 0", padding: "16px", background: "var(--ivory2)", borderRadius: 16 }}>
+                    <h4 style={{ fontSize: 14, fontWeight: 800, color: "var(--navy)", marginBottom: 12 }}>Why You'll Love This ❤️</h4>
+                    <ul style={{ paddingLeft: 20, margin: 0, fontSize: 13, color: "var(--sub)", lineHeight: 1.8 }}>
+                      {viewProduct.highlights.map((hl, i) => <li key={i}>{hl}</li>)}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Return Transparency & Trust Indicators */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, margin: "24px 0" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 12, border: "1px solid var(--border)", borderRadius: 12 }}>
+                    <i className="fas fa-exchange-alt" style={{ color: "var(--gold)", fontSize: 18 }} />
+                    <div>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "var(--navy)", lineHeight: 1.2, display: "block" }}>Easy Replacement</span>
+                      <span style={{ fontSize: 10, color: "var(--sub)" }}>Within 24 hours</span>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 12, border: "1px solid var(--border)", borderRadius: 12 }}>
+                    <i className="fas fa-shield-check" style={{ color: "var(--gold)", fontSize: 18 }} />
+                    <div>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "var(--navy)", lineHeight: 1.2, display: "block" }}>Verified Seller</span>
+                      <span style={{ fontSize: 10, color: "var(--sub)" }}>Trusted Partner</span>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 12, border: "1px solid var(--border)", borderRadius: 12 }}>
+                    <i className="fas fa-check-double" style={{ color: "var(--gold)", fontSize: 18 }} />
+                    <div>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "var(--navy)", lineHeight: 1.2, display: "block" }}>Quality Checked</span>
+                      <span style={{ fontSize: 10, color: "var(--sub)" }}>100% Authentic</span>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 12, border: "1px solid var(--border)", borderRadius: 12 }}>
+                    <i className="fas fa-truck-fast" style={{ color: "var(--gold)", fontSize: 18 }} />
+                    <div>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "var(--navy)", lineHeight: 1.2, display: "block" }}>Fast Dispatch</span>
+                      <span style={{ fontSize: 10, color: "var(--sub)" }}>Live tracking</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Accordions */}
+                <div style={{ borderTop: "1px solid var(--border)", paddingTop: 16, marginTop: 24 }}>
+                  <details style={{ marginBottom: 16 }}>
+                    <summary style={{ fontSize: 14, fontWeight: 800, color: "var(--navy)", cursor: "pointer", display: "flex", justifyContent: "space-between", listStyle: "none" }}>Product Details <i className="fas fa-chevron-down" style={{ fontSize: 12, color: "var(--sub)" }} /></summary>
+                    <div style={{ padding: "12px 0", fontSize: 13, color: "var(--sub)", lineHeight: 1.6 }}>
+                      High-quality materials tailored for exceptional comfort and a modern fit. A versatile addition to your everyday wardrobe.
+                    </div>
+                  </details>
+                  <details style={{ marginBottom: 16 }}>
+                    <summary style={{ fontSize: 14, fontWeight: 800, color: "var(--navy)", cursor: "pointer", display: "flex", justifyContent: "space-between", listStyle: "none" }}>Fabric & Care <i className="fas fa-chevron-down" style={{ fontSize: 12, color: "var(--sub)" }} /></summary>
+                    <div style={{ padding: "12px 0", fontSize: 13, color: "var(--sub)", lineHeight: 1.6 }}>
+                      <ul style={{ paddingLeft: 20 }}>
+                        <li>Premium Cotton Blend</li>
+                        <li>Machine wash cold</li>
+                        <li>Do not bleach</li>
+                        <li>Dry in shade</li>
+                      </ul>
+                    </div>
+                  </details>
+                </div>
+
+                {/* Flipkart Style Ratings & Reviews */}
+                {(() => {
+                  const allReviews = viewProduct.reviews || [];
+                  const totalRating = allReviews.reduce((sum, r) => sum + (Number(r.rating) || 5), 0);
+                  const avgRating = allReviews.length > 0 ? (totalRating / allReviews.length).toFixed(1) : 0;
+                  const allReviewImages = allReviews.flatMap(r => r.images || []);
+
+                  return (
+                    <div style={{ borderTop: "8px solid #f1f5f9", paddingTop: 20, marginTop: 16, paddingBottom: 20 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                        <h4 style={{ fontSize: 18, fontWeight: 800, color: "var(--navy)" }}>Ratings and reviews</h4>
+                        <button style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #e2e8f0", background: "white", fontSize: 13, fontWeight: 700, color: "var(--navy)", cursor: "pointer", boxShadow: "0 2px 4px rgba(0,0,0,0.02)" }} onClick={() => setShowReviewModal(true)}>
+                          Rate Product
+                        </button>
+                      </div>
+                      
+                      {allReviews.length > 0 ? (
+                        <>
+                          {/* Overall Rating Block */}
+                          <div style={{ marginBottom: 16 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                              <div style={{ fontSize: 32, fontWeight: 900, color: "var(--navy)", display: "flex", alignItems: "center", gap: 4 }}>
+                                {avgRating} <i className="fas fa-star" style={{ fontSize: 20, color: "#16a34a" }} />
+                              </div>
+                              <div style={{ fontSize: 16, fontWeight: 700, color: "#16a34a", background: "#dcfce7", padding: "4px 12px", borderRadius: 20 }}>
+                                {avgRating >= 4 ? "Good" : avgRating >= 3 ? "Average" : "Poor"}
+                              </div>
+                            </div>
+                            <p style={{ fontSize: 13, color: "var(--sub)", marginTop: 4 }}>
+                              based on {allReviews.length} ratings by <i className="fas fa-check-circle" style={{ color: "#16a34a" }} /> Verified Buyers
+                            </p>
+                          </div>
+
+                          {/* Review Images Grid */}
+                          {allReviewImages.length > 0 && (
+                            <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 12, marginBottom: 16 }} className="hide-scrollbar">
+                               {allReviewImages.map((img, idx) => (
+                                 <img key={idx} src={img} style={{ width: 100, height: 100, borderRadius: 12, objectFit: "cover", flexShrink: 0, border: "1px solid #e2e8f0" }} />
+                               ))}
+                            </div>
+                          )}
+
+                          {/* Quick Tags */}
+                          {viewProduct.reviewTags && viewProduct.reviewTags.length > 0 && (
+                            <div style={{ marginBottom: 20 }}>
+                              <p style={{ fontSize: 14, fontWeight: 600, color: "var(--navy)", marginBottom: 12 }}>Features customers loved</p>
+                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                {viewProduct.reviewTags.map((tag, i) => (
+                                  <span key={i} style={{ fontSize: 13, padding: "8px 16px", background: "#f1f5f9", borderRadius: 8, color: "var(--navy)", fontWeight: 500 }}>{tag}</span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Reviews List */}
+                          <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 16 }}>
+                            {allReviews.map((rev, i) => (
+                              <div key={i} style={{ paddingBottom: 16, borderBottom: "1px solid #e2e8f0" }}>
+                                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                                  <span style={{ background: rev.rating >= 4 ? "#16a34a" : rev.rating >= 3 ? "#f59e0b" : "#ef4444", color: "white", padding: "2px 6px", borderRadius: 4, fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", gap: 4 }}>
+                                    {rev.rating} <i className="fas fa-star" style={{ fontSize: 8 }} />
+                                  </span>
+                                  <span style={{ fontSize: 14, fontWeight: 700, color: "var(--navy)" }}>{rev.title || (rev.rating >= 4 ? "Awesome!" : rev.rating >= 3 ? "Good product" : "Okay")}</span>
+                                </div>
+                                <p style={{ fontSize: 13, color: "#475569", lineHeight: 1.5, marginBottom: 12 }}>{rev.text}</p>
+                                
+                                {rev.images && rev.images.length > 0 && (
+                                  <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                                    {rev.images.map((img, idx) => (
+                                      <div key={idx} style={{ width: 60, height: 60, borderRadius: 8, background: "#ddd", overflow: "hidden" }}>
+                                        <img src={img} alt="" style={{width: "100%", height:"100%", objectFit:"cover"}} onError={(e) => e.target.style.display='none'} />
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                <div style={{ fontSize: 12, color: "#64748b", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                  <span style={{ fontWeight: 600 }}>{rev.authorName} <i className="fas fa-check-circle" style={{ color: "#10b981", fontSize: 10, marginLeft: 4 }} /></span>
+                                  <span style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                                    <span>{rev.date || "Recently"}</span>
+                                    <span style={{ display: "flex", alignItems: "center", gap: 4 }}><i className="fas fa-thumbs-up" style={{ color: "#cbd5e1" }} /> Helpful</span>
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <div style={{ textAlign: "center", padding: "32px 0", background: "#f8fafc", borderRadius: 16 }}>
+                          <i className="fas fa-comment-dots" style={{ fontSize: 32, color: "#cbd5e1", marginBottom: 12 }} />
+                          <p style={{ color: "var(--navy)", fontSize: 14, fontWeight: 600 }}>No reviews yet</p>
+                          <p style={{ color: "#64748b", fontSize: 13, marginTop: 4 }}>Be the first to share your thoughts!</p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Review Modal */}
+                {showReviewModal && (
+                  <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={() => setShowReviewModal(false)}>
+                    <div style={{ background: "white", width: "100%", maxWidth: 600, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, animation: "slideUp 0.3s ease" }} onClick={e => e.stopPropagation()}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                        <h3 style={{ fontSize: 18, fontWeight: 800, color: "var(--navy)" }}>Write a Review</h3>
+                        <button onClick={() => setShowReviewModal(false)} style={{ background: "none", border: "none", fontSize: 20, color: "#64748b", cursor: "pointer" }}><i className="fas fa-times" /></button>
+                      </div>
+                      
+                      <div style={{ marginBottom: 16 }}>
+                        <label style={{ fontSize: 13, fontWeight: 600, color: "var(--navy)", display: "block", marginBottom: 8 }}>Rating</label>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          {[1, 2, 3, 4, 5].map(star => (
+                            <button key={star} onClick={() => setReviewForm({ ...reviewForm, rating: star })} style={{ background: "none", border: "none", fontSize: 28, color: reviewForm.rating >= star ? "#16a34a" : "#e2e8f0", cursor: "pointer" }}>★</button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div style={{ marginBottom: 16 }}>
+                        <label style={{ fontSize: 13, fontWeight: 600, color: "var(--navy)", display: "block", marginBottom: 8 }}>Review Title</label>
+                        <input type="text" value={reviewForm.title} onChange={e => setReviewForm({...reviewForm, title: e.target.value})} placeholder="E.g. Excellent Product!" style={{ width: "100%", padding: 12, borderRadius: 12, border: "1px solid #e2e8f0", outline: "none", color: "var(--navy)" }} />
+                      </div>
+
+                      <div style={{ marginBottom: 20 }}>
+                        <label style={{ fontSize: 13, fontWeight: 600, color: "var(--navy)", display: "block", marginBottom: 8 }}>Review Description</label>
+                        <textarea value={reviewForm.text} onChange={e => setReviewForm({...reviewForm, text: e.target.value})} placeholder="What did you like or dislike?" rows="4" style={{ width: "100%", padding: 12, borderRadius: 12, border: "1px solid #e2e8f0", outline: "none", resize: "none", color: "var(--navy)" }} />
+                      </div>
+
+                      <button onClick={submitReview} style={{ width: "100%", padding: 16, background: "var(--navy)", color: "white", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 800, cursor: "pointer" }}>Submit Review</button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Style With This */}
+                {viewProduct.relatedProducts && viewProduct.relatedProducts.length > 0 && (
+                  <div style={{ borderTop: "1px solid var(--border)", paddingTop: 24, marginTop: 16 }}>
+                    <h4 style={{ fontSize: 16, fontWeight: 800, color: "var(--navy)", marginBottom: 16 }}>Style With This</h4>
+                    <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 16 }} className="hide-scrollbar">
+                      {viewProduct.relatedProducts.map((rel, i) => (
+                        <div key={i} style={{ minWidth: 120, borderRadius: 12, overflow: "hidden", border: "1px solid var(--border)" }}>
+                          <div style={{ height: 120, background: "var(--ivory2)" }}>
+                            <img src={rel.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                          </div>
+                          <div style={{ padding: 8 }}>
+                            <p style={{ fontSize: 11, fontWeight: 700, color: "var(--navy)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{rel.name}</p>
+                            <p style={{ fontSize: 12, fontWeight: 800, color: "var(--gold)", marginTop: 2 }}>₹{rel.price}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
               </div>
+            </div>
+
+            {/* Sticky Bottom Bar */}
+            <div style={{ flexShrink: 0, background: "var(--white)", padding: "16px 20px", borderTop: "1px solid var(--border)", zIndex: 20 }}>
+              {(viewProduct.outOfStock || viewProduct.stock === 0) ? (
+                <button 
+                  style={{ width: "100%", height: 50, borderRadius: 16, background: "var(--navy)", color: "white", border: "none", fontSize: 13, fontWeight: 800, textTransform: "uppercase", letterSpacing: 1, cursor: "pointer", boxShadow: "0 4px 14px rgba(20,33,61,0.2)" }} 
+                  onClick={() => { alert("We will notify you when this is back in stock!"); setViewProduct(null); }}>
+                  Notify Me When Available
+                </button>
+              ) : (
+                <div style={{ display: "flex", gap: 12 }}>
+                  <button 
+                    style={{ flex: 1, height: 50, borderRadius: 16, background: "white", color: "var(--navy)", border: "1px solid var(--navy)", fontSize: 13, fontWeight: 800, textTransform: "uppercase", letterSpacing: 1, cursor: "pointer" }} 
+                    onClick={() => { addToCart(viewProduct, selectedSize); setViewProduct(null); }}>
+                    Add to Cart
+                  </button>
+                  <button 
+                    style={{ flex: 1.5, height: 50, borderRadius: 16, background: "var(--navy)", color: "white", border: "none", fontSize: 13, fontWeight: 800, textTransform: "uppercase", letterSpacing: 1, cursor: "pointer", boxShadow: "0 4px 14px rgba(20,33,61,0.2)", position: "relative", overflow: "hidden" }} 
+                    onClick={() => { addToCart(viewProduct, selectedSize); setViewProduct(null); setCurrentSection("cart"); }}>
+                    <span style={{ position: "relative", top: -6 }}>Buy Now</span>
+                    <span style={{ position: "absolute", bottom: 6, left: "50%", transform: "translateX(-50%)", fontSize: 9, opacity: 0.8, whiteSpace: "nowrap", fontWeight: 600 }}>⚡ 1-Tap Checkout</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}

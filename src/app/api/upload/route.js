@@ -11,14 +11,14 @@ export async function POST(req) {
       return Response.json({ error: 'No image provided' }, { status: 400 });
     }
 
-    // Size guard — 5 MB max
-    if (file.size > 5 * 1024 * 1024) {
-      return Response.json({ error: 'Image must be under 5 MB' }, { status: 413 });
+    // Size guard — 10 MB max (allows document uploads)
+    if (file.size > 10 * 1024 * 1024) {
+      return Response.json({ error: 'File must be under 10 MB' }, { status: 413 });
     }
 
-    // Type guard — only images
-    if (!file.type.startsWith('image/')) {
-      return Response.json({ error: 'File must be an image' }, { status: 415 });
+    // Type guard — images or PDFs (for rider document uploads)
+    if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
+      return Response.json({ error: 'File must be an image or PDF' }, { status: 415 });
     }
 
     // Forward to ImgBB using server-only key

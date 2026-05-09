@@ -716,6 +716,41 @@ export default function AdminPage() {
                   </span>
                 </p>
               </div>
+              
+              {/* LIVE MAP TRACKING */}
+              <div style={{ marginBottom: 24, background: "white", padding: 20, borderRadius: 16, border: "1px solid var(--border)" }}>
+                <h3 style={{ fontSize: 18, fontWeight: 800, color: "var(--navy)", marginBottom: 16 }}>
+                   <i className="fas fa-satellite-dish" style={{ color: "#10b981", marginRight: 8 }} />
+                   Live Rider Tracking
+                </h3>
+                {deliveryAgents.filter(d => d.online && d.liveLocation).length === 0 ? (
+                  <div style={{ background: "#f8fafc", padding: 30, borderRadius: 12, textAlign: "center", color: "#64748b" }}>
+                    <i className="fas fa-map-location-dot" style={{ fontSize: 32, marginBottom: 12, opacity: 0.5 }} />
+                    <p style={{ fontWeight: 600 }}>No riders are currently broadcasting live location.</p>
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 16 }}>
+                    {deliveryAgents.filter(d => d.online && d.liveLocation).map(d => (
+                      <div key={d.id} style={{ border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" }}>
+                        <div style={{ padding: "8px 12px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: "var(--navy)" }}>{d.name}</span>
+                          <span style={{ fontSize: 10, background: "#ecfdf5", color: "#10b981", padding: "2px 6px", borderRadius: 4, fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", animation: "pulse 2s infinite" }}></span> Live</span>
+                        </div>
+                        <iframe 
+                          width="100%" 
+                          height="200" 
+                          frameBorder="0" 
+                          scrolling="no" 
+                          marginHeight="0" 
+                          marginWidth="0" 
+                          src={`https://maps.google.com/maps?q=${d.liveLocation.lat},${d.liveLocation.lng}&z=15&output=embed`}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                 {deliveryAgents.length === 0 ? (
                   <p style={{ gridColumn: "1/-1", textAlign: "center", padding: 40, color: "#8a93a4", fontWeight: 600 }}>No delivery agents yet</p>
