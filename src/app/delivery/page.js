@@ -337,12 +337,11 @@ export default function DeliveryPage() {
     return R * c; // Distance in km
   };
 
-  // Calculate earnings based on distance
+  // Calculate earnings based on distance — Official Dresho Payout Rule
   const calculateDeliveryEarning = (distance) => {
-    if (distance <= 2) return 25; // 0-2 km: ₹25
-    if (distance <= 5) return 35; // 2-5 km: ₹35
-    if (distance <= 8) return 45; // 5-8 km: ₹45
-    return 55; // 8+ km: ₹55
+    if (distance <= 3) return 22;  // 0–3 km: ₹22
+    if (distance <= 6) return 32;  // 3–6 km: ₹32
+    return 40;                     // 6+ km:  ₹40
   };
 
   const completeDelivery = async (methodUsed) => {
@@ -910,7 +909,7 @@ export default function DeliveryPage() {
                       <div className="store-img">🏪</div>
                       <div className="store-info">
                         <h4>{seller?.storeName || seller?.name || "Store"}</h4>
-                        <p><i className="fas fa-map-marker-alt" /> {seller?.address?.substring(0, 30)}...</p>
+                        <p><i className="fas fa-map-marker-alt" /> {seller?.shopAddress?.substring(0, 30) || seller?.address?.substring(0, 30)}...</p>
                       </div>
                     </div>
                     <div className="job-details">
@@ -923,6 +922,35 @@ export default function DeliveryPage() {
                         <p>{o.items?.length || 1}</p>
                       </div>
                     </div>
+
+                    {/* ── Customer Delivery Address Panel ── */}
+                    <div style={{ background: "linear-gradient(135deg, #fff7ed, #fef2f2)", border: "1px solid #fde68a", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+                      <p style={{ fontSize: 10, fontWeight: 800, color: "#d97706", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8 }}>📍 Delivery Address</p>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 7 }}>
+                          <i className="fas fa-map-marker-alt" style={{ fontSize: 11, color: "#ef4444", marginTop: 2, flexShrink: 0 }} />
+                          <span style={{ fontSize: 12, fontWeight: 600, color: "#374151", lineHeight: 1.5 }}>{o.userAddress || "No address provided"}</span>
+                        </div>
+                        {o.userCoordinates && seller?.coordinates ? (
+                          <a
+                            href={(() => { try { const [cLat, cLon] = o.userCoordinates.split(",").map(s => s.trim()); const [sLat, sLon] = seller.coordinates.split(",").map(s => s.trim()); return `https://www.google.com/maps/dir/${sLat},${sLon}/${cLat},${cLon}`; } catch { return "#"; } })()}
+                            target="_blank" rel="noopener noreferrer"
+                            style={{ display: "inline-flex", alignItems: "center", gap: 7, marginTop: 6, padding: "9px 14px", borderRadius: 10, background: "linear-gradient(135deg, #f97316, #ea580c)", color: "white", fontSize: 12, fontWeight: 700, textDecoration: "none", boxShadow: "0 3px 10px rgba(249,115,22,0.3)", width: "fit-content" }}
+                          >
+                            <i className="fas fa-route" style={{ fontSize: 13 }} /> Navigate to Customer
+                          </a>
+                        ) : o.userCoordinates ? (
+                          <a
+                            href={(() => { try { const [cLat, cLon] = o.userCoordinates.split(",").map(s => s.trim()); return `https://www.google.com/maps/search/?api=1&query=${cLat},${cLon}`; } catch { return "#"; } })()}
+                            target="_blank" rel="noopener noreferrer"
+                            style={{ display: "inline-flex", alignItems: "center", gap: 7, marginTop: 6, padding: "9px 14px", borderRadius: 10, background: "#10b981", color: "white", fontSize: 12, fontWeight: 700, textDecoration: "none", boxShadow: "0 3px 10px rgba(16,185,129,0.3)", width: "fit-content" }}
+                          >
+                            <i className="fas fa-map-pin" style={{ fontSize: 13 }} /> View on Map
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
+
                     <div className="action-btns">
                       <a href={`tel:${o.userPhone}`} className="btn-call"><i className="fas fa-phone" /></a>
                       <button className="active-btn" style={{ flex: 1 }} onClick={() => openPaymentModal(o)}>
@@ -954,7 +982,7 @@ export default function DeliveryPage() {
                       <div className="store-img">🏪</div>
                       <div className="store-info">
                         <h4>{seller?.storeName || seller?.name || "Store"}</h4>
-                        <p><i className="fas fa-map-marker-alt" /> {seller?.address?.substring(0, 30)}... ({distance > 0 ? `${distance.toFixed(1)} km away` : ""})</p>
+                        <p><i className="fas fa-map-marker-alt" /> {seller?.shopAddress?.substring(0, 30) || seller?.address?.substring(0, 30)}... ({distance > 0 ? `${distance.toFixed(1)} km away` : ""})</p>
                       </div>
                     </div>
                     <div className="job-details">
@@ -967,6 +995,43 @@ export default function DeliveryPage() {
                         <p>{o.items?.length || 1}</p>
                       </div>
                     </div>
+
+                    {/* ── Customer Delivery Address Panel ── */}
+                    <div style={{ background: "linear-gradient(135deg, #fff7ed, #fef2f2)", border: "1px solid #fde68a", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+                      <p style={{ fontSize: 10, fontWeight: 800, color: "#d97706", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8 }}>📍 Deliver To</p>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 7 }}>
+                          <i className="fas fa-user" style={{ fontSize: 11, color: "#d97706", marginTop: 2, flexShrink: 0 }} />
+                          <span style={{ fontSize: 13, fontWeight: 700, color: "#1e1b4b" }}>{o.userName || "—"}</span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 7 }}>
+                          <i className="fas fa-phone" style={{ fontSize: 11, color: "#10b981", marginTop: 2, flexShrink: 0 }} />
+                          <a href={`tel:${o.userPhone}`} style={{ fontSize: 13, fontWeight: 700, color: "#065f46", textDecoration: "none" }}>{o.userPhone || "—"}</a>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 7 }}>
+                          <i className="fas fa-map-marker-alt" style={{ fontSize: 11, color: "#ef4444", marginTop: 2, flexShrink: 0 }} />
+                          <span style={{ fontSize: 12, fontWeight: 600, color: "#374151", lineHeight: 1.5 }}>{o.userAddress || "No address provided"}</span>
+                        </div>
+                        {o.userCoordinates && seller?.coordinates ? (
+                          <a
+                            href={(() => { try { const [cLat, cLon] = o.userCoordinates.split(",").map(s => s.trim()); const [sLat, sLon] = seller.coordinates.split(",").map(s => s.trim()); return `https://www.google.com/maps/dir/${sLat},${sLon}/${cLat},${cLon}`; } catch { return "#"; } })()}
+                            target="_blank" rel="noopener noreferrer"
+                            style={{ display: "inline-flex", alignItems: "center", gap: 7, marginTop: 6, padding: "9px 14px", borderRadius: 10, background: "linear-gradient(135deg, #f97316, #ea580c)", color: "white", fontSize: 12, fontWeight: 700, textDecoration: "none", boxShadow: "0 3px 10px rgba(249,115,22,0.3)", width: "fit-content" }}
+                          >
+                            <i className="fas fa-route" style={{ fontSize: 13 }} /> Navigate to Customer
+                          </a>
+                        ) : o.userCoordinates ? (
+                          <a
+                            href={(() => { try { const [cLat, cLon] = o.userCoordinates.split(",").map(s => s.trim()); return `https://www.google.com/maps/search/?api=1&query=${cLat},${cLon}`; } catch { return "#"; } })()}
+                            target="_blank" rel="noopener noreferrer"
+                            style={{ display: "inline-flex", alignItems: "center", gap: 7, marginTop: 6, padding: "9px 14px", borderRadius: 10, background: "#10b981", color: "white", fontSize: 12, fontWeight: 700, textDecoration: "none", boxShadow: "0 3px 10px rgba(16,185,129,0.3)", width: "fit-content" }}
+                          >
+                            <i className="fas fa-map-pin" style={{ fontSize: 13 }} /> View on Map
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
+
                     <button className="accept-btn" onClick={() => acceptOrder(o.id)}>
                       Accept Order <span className="btn-timer">14s</span>
                     </button>

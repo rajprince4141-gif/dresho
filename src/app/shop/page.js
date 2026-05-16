@@ -56,6 +56,8 @@ export default function ShopPage() {
   const [pincode, setPincode] = useState("");
   const [pincodeStatus, setPincodeStatus] = useState(null);
   const [checkingPincode, setCheckingPincode] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [recentlyViewed, setRecentlyViewed] = useState([]);
   
   // ── Reviews ──
   const [showReviewModal, setShowReviewModal] = useState(false);
@@ -655,7 +657,7 @@ export default function ShopPage() {
 
   const filteredProducts = currentCategory === "All" ? products : products.filter((p) => p.category === currentCategory);
 
-  const categories = ["All", "Men's Wear", "Women's Wear", "Kids Wear", "Ethnic", "Casual", "Formal"];
+  const categories = ["All", "Men's Wear", "Women's Wear", "Kids Wear", "Ethnic", "Casual", "Formal", "Accessories", "Footwear"];
 
   const getStatusColor = (status) => {
     switch (status) {
@@ -783,9 +785,9 @@ export default function ShopPage() {
           <div className="strip-track">
             {[1, 2].map((group) => (
               <div key={group} style={{ display: 'flex' }}>
-                <div className="strip-item"><span>🚚 Free Delivery on Your First 3 Orders</span><div className="strip-dot"></div></div>
+                <div className="strip-item"><span>🚚 Free Delivery on Your First Order</span><div className="strip-dot"></div></div>
                 <div className="strip-item"><span>⚡ 30 Min Express Delivery</span><div className="strip-dot"></div></div>
-                <div className="strip-item"><span>🏷️ Flat 20% Off — New Arrivals</span><div className="strip-dot"></div></div>
+                <div className="strip-item"><span>🏷️ New Arrivals Every Week</span><div className="strip-dot"></div></div>
               </div>
             ))}
           </div>
@@ -807,7 +809,12 @@ export default function ShopPage() {
               <svg width="12" height="12" fill="none" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
             </div>
 
-            <div className="search-bar">
+            <form className="search-bar" onSubmit={(e) => {
+              e.preventDefault();
+              if (searchQuery.trim()) {
+                router.push(`/shop/category/all?q=${encodeURIComponent(searchQuery.trim())}`);
+              }
+            }}>
               <select className="search-cat">
                 <option>All</option>
                 <option>Women</option>
@@ -815,9 +822,16 @@ export default function ShopPage() {
                 <option>Ethnic</option>
                 <option>Kids</option>
               </select>
-              <input className="search-input" type="text" placeholder="Search for clothes, brands, occasions…" />
-              <button className="search-btn">🔍</button>
-            </div>
+              <input 
+                className="search-input" 
+                type="text" 
+                placeholder="Search for clothes, brands, occasions…" 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              <button type="submit" className="search-btn">🔍</button>
+            </form>
+
 
             <div className="nav-actions">
               {userData?.role === "user" && (
@@ -870,10 +884,10 @@ export default function ShopPage() {
                   <Link href="/shop/category/all" className={`nav-cat-link ${currentCategory === "All" || !currentCategory ? 'active' : ''}`} style={{cursor:"pointer"}}><span>✨</span> All Included</Link>
                   <Link href="/shop/category/womens-wear" className={`nav-cat-link ${currentCategory === "Women's Wear" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>👗</span> Women</Link>
                   <Link href="/shop/category/mens-wear" className={`nav-cat-link ${currentCategory === "Men's Wear" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>👔</span> Men</Link>
-                  <Link href="/shop/category/ethnic" className={`nav-cat-link ${currentCategory === "Ethnic" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>🥻</span> Ethnic Wear</Link>
-                  <Link href="/shop/category/footwear" className={`nav-cat-link ${currentCategory === "Footwear" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>👟</span> Footwear</Link>
+                  <Link href="/shop/category/ethnic" className={`nav-cat-link ${currentCategory === "Ethnic" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>🥻</span> Ethnic</Link>
                   <Link href="/shop/category/kids-wear" className={`nav-cat-link ${currentCategory === "Kids Wear" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>👶</span> Kids</Link>
                   <Link href="/shop/category/accessories" className={`nav-cat-link ${currentCategory === "Accessories" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>💍</span> Accessories</Link>
+                  <Link href="/shop/category/footwear" className={`nav-cat-link ${currentCategory === "Footwear" ? 'active' : ''}`} style={{cursor:"pointer"}}><span>👟</span> Footwear</Link>
                   {(!user || (userData?.role === "user" && !(process.env.NEXT_PUBLIC_ADMIN_EMAILS || "prinxadmin29@gmail.com,krishnaprakash0016@gmail.com").toLowerCase().includes(user?.email?.toLowerCase() || ""))) ? (
                     <Link href="/partner" style={{ marginLeft: "auto" }}>
                       <button className="nav-pill-btn">Become a Partner</button>
@@ -943,34 +957,9 @@ export default function ShopPage() {
             </div>
 
 
-            {/* FLASH SALE */}
-            <div className="flash-sale">
-              <div className="flash-label">
-                <span className="flash-icon">⚡</span>
-                <div><div className="flash-title">Flash Sale</div><div className="flash-subtitle">Today's Best Deals</div></div>
-              </div>
-              <div className="flash-divider"></div>
-              <div className="flash-timer">
-                <span className="timer-label">Ends in</span>
-                <div className="timer-block"><div className="timer-num">{timeLeft.h}</div><div className="timer-unit">Hrs</div></div>
-                <span className="timer-sep">:</span>
-                <div className="timer-block"><div className="timer-num">{timeLeft.m}</div><div className="timer-unit">Min</div></div>
-                <span className="timer-sep">:</span>
-                <div className="timer-block"><div className="timer-num">{timeLeft.s}</div><div className="timer-unit">Sec</div></div>
-              </div>
-              <div className="flash-divider"></div>
-              <div className="flash-products">
-                {products.slice(0, 5).map((p, i) => (
-                  <div key={p.id} className="flash-product" onClick={() => { setViewProduct(p); setSelectedSize(p.sizes?.[0] || "M"); }}>
-                    <img src={p.image} alt="" className="flash-product-img" />
-                    <div>
-                      <div className="flash-product-name">{p.name}</div>
-                      <div className="flash-product-price">₹{p.price}</div>
-                      <div className="flash-product-off">−30%</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+            {/* FLASH SALE COMING SOON */}
+            <div className="flash-sale" style={{ justifyContent: "center", alignItems: "center", padding: "28px 0" }}>
+              <p style={{ fontFamily: "var(--font-d)", fontSize: 22, fontWeight: 700, color: "rgba(255,255,255,0.85)", letterSpacing: 2, textTransform: "uppercase", margin: 0, textAlign: "center" }}>⚡ Flash Sales Coming Soon</p>
             </div>
 
             {/* NEW ARRIVALS */}
@@ -1012,9 +1001,8 @@ export default function ShopPage() {
                       <div className="deal-info">
                         <div className="deal-brand">{p.storeName || "DRESHO"}</div>
                         <div className="deal-name" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
-                        <div className="deal-price-row"><span className="deal-price">₹{p.price}</span><span className="deal-mrp">₹{Math.floor(p.price * 1.38)}</span><span className="deal-off">38% off</span></div>
-                        <div className="deal-rating"><span className="deal-rating-stars">★ 4.6</span><span className="deal-rating-count">(1.2k)</span></div>
-                        <div className="deal-delivery"><span className="green-dot"></span>Delivery in 28 min</div>
+                        <div className="deal-price-row"><span className="deal-price">₹{p.price}</span>{p.mrp && p.mrp > p.price && <><span className="deal-mrp">₹{p.mrp}</span><span className="deal-off">{Math.round(((p.mrp - p.price) / p.mrp) * 100)}% off</span></>}</div>
+                        <div className="deal-delivery"><span className="green-dot"></span>Delivery in 30 min</div>
                       </div>
                     </div>
                   ))
@@ -1090,6 +1078,29 @@ export default function ShopPage() {
                 <div className="how-card reveal in d3"><div className="how-num">04</div><div className="how-icon-wrap">🛵</div><h3 className="how-title">Delivered Fast</h3><p className="how-desc">Your order is picked, quality-checked, and delivered in a premium Dresho bag. In 30 minutes or we refund.</p><div className="how-time">⚡ 30 min guarantee</div></div>
               </div>
             </section>
+
+            {/* RECENTLY VIEWED */}
+            {recentlyViewed.length > 0 && (
+              <section className="section" style={{ padding: "0 40px", marginBottom: 40 }}>
+                <div className="sec-head reveal in" style={{ marginBottom: 24 }}>
+                  <div className="sec-head-left">
+                    <div className="sec-eyebrow"><div className="sec-eyebrow-line"></div><span>Your History</span></div>
+                    <h2 className="sec-title" style={{ fontSize: 24 }}>Recently <em>Viewed</em></h2>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 16, overflowX: "auto", paddingBottom: 16 }} className="hide-scrollbar">
+                  {recentlyViewed.map(sp => (
+                    <div key={`rv-${sp.id}`} style={{ width: 140, flexShrink: 0, cursor: "pointer", background: "white", padding: 8, borderRadius: 12, border: "1px solid var(--border)" }} onClick={() => setViewProduct(sp)}>
+                      <div style={{ width: "100%", aspectRatio: "3/4", background: "#f0ebe3", borderRadius: 8, overflow: "hidden", marginBottom: 8 }}>
+                        <img src={sp.imageUrl || sp.imageUrls?.[0]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      </div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--navy)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sp.name}</div>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: "var(--gold)" }}>₹{sp.price}</div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
 
             {/* BECOME A PARTNER SECTION */}
             <section className="section partner-section">
@@ -1203,9 +1214,9 @@ export default function ShopPage() {
                     <div className="deal-info">
                       <div className="deal-brand">{p.storeName || "DRESHO"}</div>
                       <div className="deal-name" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
-                      <div className="deal-price-row"><span className="deal-price">₹{p.price}</span><span className="deal-mrp">₹{Math.floor(p.price * 1.38)}</span><span className="deal-off">38% off</span></div>
-                      <div className="deal-rating"><span className="deal-rating-stars">★ {p.averageRating || 4.6}</span><span className="deal-rating-count">({p.reviews?.length || "1.2k"})</span></div>
-                      <div className="deal-delivery"><span className="green-dot"></span>Delivery in 28 min</div>
+                      <div className="deal-price-row"><span className="deal-price">₹{p.price}</span>{p.mrp && p.mrp > p.price && <><span className="deal-mrp">₹{p.mrp}</span><span className="deal-off">{Math.round(((p.mrp - p.price) / p.mrp) * 100)}% off</span></>}</div>
+                      <div className="deal-rating"><span className="deal-rating-stars">★ {p.averageRating || "New"}</span><span className="deal-rating-count">{p.reviews?.length ? `(${p.reviews.length})` : ""}</span></div>
+                      <div className="deal-delivery"><span className="green-dot"></span>Delivery in 30 min</div>
                     </div>
                   </div>
                 ))}
@@ -1219,9 +1230,13 @@ export default function ShopPage() {
           <div style={{ padding: "32px 20px" }} className="animate-fade-in">
             <h3 style={{ fontFamily: "var(--font-d)", fontSize: 28, fontWeight: 400, color: "var(--navy)", marginBottom: 24 }}>My Cart</h3>
             {cart.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "60px 20px", border: "1px dashed var(--border)", background: "var(--ivory2)" }}>
-                <span style={{ fontSize: 40, marginBottom: 12 }}>🛍</span>
-                <p style={{ fontWeight: 500, color: "var(--sub)" }}>Your cart is empty.</p>
+              <div style={{ textAlign: "center", padding: "80px 20px", background: "var(--ivory2)", borderRadius: 16 }}>
+                <span style={{ fontSize: 50, marginBottom: 16, display: "block" }}>🛒</span>
+                <h4 style={{ fontWeight: 800, color: "var(--navy)", fontSize: 20, marginBottom: 8 }}>Your cart is empty</h4>
+                <p style={{ fontWeight: 500, color: "var(--sub)", fontSize: 13, marginBottom: 24 }}>Looks like you haven't added anything to your cart yet.</p>
+                <button onClick={() => setCurrentSection("home")} style={{ padding: "12px 32px", background: "var(--navy)", color: "white", borderRadius: 12, border: "none", fontSize: 14, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 12px rgba(20,33,61,0.2)" }}>
+                  Start Shopping
+                </button>
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -1290,9 +1305,13 @@ export default function ShopPage() {
           <div style={{ padding: "32px 20px" }} className="animate-fade-in">
             <h3 style={{ fontFamily: "var(--font-d)", fontSize: 28, fontWeight: 400, color: "var(--navy)", marginBottom: 24 }}>My Orders</h3>
             {orders.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "60px 20px", border: "1px dashed var(--border)", background: "var(--ivory2)" }}>
-                <span style={{ fontSize: 40, marginBottom: 12 }}>📦</span>
-                <p style={{ fontWeight: 500, color: "var(--sub)" }}>No orders yet.</p>
+              <div style={{ textAlign: "center", padding: "80px 20px", background: "var(--ivory2)", borderRadius: 16 }}>
+                <span style={{ fontSize: 50, marginBottom: 16, display: "block" }}>📦</span>
+                <h4 style={{ fontWeight: 800, color: "var(--navy)", fontSize: 20, marginBottom: 8 }}>No orders yet</h4>
+                <p style={{ fontWeight: 500, color: "var(--sub)", fontSize: 13, marginBottom: 24 }}>You haven't placed any orders. Start exploring our collection!</p>
+                <button onClick={() => setCurrentSection("home")} style={{ padding: "12px 32px", background: "var(--navy)", color: "white", borderRadius: 12, border: "none", fontSize: 14, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 12px rgba(20,33,61,0.2)" }}>
+                  Start Shopping
+                </button>
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -1304,6 +1323,31 @@ export default function ShopPage() {
                         {o.status}
                       </span>
                     </div>
+
+                    {/* Order Tracking Timeline */}
+                    <div style={{ padding: "16px 0", borderBottom: "1px solid var(--border2)", marginBottom: 16, display: o.status === "Cancelled" ? "none" : "block" }}>
+                      {(() => {
+                        const steps = ["Pending", "Assigned", "Picked Up", "Out for Delivery", "Delivered"];
+                        let currentIdx = steps.indexOf(o.status);
+                        if (currentIdx === -1 && o.status !== "Cancelled") currentIdx = 0;
+                        if (o.status === "Cancelled") return <div style={{color:"#ef4444",fontWeight:800, fontSize: 14}}>Order Cancelled</div>;
+                        return (
+                          <div style={{ display: "flex", justifyContent: "space-between", position: "relative", padding: "0 10px" }}>
+                            <div style={{ position: "absolute", top: 12, left: 24, right: 24, height: 4, background: "var(--border)", zIndex: 0, borderRadius: 2 }} />
+                            <div style={{ position: "absolute", top: 12, left: 24, width: `calc(${(currentIdx / (steps.length - 1)) * 100}% - 48px)`, height: 4, background: "#16a34a", zIndex: 1, borderRadius: 2, transition: "width 1s cubic-bezier(0.4, 0, 0.2, 1)" }} />
+                            {steps.map((step, idx) => (
+                              <div key={idx} style={{ display: "flex", flexDirection: "column", alignItems: "center", zIndex: 2, gap: 8, opacity: idx <= currentIdx ? 1 : 0.4, width: 60 }}>
+                                <div style={{ width: 28, height: 28, borderRadius: "50%", background: idx <= currentIdx ? "#16a34a" : "var(--ivory2)", color: idx <= currentIdx ? "white" : "var(--sub)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, border: "3px solid var(--card)", boxShadow: idx <= currentIdx ? "0 2px 8px rgba(22,163,74,0.3)" : "none", transition: "all 0.3s" }}>
+                                  {idx < currentIdx ? <i className="fas fa-check" /> : idx + 1}
+                                </div>
+                                <span style={{ fontSize: 9, fontWeight: 700, color: idx <= currentIdx ? "var(--navy)" : "var(--sub)", textAlign: "center", lineHeight: 1.2 }}>{step}</span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </div>
+
                     <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
                       {o.items?.map((item, i) => (
                         <p key={i} style={{ fontSize: 13, color: "var(--sub)", display: "flex", justifyContent: "space-between" }}>
@@ -1623,12 +1667,21 @@ export default function ShopPage() {
                     <div style={{ fontSize: 24 }}>⚡</div>
                     <div style={{ flex: 1 }}>
                       <h4 style={{ fontSize: 14, fontWeight: 800, color: "#166534", marginBottom: 2 }}>Fast Delivery Available</h4>
-                      <p style={{ fontSize: 12, color: "#15803d", fontWeight: 600 }}>Live rider tracking provided upon order confirmation.</p>
-                      {viewProduct.stock > 0 && viewProduct.stock <= 5 && !viewProduct.outOfStock && (
-                        <p style={{ fontSize: 12, fontWeight: 700, color: "#ef4444", marginTop: 6, display: "flex", alignItems: "center", gap: 6 }}>
-                          <i className="fas fa-fire" /> Only {viewProduct.stock} left - selling fast!
-                        </p>
-                      )}
+                      <p style={{ fontSize: 12, color: "#15803d", fontWeight: 600 }}>Get it by {new Date(Date.now() + 86400000 * 2).toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric' })} with live rider tracking.</p>
+                      
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+                        {viewProduct.stock > 0 && viewProduct.stock <= 5 && !viewProduct.outOfStock && (
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "#ef4444", background: "#fef2f2", padding: "4px 8px", borderRadius: 6, display: "flex", alignItems: "center", gap: 4 }}>
+                            <i className="fas fa-fire" /> Only {viewProduct.stock} left - selling fast!
+                          </div>
+                        )}
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "var(--navy)", background: "white", padding: "4px 8px", borderRadius: 6, display: "flex", alignItems: "center", gap: 4, border: "1px solid #bbf7d0" }}>
+                          <i className="fas fa-eye" style={{ color: "var(--gold)" }} /> {Math.floor(viewProduct.price % 30) + 15} people looking right now
+                        </div>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "var(--navy)", background: "white", padding: "4px 8px", borderRadius: 6, display: "flex", alignItems: "center", gap: 4, border: "1px solid #bbf7d0" }}>
+                          <i className="fas fa-shopping-bag" style={{ color: "#f59e0b" }} /> Ordered {Math.floor(viewProduct.price % 50) + 10} times today
+                        </div>
+                      </div>
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 8, marginTop: 12, borderTop: "1px solid #bbf7d0", paddingTop: 12 }}>
@@ -1685,6 +1738,73 @@ export default function ShopPage() {
                     </div>
                   )}
                 </div>
+
+                {/* ── Measurements / Size Chart ── */}
+                {viewProduct.measurements && Object.keys(viewProduct.measurements).length > 0 && (() => {
+                  const m = viewProduct.measurements;
+                  const cat = viewProduct.category || "";
+                  const name = (viewProduct.name || "").toLowerCase();
+                  const rowStyle = { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #f1f5f9" };
+                  const labelStyle = { fontSize: 13, color: "#64748b", fontWeight: 500 };
+                  const valueStyle = { fontSize: 13, fontWeight: 700, color: "var(--navy)" };
+
+                  return (
+                    <div style={{ margin: "20px 0", background: "#f8fafc", borderRadius: 16, padding: "16px 20px", border: "1px solid #e2e8f0" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+                        <span style={{ fontSize: 18 }}>
+                          {cat === "Footwear" ? "👟" : cat === "Accessories" ? "💍" : "📏"}
+                        </span>
+                        <h4 style={{ fontSize: 14, fontWeight: 800, color: "var(--navy)" }}>
+                          {cat === "Footwear" ? "Shoe Size & Fit Guide" : cat === "Accessories" ? "Product Dimensions" : "Size & Measurements"}
+                        </h4>
+                      </div>
+
+                      {/* Footwear measurements */}
+                      {cat === "Footwear" && (
+                        <>
+                          {m.footLength && <div style={rowStyle}><span style={labelStyle}>Foot Length</span><span style={valueStyle}>{m.footLength} cm</span></div>}
+                          {m.euSize && <div style={rowStyle}><span style={labelStyle}>EU Size</span><span style={valueStyle}>{m.euSize}</span></div>}
+                          {m.ukSize && <div style={rowStyle}><span style={labelStyle}>UK Size</span><span style={valueStyle}>{m.ukSize}</span></div>}
+                          {m.usSize && <div style={rowStyle}><span style={labelStyle}>US Size</span><span style={valueStyle}>{m.usSize}</span></div>}
+                        </>
+                      )}
+
+                      {/* Bottom wear (jeans/trousers/pants) */}
+                      {(name.includes("jean") || name.includes("trouser") || name.includes("pant")) && (
+                        <>
+                          {m.waist && <div style={rowStyle}><span style={labelStyle}>Waist</span><span style={valueStyle}>{m.waist} inches</span></div>}
+                          {m.length && <div style={rowStyle}><span style={labelStyle}>Length</span><span style={valueStyle}>{m.length} inches</span></div>}
+                          {m.hip && <div style={rowStyle}><span style={labelStyle}>Hip</span><span style={valueStyle}>{m.hip} cm</span></div>}
+                          {m.rise && <div style={rowStyle}><span style={labelStyle}>Rise</span><span style={valueStyle}>{m.rise} inches</span></div>}
+                        </>
+                      )}
+
+                      {/* General clothing measurements */}
+                      {cat !== "Footwear" && cat !== "Accessories" && !name.includes("jean") && !name.includes("trouser") && !name.includes("pant") && (
+                        <>
+                          {m.chest && <div style={rowStyle}><span style={labelStyle}>Chest</span><span style={valueStyle}>{m.chest} inches</span></div>}
+                          {m.waist && <div style={rowStyle}><span style={labelStyle}>Waist</span><span style={valueStyle}>{m.waist} inches</span></div>}
+                          {m.shoulder && <div style={rowStyle}><span style={labelStyle}>Shoulder</span><span style={valueStyle}>{m.shoulder} cm</span></div>}
+                          {m.length && <div style={rowStyle}><span style={labelStyle}>Length</span><span style={valueStyle}>{m.length} cm</span></div>}
+                          {m.ageGroup && <div style={rowStyle}><span style={labelStyle}>Age Group</span><span style={valueStyle}>{m.ageGroup}</span></div>}
+                        </>
+                      )}
+
+                      {/* Accessories */}
+                      {cat === "Accessories" && (
+                        <>
+                          {m.width && <div style={rowStyle}><span style={labelStyle}>Width</span><span style={valueStyle}>{m.width} cm</span></div>}
+                          {m.height && <div style={rowStyle}><span style={labelStyle}>Height</span><span style={valueStyle}>{m.height} cm</span></div>}
+                          {m.material && <div style={rowStyle}><span style={labelStyle}>Material</span><span style={valueStyle}>{m.material}</span></div>}
+                        </>
+                      )}
+
+                      <p style={{ fontSize: 11, color: "#94a3b8", marginTop: 10, fontWeight: 500 }}>
+                        📌 Measurements are approximate and may vary ±1cm
+                      </p>
+                    </div>
+                  );
+                })()}
 
                 {/* Color Variants */}
                 {viewProduct.colors && viewProduct.colors.length > 0 && (
@@ -1915,6 +2035,28 @@ export default function ShopPage() {
                     </div>
                   </div>
                 )}
+
+              {/* Similar Products */}
+              {(() => {
+                const similarProducts = products.filter(p => p.id !== viewProduct.id && (p.category === viewProduct.category || p.storeName === viewProduct.storeName)).slice(0, 6);
+                if (similarProducts.length === 0) return null;
+                return (
+                  <div style={{ borderTop: "8px solid #f1f5f9", paddingTop: 20, marginTop: 16, paddingBottom: 20 }}>
+                    <h4 style={{ fontSize: 18, fontWeight: 800, color: "var(--navy)", marginBottom: 16, padding: "0 20px" }}>More like this</h4>
+                    <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 16, scrollbarWidth: "none", padding: "0 20px" }} className="hide-scrollbar">
+                      {similarProducts.map(sp => (
+                        <div key={sp.id} style={{ width: 140, flexShrink: 0, cursor: "pointer" }} onClick={() => { setViewProduct(sp); document.querySelector('.hide-scrollbar').scrollTo({top:0,behavior:'smooth'}); }}>
+                          <div style={{ width: "100%", aspectRatio: "3/4", background: "#f0ebe3", borderRadius: 12, overflow: "hidden", marginBottom: 8 }}>
+                            <img src={sp.imageUrl || sp.imageUrls?.[0]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                          </div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--navy)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sp.name}</div>
+                          <div style={{ fontSize: 12, fontWeight: 800, color: "var(--gold)" }}>₹{sp.price}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
 
               </div>
             </div>

@@ -3,13 +3,30 @@ export const dynamic = 'force-dynamic';
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
-import { auth, db } from "@/lib/firebase";
+import { auth, db, IMGBB_API_KEY } from "@/lib/firebase";
 import {
   signInWithEmailAndPassword, onAuthStateChanged, signOut,
 } from "firebase/auth";
 import {
   doc, getDoc, setDoc, collection, onSnapshot, updateDoc, deleteDoc,
 } from "firebase/firestore";
+
+// ── Revenue Formula Helpers ──────────────────────────────────────────────
+const calcCommission = (orderTotal) => {
+  if (orderTotal < 500) return Math.round(orderTotal * 0.10);
+  if (orderTotal <= 1500) return Math.round(orderTotal * 0.12);
+  return Math.round(orderTotal * 0.15);
+};
+const calcDeliveryFee = (distKm) => {
+  if (!distKm || distKm <= 3) return 29;
+  if (distKm <= 6) return 39;
+  return 49;
+};
+const calcRiderPayout = (distKm) => {
+  if (!distKm || distKm <= 3) return 22;
+  if (distKm <= 6) return 32;
+  return 40;
+};
 
 export default function AdminPage() {
   const [authenticated, setAuthenticated] = useState(false);
@@ -18,6 +35,7 @@ export default function AdminPage() {
 
   const [tab, setTab] = useState("dash");
   const [stats, setStats] = useState({ revenue: 0, active: 0, sellers: 0, fleet: 0, delivered: 0, pending: 0, shipped: 0 });
+  const [revenueStats, setRevenueStats] = useState({ totalCommission: 0, totalDeliveryFees: 0, totalRiderPayouts: 0, netProfit: 0, pendingSettlements: 0, sellerBreakdown: [] });
   const [sellers, setSellers] = useState([]);
   const [orders, setOrders] = useState([]);
   const [users, setUsers] = useState([]);
@@ -26,12 +44,16 @@ export default function AdminPage() {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [selectedSeller, setSelectedSeller] = useState(null);
   const [selectedRider, setSelectedRider] = useState(null);
+  const [showMessages, setShowMessages] = useState(false);
+  const [selectedMessage, setSelectedMessage] = useState(null);
 
   // Banner Management State
   const [banners, setBanners] = useState({});
   const [bannerRequests, setBannerRequests] = useState([]);
   const [editingBanner, setEditingBanner] = useState(null);
   const [bannerForm, setBannerForm] = useState({ imageUrl: "", title: "", subtitle: "", tag: "", cta: "", expiry: "" });
+  const [bannerUploading, setBannerUploading] = useState(false);
+  const [bannerUploadErr, setBannerUploadErr] = useState("");
 
   useEffect(() => {
     const AUTHORIZED = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "")
@@ -71,19 +93,39 @@ export default function AdminPage() {
     if (!authenticated) return;
     const unsubs = [];
 
-    // Orders
+    // Orders + Revenue Calculation
     unsubs.push(onSnapshot(collection(db, "orders"), (snap) => {
       let revenue = 0, active = 0, delivered = 0, pending = 0, shipped = 0;
+      let totalCommission = 0, totalDeliveryFees = 0, totalRiderPayouts = 0, pendingSettlements = 0;
+      const sellerMap = {};
       const o = [];
       snap.forEach((d) => {
         const order = { id: d.id, ...d.data() }; o.push(order);
-        if (order.status === "Delivered") { revenue += order.total; delivered++; }
-        else active++;
-        if (order.status === "Pending") pending++;
-        if (order.status === "Shipped") shipped++;
+        if (order.status === "Delivered") {
+          revenue += order.total; delivered++;
+          const commission = calcCommission(order.total);
+          const deliveryFee = calcDeliveryFee(order.distanceKm);
+          const riderPayout = calcRiderPayout(order.distanceKm);
+          totalCommission += commission;
+          totalDeliveryFees += deliveryFee;
+          totalRiderPayouts += riderPayout;
+          // Per-seller aggregation
+          const sid = order.sellerId || "unknown";
+          if (!sellerMap[sid]) sellerMap[sid] = { sellerId: sid, sellerName: order.sellerName || "Unknown Seller", orderCount: 0, gmv: 0, commission: 0, sellerEarnings: 0 };
+          sellerMap[sid].orderCount++;
+          sellerMap[sid].gmv += order.total;
+          sellerMap[sid].commission += commission;
+          sellerMap[sid].sellerEarnings += (order.total - commission);
+        } else {
+          active++;
+          if (order.status === "Pending") { pending++; pendingSettlements += order.total; }
+          if (order.status === "Shipped") shipped++;
+        }
       });
+      const sellerBreakdown = Object.values(sellerMap).sort((a, b) => b.commission - a.commission);
       setOrders(o);
       setStats((prev) => ({ ...prev, revenue, active, delivered, pending, shipped }));
+      setRevenueStats({ totalCommission, totalDeliveryFees, totalRiderPayouts, netProfit: totalCommission + totalDeliveryFees - totalRiderPayouts, pendingSettlements, sellerBreakdown });
     }));
 
     // Sellers
@@ -255,6 +297,7 @@ export default function AdminPage() {
 
   const sidebarItems = [
     { id: "dash", icon: "fa-chart-pie", label: "Dashboard" },
+    { id: "revenue", icon: "fa-indian-rupee-sign", label: "Revenue" },
     { id: "sellers", icon: "fa-store", label: "Sellers" },
     { id: "orders", icon: "fa-truck-fast", label: "Live Orders" },
     { id: "users", icon: "fa-users-gear", label: "Users" },
@@ -266,140 +309,416 @@ export default function AdminPage() {
   // AUTH SCREEN
   if (!authenticated) {
     return (
-      <>
-        <div className=""><div className="" /></div>
-        <div className="page-content " style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 20, position: "relative", zIndex: 1 }}>
-          <Link href="/" style={{ position: "fixed", top: 20, left: 20, zIndex: 100, width: 42, height: 42, borderRadius: 12, background: "rgba(255,255,255,0.85)", border: "1px solid rgba(0,0,0,0.08)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "var(--gold)", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", transition: "all 0.3s ease" }}>
-            <i className="fas fa-house" style={{ fontSize: 16 }} />
-          </Link>
-          <div className="animate-scale-in premium-card" style={s.authCard}>
-            <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-              <div style={{ ...s.authLogo, background: "var(--ivory2)", border: "1px solid var(--border2)" }}>
-                <i className="fas fa-shield-halved" style={{ fontSize: 28, color: "var(--navy)" }} />
-              </div>
-              <h1 style={{ fontSize: 28, fontWeight: 900, letterSpacing: 2 }}>Dresho</h1>
-              <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Admin Control Center</p>
+      <div className="adm-auth-wrap">
+        <div className="adm-auth-card">
+          <div style={{ textAlign:"center" }}>
+            <div style={{ width:52, height:52, borderRadius:14, background:"linear-gradient(140deg,var(--adm-gold-hi),#8C620A)", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 14px", boxShadow:"0 4px 16px rgba(196,154,60,0.35)" }}>
+              <i className="fas fa-shield-halved" style={{ fontSize:22, color:"#fff" }} />
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <input className="glass-input" type="email" placeholder="Admin Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-              <input className="glass-input" type="password" placeholder="Password" value={pass} onChange={(e) => setPass(e.target.value)} />
-              <button className="btn-slide-primary" onClick={async () => { try { await signInWithEmailAndPassword(auth, email, pass); } catch (err) { alert("Login failed: " + (err.code || err.message)); } }}>
-                Verify Identity
-              </button>
-            </div>
+            <div style={{ fontFamily:"var(--font-d)", fontSize:30, fontWeight:700, color:"var(--adm-t1)" }}>Dresho</div>
+            <div style={{ fontSize:12, color:"var(--adm-t4)", marginTop:4, letterSpacing:"0.12em", textTransform:"uppercase" }}>Admin Console</div>
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:13 }}>
+            <input className="glass-input" type="email" placeholder="Admin email" value={email} onChange={e=>setEmail(e.target.value)} />
+            <input className="glass-input" type="password" placeholder="Password" value={pass} onChange={e=>setPass(e.target.value)} />
+            <button className="btn-slide-primary" onClick={async()=>{try{await signInWithEmailAndPassword(auth,email,pass);}catch(err){alert("Login failed: "+(err.code||err.message));}}}>
+              Verify Identity
+            </button>
           </div>
         </div>
-      </>
+      </div>
     );
   }
+
+  const navSections = [
+    { label:"Main", items:[
+      { id:"dash",    icon:"fa-chart-line",       label:"Dashboard" },
+      { id:"revenue", icon:"fa-indian-rupee-sign", label:"Revenue" },
+    ]},
+    { label:"Operations", items:[
+      { id:"sellers", icon:"fa-store",    label:"Sellers",       badge: sellers.filter(s=>!s.approved).length||null },
+      { id:"orders",  icon:"fa-bolt",     label:"Live Orders",   badge: stats.active||null },
+      { id:"users",   icon:"fa-users",    label:"Users" },
+      { id:"fleet",   icon:"fa-motorcycle", label:"Delivery Fleet", badge: deliveryAgents.filter(d=>!d.approved).length||null },
+    ]},
+    { label:"Content", items:[
+      { id:"reviews", icon:"fa-star",  label:"Ratings & Reviews" },
+      { id:"banners", icon:"fa-image", label:"Banners" },
+    ]},
+  ];
+
+  const curLabel = navSections.flatMap(s=>s.items).find(i=>i.id===tab)?.label || "Dashboard";
 
   // MAIN ADMIN PANEL
   return (
     <>
-      <div className=""><div className="" /></div>
-      <div className="page-content " style={{ display: "flex", minHeight: "100vh", position: "relative", zIndex: 1 }}>
-        {/* MOBILE OVERLAY */}
-        {isMobileSidebarOpen && (
-          <div className="admin-overlay" onClick={() => setIsMobileSidebarOpen(false)}></div>
-        )}
+      <div className="adm-app">
+        {/* Overlay */}
+        {isMobileSidebarOpen && <div className="adm-overlay" onClick={()=>setIsMobileSidebarOpen(false)} />}
 
-        {/* SIDEBAR */}
-        <nav style={s.sidebar} className={`premium-sidebar admin-sidebar ${isMobileSidebarOpen ? "open" : ""}`}>
-          <div style={{ padding: "24px 16px 32px", textAlign: "center" }}>
-            <Link href="/" style={{ textDecoration: "none" }}>
-              <h2 style={{ fontSize: 20, fontWeight: 900, color: "var(--gold)", letterSpacing: 3, cursor: "pointer" }}>Dresho</h2>
-            </Link>
-            <p className="section-label" style={{ marginTop: 4, marginBottom: 0 }}>ADMIN</p>
+        {/* ── SIDEBAR ── */}
+        <aside className={`adm-sb${isMobileSidebarOpen?" open":""}`}>
+          <div className="adm-sb-brand">
+            <div className="adm-sb-mark">D</div>
+            <div>
+              <div className="adm-sb-name">Dresho</div>
+              <div className="adm-sb-role">Admin Console</div>
+            </div>
           </div>
-          <Link href="/" style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", margin: "0 8px 6px", borderRadius: 14, background: "transparent", textDecoration: "none", color: "var(--text-secondary)", fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 600, transition: "all 0.3s ease" }}>
-            <i className="fas fa-house" style={{ fontSize: 16, width: 24, textAlign: "center" }} />
-            <span style={{ fontSize: 14, fontWeight: 600 }}>Homepage</span>
-          </Link>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6, padding: "0 8px" }}>
-            {sidebarItems.map((item) => (
-              <button key={item.id} onClick={() => { setTab(item.id); setIsMobileSidebarOpen(false); }} style={{
-                ...s.sidebarBtn,
-                ...(tab === item.id ? s.sidebarBtnActive : {}),
-              }}>
-                <i className={`fas ${item.icon}`} style={{ fontSize: 16, width: 24, textAlign: "center" }} />
-                <span style={s.sidebarLabel}>{item.label}</span>
-              </button>
+
+          <nav className="adm-nav">
+            {navSections.map(sec=>(
+              <div key={sec.label}>
+                <div className="adm-nav-sec">{sec.label}</div>
+                {sec.items.map(item=>(
+                  <button key={item.id} className={`adm-nav-item${tab===item.id?" active":""}`}
+                    onClick={()=>{setTab(item.id);setIsMobileSidebarOpen(false);}}>
+                    <span className="adm-nav-ico"><i className={`fas ${item.icon}`}/></span>
+                    {item.label}
+                    {item.badge ? <span className="adm-nav-badge">{item.badge}</span> : null}
+                  </button>
+                ))}
+              </div>
             ))}
-          </div>
-          <div style={{ padding: "16px 8px" }}>
-            <button onClick={() => signOut(auth)} style={{ ...s.sidebarBtn, color: "var(--aurora-rose)" }}>
-              <i className="fas fa-right-from-bracket" style={{ fontSize: 16, width: 24, textAlign: "center" }} />
-              <span style={s.sidebarLabel}>Exit</span>
-            </button>
-          </div>
-        </nav>
+          </nav>
 
-        {/* MAIN CONTENT */}
-        <main className="admin-main" style={{ flex: 1, marginLeft: 240, padding: "32px 40px", overflowX: "hidden" }}>
-
-          <div className="admin-mobile-header">
-            <button className="admin-menu-btn-new" onClick={() => setIsMobileSidebarOpen(true)}>
-              <div />
-              <div />
-            </button>
+          <div className="adm-sys">
+            <div className="adm-sys-dot"/>
+            <div className="adm-sys-lbl">All systems operational</div>
+            <div className="adm-sys-live">LIVE</div>
           </div>
+
+        </aside>
+
+        {/* ── MAIN ── */}
+        <div className="adm-main">
+          {/* Desktop topbar */}
+          <header className="adm-topbar">
+            <div className="adm-crumb">
+              Dresho <span className="adm-crumb-sep"><i className="fas fa-chevron-right"/></span>
+              <span className="adm-crumb-cur">{curLabel}</span>
+            </div>
+            <div className="adm-tb-spacer"/>
+            <div className="adm-tb-date">{new Date().toLocaleDateString("en-IN",{weekday:"short",day:"numeric",month:"short",year:"numeric"})}</div>
+            <div className="adm-tb-divider"/>
+            <div style={{ position: "relative" }}>
+              <div className="adm-tb-action" onClick={() => setShowMessages(!showMessages)}>
+                <i className="far fa-envelope" />
+                {feedbacks.length > 0 && <div className="adm-tb-notif">{feedbacks.length}</div>}
+              </div>
+              
+              {/* Messages Dropdown */}
+              {showMessages && (
+                <>
+                  <div style={{ position: "fixed", inset: 0, zIndex: 90 }} onClick={() => setShowMessages(false)} />
+                  <div style={{
+                    position: "absolute", top: "calc(100% + 10px)", right: 0, width: 340,
+                    background: "var(--white, #fff)", borderRadius: 16, boxShadow: "0 10px 40px rgba(0,0,0,0.12)",
+                    border: "1px solid var(--adm-line)", zIndex: 100, overflow: "hidden", display: "flex", flexDirection: "column", maxHeight: 400
+                  }}>
+                    <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--adm-line)", background: "var(--adm-parch)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: "var(--adm-t1)" }}>Inbox Messages</span>
+                      <span style={{ fontSize: 11, background: "rgba(10,140,134,0.1)", color: "var(--adm-jade)", padding: "2px 8px", borderRadius: 10, fontWeight: 700 }}>{feedbacks.length} New</span>
+                    </div>
+                    <div style={{ overflowY: "auto", flex: 1, padding: 0 }}>
+                      {feedbacks.length === 0 ? (
+                        <div style={{ padding: 40, textAlign: "center", color: "var(--adm-t4)", fontSize: 13 }}>No new messages</div>
+                      ) : (
+                        feedbacks.sort((a, b) => b.createdAt?.toMillis?.() - a.createdAt?.toMillis?.()).map(fb => (
+                          <div key={fb.id} 
+                            style={{ padding: "16px 20px", borderBottom: "1px solid var(--adm-line)", cursor: "pointer", transition: "background 0.2s" }} 
+                            onMouseEnter={e => e.currentTarget.style.background = "var(--adm-line)"}
+                            onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                            onClick={() => { setSelectedMessage(fb); setShowMessages(false); }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+                              <span style={{ fontSize: 13, fontWeight: 700, color: "var(--adm-t2)" }}>{fb.userName || fb.name || "Customer"}</span>
+                              <span style={{ fontSize: 10, color: "var(--adm-t4)", whiteSpace: "nowrap" }}>
+                                {fb.createdAt?.toDate ? fb.createdAt.toDate().toLocaleDateString() : "New"}
+                              </span>
+                            </div>
+                            {fb.email && <div style={{ fontSize: 11, color: "var(--adm-saph)", marginBottom: 6 }}>{fb.email}</div>}
+                            <div style={{ fontSize: 13, color: "var(--adm-t3)", lineHeight: 1.5, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                              {fb.text || fb.message}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </header>
+
+          {/* MESSAGE DETAILS MODAL */}
+          {selectedMessage && (
+            <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setSelectedMessage(null)}>
+              <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--adm-parch)", borderRadius: 24, padding: 32, maxWidth: 500, width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.2)", position: "relative" }}>
+                <button onClick={() => setSelectedMessage(null)} style={{ position: "absolute", top: 20, right: 20, background: "none", border: "none", fontSize: 20, color: "var(--adm-t4)", cursor: "pointer" }}><i className="fas fa-xmark"/></button>
+                
+                <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 24 }}>
+                  <div style={{ width: 48, height: 48, borderRadius: "50%", background: "linear-gradient(140deg, var(--adm-saph), #1e40af)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 20, fontWeight: 700 }}>
+                    {(selectedMessage.userName || selectedMessage.name || "C").charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <h3 style={{ fontSize: 18, fontWeight: 800, color: "var(--adm-t1)", margin: 0 }}>{selectedMessage.userName || selectedMessage.name || "Customer"}</h3>
+                    <div style={{ fontSize: 12, color: "var(--adm-t4)", marginTop: 2 }}>
+                      {selectedMessage.createdAt?.toDate ? selectedMessage.createdAt.toDate().toLocaleString("en-IN") : "Just now"}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ background: "var(--white)", borderRadius: 16, padding: 24, border: "1px solid var(--adm-line)" }}>
+                  {selectedMessage.rating && (
+                    <div style={{ marginBottom: 12, display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(245,158,11,0.1)", color: "#f59e0b", padding: "4px 10px", borderRadius: 20, fontSize: 13, fontWeight: 700 }}>
+                      <i className="fas fa-star" /> {selectedMessage.rating} / 5 Rating
+                    </div>
+                  )}
+                  {selectedMessage.email && (
+                    <div style={{ fontSize: 13, color: "var(--adm-saph)", marginBottom: 16, fontWeight: 500 }}>
+                      <i className="fas fa-envelope" style={{ marginRight: 6 }}/> {selectedMessage.email}
+                    </div>
+                  )}
+                  <div style={{ fontSize: 15, color: "var(--adm-t2)", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+                    {selectedMessage.text || selectedMessage.message || "No message content."}
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 24, display: "flex", justifyContent: "flex-end" }}>
+                  <button onClick={() => setSelectedMessage(null)} className="btn-slide-primary" style={{ padding: "12px 24px", borderRadius: 12, fontSize: 13 }}>
+                    Close Message
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Mobile header */}
+          <header className="adm-mob-hd">
+            <div className="adm-ham" onClick={()=>setIsMobileSidebarOpen(true)}>
+              <div/><div/>
+            </div>
+            <span style={{fontFamily:"var(--font-d)",fontSize:20,color:"var(--adm-t1)",fontStyle:"italic"}}>Dresho</span>
+          </header>
+
+          {/* Page content */}
+          <div className="adm-page">
+            <div className="adm-page-inner">
+
+            {(() => {
+              const liveActivities = [
+                ...orders.map(o => ({ type: 'order', title: 'New Order', sub: `₹${o.total.toLocaleString("en-IN")} · ${o.status}`, time: o.createdAt?.toMillis?.() || 0, id: o.id })),
+                ...users.map(u => ({ type: 'user', title: 'New User Registered', sub: u.name || 'Customer', time: u.createdAt?.toMillis?.() || 0, id: u.id })),
+                ...feedbacks.map(f => ({ type: 'support', title: 'Support Ticket', sub: f.userName || f.email || 'Customer', time: f.createdAt?.toMillis?.() || 0, id: f.id }))
+              ].sort((a, b) => b.time - a.time).slice(0, 6);
+
+              return (
+                <>
 
           {/* DASHBOARD */}
           {tab === "dash" && (
-
             <div className="animate-fade-in">
-              <div style={{ marginBottom: 24 }}>
-                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Platform<br />Overview</h1>
-                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Real-time stats across all operations</p>
+              <div className="adm-ph">
+                <div>
+                  <div className="adm-eyebrow">Platform Overview</div>
+                  <div className="adm-title">Good {new Date().getHours()<12?"morning":new Date().getHours()<17?"afternoon":"evening"}, Admin</div>
+                  <div className="adm-sub">Real-time metrics across all Dresho operations</div>
+                </div>
+                <div className="adm-updated">Updated just now</div>
               </div>
 
-              <div className="admin-mobile-status-pill">
-                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700, color: "var(--navy)" }}>
-                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#10b981", display: "inline-block" }} />
-                  System Online
-                </div>
-                <div style={{ background: "#ccfbf1", color: "#10b981", fontSize: 10, fontWeight: 800, padding: "4px 10px", borderRadius: 12, letterSpacing: 1 }}>
-                  LIVE
-                </div>
-              </div>
+              <div className="adm-sec-lbl"><span className="adm-sec-lbl-t">Key Metrics</span><div className="adm-sec-lbl-l"/></div>
 
-              <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 20, marginBottom: 32 }}>
+              <div className="adm-stats">
                 {[
-                  { label: "TOTAL REVENUE", value: `₹${stats.revenue.toLocaleString("en-IN")}`, color: "#14b8a6", bg: "#ccfbf1", icon: "fa-indian-rupee-sign", sub: "Updated just now" },
-                  { label: "ACTIVE ORDERS", value: stats.active, color: "#f59e0b", bg: "#fef3c7", icon: "fa-clock", sub: "In progress" },
-                  { label: "SELLERS", value: stats.sellers, color: "#3b82f6", bg: "#dbeafe", icon: "fa-store", sub: "Registered" },
-                  { label: "DELIVERY FLEET", value: stats.fleet, color: "#8b5cf6", bg: "#ede9fe", icon: "fa-motorcycle", sub: "Riders available" },
-                ].map((card, i) => (
-                  <div key={i} className="admin-mobile-card">
-                    <div className="admin-mobile-card-icon" style={{ background: card.bg }}>
-                      <i className={`fas ${card.icon}`} style={{ color: card.color, fontSize: 16 }} />
+                  { cls:"sc-jade", ico:"si-jade", sn:"sn-jade", icon:"fa-indian-rupee-sign", label:"Total Sales (GMV)", value:`₹${stats.revenue.toLocaleString("en-IN")}`, sub:"Across all sellers · Today", click:()=>setTab("revenue") },
+                  { cls:"sc-saff", ico:"si-saff", sn:"sn-saff", icon:"fa-box-open",         label:"Active Orders", value:stats.active,  sub:"In progress right now" },
+                  { cls:"sc-plum", ico:"si-plum", sn:"sn-plum", icon:"fa-store",             label:"Registered Sellers", value:stats.sellers, sub:"Active seller accounts" },
+                  { cls:"sc-saph", ico:"si-saph", sn:"sn-saph", icon:"fa-motorcycle",        label:"Delivery Fleet", value:stats.fleet, sub:"Riders available now" },
+                ].map((c,i)=>(
+                  <div key={i} className={`adm-sc ${c.cls}`} style={{cursor:c.click?"pointer":"default"}} onClick={c.click}>
+                    <div className="adm-sc-glow"/>
+                    <div className="adm-sc-top">
+                      <div className={`adm-sc-ico ${c.ico}`}><i className={`fas ${c.icon}`}/></div>
                     </div>
-                    <p style={{ fontSize: 11, fontWeight: 800, color: "#8a93a4", letterSpacing: 1, marginBottom: 4 }}>{card.label}</p>
-                    <h3 style={{ fontSize: 32, fontWeight: 900, color: card.color, marginBottom: 4 }}>{card.value}</h3>
-                    <p style={{ fontSize: 11, color: "#cbd5e1", fontWeight: 500 }}>{card.sub}</p>
+                    <div className="adm-sc-lbl">{c.label}</div>
+                    <div className={`adm-sc-num ${c.sn}`}>{c.value}</div>
+                    <div className="adm-sc-sub">{c.sub}</div>
                   </div>
                 ))}
               </div>
 
-              {/* Order breakdown cards */}
-              <p style={{ fontSize: 11, fontWeight: 800, color: "#8a93a4", letterSpacing: 1, marginBottom: 12, textTransform: "uppercase" }}>Order Status</p>
-              <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+              {/* Revenue + Orders panels */}
+              <div className="adm-sec-lbl" style={{marginTop:8}}><span className="adm-sec-lbl-t">Revenue & Orders</span><div className="adm-sec-lbl-l"/></div>
+
+              <div className="adm-row2">
+                {/* Revenue panel */}
+                <div className="adm-panel">
+                  <div className="adm-panel-hd">
+                    <div><div className="adm-panel-title">Revenue Overview</div><div className="adm-panel-sub">Commission breakdown</div></div>
+                    <button className="adm-view-all" onClick={()=>setTab("revenue")}>View all <i className="fas fa-arrow-right" style={{fontSize:9}}/></button>
+                  </div>
+                  <div className="adm-panel-body" style={{padding:0}}>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",borderBottom:"1px solid var(--adm-line)"}}>
+                      {[
+                        {l:"Commission",v:`₹${revenueStats.totalCommission.toLocaleString("en-IN")}`,c:"var(--adm-jade)"},
+                        {l:"Delivery Fees",v:`₹${revenueStats.totalDeliveryFees.toLocaleString("en-IN")}`,c:"var(--adm-saph)"},
+                        {l:"Net Profit",v:`₹${revenueStats.netProfit.toLocaleString("en-IN")}`,c:"var(--adm-em)"},
+                      ].map((s,i)=>(
+                        <div key={i} style={{padding:"14px 18px",borderRight:i<2?"1px solid var(--adm-line)":"none"}}>
+                          <div style={{fontSize:10.5,color:"var(--adm-t4)"}}>{s.l}</div>
+                          <div style={{fontFamily:"var(--font-d)",fontSize:22,fontWeight:700,color:s.c,lineHeight:1,marginTop:3}}>{s.v}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {/* Seller table */}
+                    <table className="adm-table">
+                      <thead><tr><th>#</th><th>Seller</th><th>Orders</th><th>GMV</th><th>Commission</th></tr></thead>
+                      <tbody>
+                        {revenueStats.sellerBreakdown.length===0?(
+                          <tr><td colSpan={5} style={{textAlign:"center",color:"var(--adm-t4)",padding:32}}>No delivered orders yet</td></tr>
+                        ):revenueStats.sellerBreakdown.slice(0,5).map((sel,i)=>(
+                          <tr key={sel.sellerId}>
+                            <td><span style={{width:24,height:24,borderRadius:6,background:"var(--adm-parch)",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"var(--adm-t2)"}}>{i+1}</span></td>
+                            <td style={{fontWeight:600}}>{sellers.find(s => s.id === sel.sellerId)?.storeName || sel.sellerName}</td>
+                            <td>{sel.orderCount}</td>
+                            <td>₹{sel.gmv.toLocaleString("en-IN")}</td>
+                            <td><span style={{color:"var(--adm-em)",fontWeight:700}}>₹{sel.commission.toLocaleString("en-IN")}</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Live Activity Feed */}
+                <div className="adm-panel">
+                  <div className="adm-panel-hd" style={{ paddingBottom: 16 }}>
+                    <div><div className="adm-panel-title">Live Activity</div><div className="adm-panel-sub">Real-time platform events</div></div>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--adm-em)", boxShadow: "0 0 10px var(--adm-em)" }} />
+                  </div>
+                  <div className="adm-panel-body" style={{ padding: "0 0 8px 0" }}>
+                    {liveActivities.length === 0 ? (
+                      <div style={{ padding: 40, textAlign: "center", color: "var(--adm-t4)", fontSize: 13 }}>No recent activity</div>
+                    ) : (
+                      liveActivities.map((act, i) => (
+                        <div key={`${act.id}-${i}`} style={{ display: "flex", gap: 14, padding: "14px 24px", borderBottom: i < liveActivities.length - 1 ? "1px solid var(--adm-line)" : "none", transition: "background 0.2s", cursor: "pointer" }} className="hover:bg-gray-50">
+                          <div style={{ width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                            background: act.type === 'order' ? "var(--adm-jade-pale)" : act.type === 'user' ? "var(--adm-saph-pale)" : "var(--adm-saff-pale)",
+                            color: act.type === 'order' ? "var(--adm-jade)" : act.type === 'user' ? "var(--adm-saph)" : "var(--adm-saff)"
+                          }}>
+                            <i className={`fas ${act.type === 'order' ? 'fa-bag-shopping' : act.type === 'user' ? 'fa-user' : 'fa-headset'}`} style={{ fontSize: 14 }} />
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+                              <span style={{ fontSize: 13, fontWeight: 700, color: "var(--adm-t1)" }}>{act.title}</span>
+                              <span style={{ fontSize: 10, color: "var(--adm-t4)" }}>
+                                {act.time ? new Date(act.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Just now"}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: 12, color: "var(--adm-t3)" }}>{act.sub}</div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Fleet quick view */}
+              <div className="adm-sec-lbl" style={{marginTop:8}}><span className="adm-sec-lbl-t">Delivery Fleet</span><div className="adm-sec-lbl-l"/></div>
+              <div className="adm-panel">
+                <div className="adm-panel-hd">
+                  <div><div className="adm-panel-title">Fleet Status</div><div className="adm-panel-sub">{deliveryAgents.filter(d=>d.online).length} riders online</div></div>
+                  <button className="adm-view-all" onClick={()=>setTab("fleet")}>View all <i className="fas fa-arrow-right" style={{fontSize:9}}/></button>
+                </div>
+                <div style={{padding:"14px 18px"}}>
+                  {deliveryAgents.slice(0,4).map(d=>(
+                    <div key={d.id} className="adm-fleet-item">
+                      <div className="adm-fleet-av" style={{background:d.online?"linear-gradient(140deg,var(--adm-jade),#065E5A)":"linear-gradient(140deg,var(--adm-t3),var(--adm-t4))"}}>{(d.name||"R").charAt(0)}</div>
+                      <div className="adm-fleet-info">
+                        <div className="adm-fleet-name">{d.name}</div>
+                        <div className="adm-fleet-task">{d.vehicleType||"Vehicle"} · {d.deliveryCount||0} deliveries</div>
+                      </div>
+                      <div className={`adm-fleet-status ${d.online?"fs-on":"fs-break"}`}>{d.online?"Active":"Offline"}</div>
+                    </div>
+                  ))}
+                  {deliveryAgents.length===0&&<div style={{textAlign:"center",padding:24,color:"var(--adm-t4)"}}>No riders registered yet</div>}
+                </div>
+              </div>
+            </div>
+          )}
+
+                </>
+              );
+            })()}
+
+          {tab === "revenue" && (
+            <div className="animate-fade-in">
+              <div className="adm-ph">
+                <div>
+                  <div className="adm-eyebrow">Financial</div>
+                  <div className="adm-title">Revenue Breakdown</div>
+                  <div className="adm-sub">Commission, delivery fees, and rider payouts</div>
+                </div>
+              </div>
+
+              <div className="adm-stats">
                 {[
-                  { label: "Delivered", value: stats.delivered, color: "#10b981", bg: "#d1fae5", icon: "fa-check-double", sub: "Successfully completed" },
-                  { label: "Pending", value: stats.pending, color: "#f59e0b", bg: "#fef3c7", icon: "fa-hourglass-half", sub: "Awaiting dispatch" },
-                  { label: "Shipped", value: stats.shipped, color: "#8b5cf6", bg: "#ede9fe", icon: "fa-box-open", sub: "Out for delivery" },
-                ].map((item, i) => (
-                  <div key={i} className="admin-order-card" style={{ borderLeft: `6px solid ${item.color}` }}>
-                    <div className="admin-order-icon" style={{ background: item.bg }}>
-                      <i className={`fas ${item.icon}`} style={{ color: item.color, fontSize: 18 }} />
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <h4 style={{ fontSize: 15, fontWeight: 800, color: "var(--navy)" }}>{item.label}</h4>
-                      <p style={{ fontSize: 11, color: "#8a93a4", fontWeight: 500, marginTop: 2 }}>{item.sub}</p>
-                    </div>
-                    <h4 style={{ fontSize: 24, fontWeight: 900, color: item.color }}>{item.value}</h4>
+                  { cls:"sc-jade", ico:"si-jade", sn:"sn-jade", icon:"fa-percent",    label:"Commission", value:`₹${revenueStats.totalCommission.toLocaleString("en-IN")}`, sub:"10–15% per order" },
+                  { cls:"sc-saph", ico:"si-saph", sn:"sn-saph", icon:"fa-truck",      label:"Delivery Fees", value:`₹${revenueStats.totalDeliveryFees.toLocaleString("en-IN")}`, sub:"₹29–₹49 per delivery" },
+                  { cls:"sc-saff", ico:"si-saff", sn:"sn-saff", icon:"fa-motorcycle",  label:"Rider Payouts", value:`₹${revenueStats.totalRiderPayouts.toLocaleString("en-IN")}`, sub:"₹22–₹40 per delivery" },
+                  { cls:"sc-plum", ico:"si-plum", sn:"sn-plum", icon:"fa-chart-line",  label:"Net Profit", value:`₹${revenueStats.netProfit.toLocaleString("en-IN")}`, sub:"Commission + Fees − Payouts" },
+                ].map((c,i)=>(
+                  <div key={i} className={`adm-sc ${c.cls}`}>
+                    <div className="adm-sc-glow"/>
+                    <div className="adm-sc-top"><div className={`adm-sc-ico ${c.ico}`}><i className={`fas ${c.icon}`}/></div></div>
+                    <div className="adm-sc-lbl">{c.label}</div>
+                    <div className={`adm-sc-num ${c.sn}`}>{c.value}</div>
+                    <div className="adm-sc-sub">{c.sub}</div>
                   </div>
                 ))}
+              </div>
+
+              {/* Commission Rate Guide */}
+              <div className="adm-panel" style={{marginBottom:20}}>
+                <div className="adm-panel-hd"><div><div className="adm-panel-title">Commission Rate Table</div></div></div>
+                <div style={{padding:0}}>
+                  {[["Below ₹500","10%","var(--adm-jade)"],["₹500 – ₹1,500","12%","var(--adm-saph)"],["Above ₹1,500","15%","var(--adm-gold)"]].map(([range,rate,color],i)=>(
+                    <div key={range} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 22px",borderBottom:i<2?"1px solid var(--adm-line)":"none"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:12}}>
+                        <div style={{width:8,height:8,borderRadius:"50%",background:color}}/>
+                        <span style={{fontSize:14,fontWeight:500,color:"var(--adm-t2)"}}>{range}</span>
+                      </div>
+                      <span style={{fontSize:18,fontWeight:700,color,fontFamily:"var(--font-d)"}}>{rate}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Seller Breakdown */}
+              <div className="adm-panel">
+                <div className="adm-panel-hd"><div><div className="adm-panel-title">Per-Seller Revenue</div><div className="adm-panel-sub">All delivered orders</div></div></div>
+                <div style={{overflowX:"auto"}}>
+                  <table className="adm-table">
+                    <thead><tr><th>#</th><th>Seller</th><th>Orders</th><th>GMV</th><th>Commission</th><th>Seller Earnings</th></tr></thead>
+                    <tbody>
+                      {revenueStats.sellerBreakdown.length===0?(
+                        <tr><td colSpan={6} style={{textAlign:"center",color:"var(--adm-t4)",padding:40}}>No delivered orders yet</td></tr>
+                      ):revenueStats.sellerBreakdown.map((s,i)=>(
+                        <tr key={s.sellerId}>
+                          <td><span style={{width:28,height:28,borderRadius:8,background:"var(--adm-parch)",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:800,color:"var(--adm-t2)"}}>{i+1}</span></td>
+                          <td style={{fontWeight:600}}>{sellers.find(seller => seller.id === s.sellerId)?.storeName || s.sellerName}</td>
+                          <td>{s.orderCount}</td>
+                          <td>₹{s.gmv.toLocaleString("en-IN")}</td>
+                          <td><span style={{color:"var(--adm-em)",fontWeight:700}}>₹{s.commission.toLocaleString("en-IN")}</span></td>
+                          <td><span style={{color:"var(--adm-saph)",fontWeight:600}}>₹{s.sellerEarnings.toLocaleString("en-IN")}</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
@@ -407,14 +726,13 @@ export default function AdminPage() {
           {/* SELLERS */}
           {tab === "sellers" && (
             <div className="animate-fade-in">
-              <div style={{ marginBottom: 24 }}>
-                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Seller<br />Management</h1>
-                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>
-                  Review and manage seller applications.
-                  <span style={{ marginLeft: 12, padding: "3px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: "#fef3c7", color: "#f59e0b" }}>
-                    {sellers.filter(s => !s.approved).length} Pending
-                  </span>
-                </p>
+              <div className="adm-ph">
+                <div>
+                  <div className="adm-eyebrow">Operations</div>
+                  <div className="adm-title">Seller Management</div>
+                  <div className="adm-sub">Review and manage seller applications</div>
+                </div>
+                {sellers.filter(s=>!s.approved).length>0&&<span className="adm-pill pill-pending">{sellers.filter(s=>!s.approved).length} Pending</span>}
               </div>
 
               <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
@@ -631,29 +949,33 @@ export default function AdminPage() {
           {/* LIVE ORDERS */}
           {tab === "orders" && (
             <div className="animate-fade-in">
-              <div style={{ marginBottom: 24 }}>
-                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Global<br />Live Orders</h1>
-                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Monitor and track all ongoing orders</p>
+              <div className="adm-ph">
+                <div>
+                  <div className="adm-eyebrow">Live Operations</div>
+                  <div className="adm-title">Global Live Orders</div>
+                  <div className="adm-sub">Monitor and track all ongoing orders</div>
+                </div>
+                <div className="adm-updated">Real-time</div>
               </div>
-              <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:13}}>
                 {orders.length === 0 ? (
-                  <p style={{ gridColumn: "1/-1", textAlign: "center", padding: 40, color: "#8a93a4", fontWeight: 600 }}>No orders yet</p>
+                  <div style={{gridColumn:"1/-1",textAlign:"center",padding:40,color:"var(--adm-t4)",fontWeight:600}}>No orders yet</div>
                 ) : (
                   orders.map((o) => {
-                    const sty = getStatusStyle(o.status);
+                    const pillCls = o.status==="Delivered"?"pill-delivered":o.status==="Pending"?"pill-pending":o.status==="Shipped"?"pill-shipped":"pill-pending";
                     return (
-                      <div key={o.id} className="admin-mobile-card" style={{ padding: "20px 24px" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                          <span style={{ fontSize: 11, fontWeight: 800, color: "var(--text-tertiary)", letterSpacing: 1 }}>ORDER #{o.trackingId}</span>
-                          <span className="badge" style={{ background: sty.bg, color: sty.color, border: `1px solid ${sty.border}` }}>{o.status}</span>
+                      <div key={o.id} className="adm-data-card">
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                          <span style={{fontSize:10.5,fontWeight:700,color:"var(--adm-t4)",letterSpacing:"0.1em"}}>ORDER #{o.trackingId}</span>
+                          <span className={`adm-pill ${pillCls}`}>{o.status}</span>
                         </div>
-                        <h4 style={{ fontWeight: 700, marginBottom: 4 }}>{o.userName}</h4>
-                        <p style={{ fontSize: 13, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          <i className="fas fa-location-dot" style={{ marginRight: 6 }} />{o.userAddress}
-                        </p>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 14, marginTop: 14, borderTop: "1px solid rgba(255,255,255,0.04)" }}>
-                          <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{o.items?.length || 0} items</span>
-                          <span style={{ fontSize: 18, fontWeight: 900, color: "var(--aurora-cyan)" }}>₹{o.total}</span>
+                        <div style={{fontWeight:600,fontSize:14,color:"var(--adm-t1)",marginBottom:4}}>{o.userName}</div>
+                        <div style={{fontSize:12,color:"var(--adm-t4)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginBottom:12}}>
+                          <i className="fas fa-location-dot" style={{marginRight:6,color:"var(--adm-t5)"}}/>{o.userAddress}
+                        </div>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:11,borderTop:"1px solid var(--adm-line)"}}>
+                          <span style={{fontSize:12,color:"var(--adm-t4)"}}>{o.items?.length||0} items</span>
+                          <span style={{fontFamily:"var(--font-d)",fontSize:20,fontWeight:700,color:"var(--adm-jade)"}}>₹{o.total}</span>
                         </div>
                       </div>
                     );
@@ -666,36 +988,36 @@ export default function AdminPage() {
           {/* USERS */}
           {tab === "users" && (
             <div className="animate-fade-in">
-              <div style={{ marginBottom: 24 }}>
-                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Registered<br />Users</h1>
-                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Customer database and details</p>
+              <div className="adm-ph">
+                <div>
+                  <div className="adm-eyebrow">User Management</div>
+                  <div className="adm-title">Registered Users</div>
+                  <div className="adm-sub">Customer database and details · {users.length} total</div>
+                </div>
               </div>
-              <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:13}}>
                 {users.length === 0 ? (
-                  <p style={{ gridColumn: "1/-1", textAlign: "center", padding: 40, color: "#8a93a4", fontWeight: 600 }}>No users registered yet</p>
+                  <div style={{gridColumn:"1/-1",textAlign:"center",padding:40,color:"var(--adm-t4)",fontWeight:600}}>No users registered yet</div>
                 ) : (
                   users.map((u) => (
-                    <div key={u.id} className="admin-mobile-card" style={{ padding: 22 }}>
-                      <h3 style={{ fontSize: 16, fontWeight: 800, color: "var(--navy)", marginBottom: 12 }}>{u.name}</h3>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)" }}>
-                          <i className="fas fa-envelope" style={{ color: "#cbd5e1", width: 16 }} />
-                          <span style={{ wordBreak: "break-all" }}>{u.email}</span>
+                    <div key={u.id} className="adm-data-card">
+                      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+                        <div style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(140deg,var(--adm-gold-hi),#8C620A)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,color:"#fff",flexShrink:0}}>
+                          {(u.name||"U").charAt(0).toUpperCase()}
                         </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)" }}>
-                          <i className="fas fa-phone" style={{ color: "#cbd5e1", width: 16 }} />
-                          <span>{u.phone || "—"}</span>
-                        </div>
-                        <div style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, color: "var(--text-secondary)" }}>
-                          <i className="fas fa-location-dot" style={{ color: "#cbd5e1", width: 16, marginTop: 4 }} />
-                          <span style={{ flex: 1 }}>
-                            {u.address
-                              ? (typeof u.address === "object"
-                                ? [u.address.line, u.address.landmark, u.address.city, u.address.pincode].filter(Boolean).join(", ")
-                                : u.address)
-                              : "—"}
-                          </span>
-                        </div>
+                        <div style={{fontWeight:600,fontSize:14,color:"var(--adm-t1)"}}>{u.name}</div>
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",gap:7}}>
+                        {[
+                          {icon:"fa-envelope",val:u.email},
+                          {icon:"fa-phone",val:u.phone||"—"},
+                          {icon:"fa-location-dot",val:u.address?(typeof u.address==="object"?[u.address.line,u.address.landmark,u.address.city,u.address.pincode].filter(Boolean).join(", "):u.address):"—"},
+                        ].map((r,i)=>(
+                          <div key={i} style={{display:"flex",alignItems:"flex-start",gap:8,fontSize:12,color:"var(--adm-t3)"}}>
+                            <i className={`fas ${r.icon}`} style={{color:"var(--adm-t5)",width:14,marginTop:2}}/>
+                            <span style={{wordBreak:"break-all"}}>{r.val}</span>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   ))
@@ -707,14 +1029,13 @@ export default function AdminPage() {
           {/* DELIVERY FLEET */}
           {tab === "fleet" && (
             <div className="animate-fade-in">
-              <div style={{ marginBottom: 24 }}>
-                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Delivery<br />Fleet</h1>
-                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>
-                  Manage your delivery partners.
-                  <span style={{ marginLeft: 12, padding: "3px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: "#fef3c7", color: "#f59e0b" }}>
-                    {deliveryAgents.filter(d => !d.approved).length} Pending
-                  </span>
-                </p>
+              <div className="adm-ph">
+                <div>
+                  <div className="adm-eyebrow">Logistics</div>
+                  <div className="adm-title">Delivery Fleet</div>
+                  <div className="adm-sub">Manage your delivery partners</div>
+                </div>
+                {deliveryAgents.filter(d=>!d.approved).length>0&&<span className="adm-pill pill-pending">{deliveryAgents.filter(d=>!d.approved).length} Pending</span>}
               </div>
               
               {/* LIVE MAP TRACKING */}
@@ -751,43 +1072,39 @@ export default function AdminPage() {
                 )}
               </div>
 
-              <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:13}}>
                 {deliveryAgents.length === 0 ? (
-                  <p style={{ gridColumn: "1/-1", textAlign: "center", padding: 40, color: "#8a93a4", fontWeight: 600 }}>No delivery agents yet</p>
+                  <div style={{gridColumn:"1/-1",textAlign:"center",padding:40,color:"var(--adm-t4)",fontWeight:600}}>No delivery agents yet</div>
                 ) : (
                   deliveryAgents.map((d) => (
-                    <div key={d.id} className="admin-mobile-card" style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
-
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                        <div>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                            <h3 style={{ fontSize: 18, fontWeight: 800, color: "var(--navy)" }}>{d.name}</h3>
-                            {d.approved ? (
-                              <span style={{ padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 800, background: "#ecfdf5", color: "#10b981", border: "1px solid #d1fae5" }}>ACTIVE</span>
-                            ) : (
-                              <span style={{ padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 800, background: "#fef3c7", color: "#d97706", border: "1px solid #fde68a" }}>PENDING</span>
-                            )}
+                    <div key={d.id} className="adm-data-card" style={{display:"flex",flexDirection:"column",gap:14}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:10}}>
+                          <div className="adm-fleet-av" style={{background:d.online?"linear-gradient(140deg,var(--adm-jade),#065E5A)":"linear-gradient(140deg,var(--adm-t3),var(--adm-t4))"}}>
+                            {(d.name||"R").charAt(0)}
                           </div>
-                          <p style={{ fontSize: 13, color: "var(--text-secondary)", fontWeight: 500 }}>{d.phone || "No Phone"}</p>
-                          <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>{d.vehicleType || "Vehicle"} • {d.vehicleNumber || ""}</p>
+                          <div>
+                            <div style={{display:"flex",alignItems:"center",gap:7}}>
+                              <span style={{fontSize:15,fontWeight:700,color:"var(--adm-t1)"}}>{d.name}</span>
+                              <span className={`adm-pill ${d.approved?"pill-delivered":"pill-pending"}`} style={{fontSize:9,padding:"2px 7px"}}>{d.approved?"ACTIVE":"PENDING"}</span>
+                            </div>
+                            <div style={{fontSize:12,color:"var(--adm-t3)",marginTop:2}}>{d.phone||"No phone"}</div>
+                          </div>
                         </div>
-                        <div style={{ width: 48, height: 48, borderRadius: 16, background: d.online ? "rgba(16,185,129,0.15)" : "rgba(255,255,255,0.04)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                          <i className="fas fa-motorcycle" style={{ color: d.online ? "#10b981" : "var(--text-tertiary)", fontSize: 18 }} />
+                        <div style={{width:38,height:38,borderRadius:10,background:d.online?"var(--adm-jade-pale)":"var(--adm-parch2)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                          <i className="fas fa-motorcycle" style={{color:d.online?"var(--adm-jade)":"var(--adm-t4)",fontSize:15}}/>
                         </div>
                       </div>
-
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.04)" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <span className={`badge ${d.online ? "badge-emerald" : "badge-rose"}`}>
-                            {d.online ? "Online" : "Offline"}
-                          </span>
-                          <span style={{ fontSize: 12, color: "var(--text-tertiary)", fontWeight: 600 }}>{d.deliveryCount || 0} deliveries</span>
+                      <div style={{fontSize:12,color:"var(--adm-t4)"}}>{d.vehicleType||"Vehicle"} · {d.vehicleNumber||""}</div>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:11,borderTop:"1px solid var(--adm-line)"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <span className={`adm-fleet-status ${d.online?"fs-on":"fs-break"}`}>{d.online?"Online":"Offline"}</span>
+                          <span style={{fontSize:12,color:"var(--adm-t4)"}}>{d.deliveryCount||0} deliveries</span>
                         </div>
-                        <button className="auth-btn-ghost" style={{ padding: "6px 14px", fontSize: 12, borderRadius: 8, minHeight: 0 }} onClick={() => setSelectedRider(d)}>
-                          <i className="fas fa-search" style={{ marginRight: 6 }} /> More Info
+                        <button style={{padding:"6px 14px",fontSize:12,borderRadius:8,border:"1px solid var(--adm-line2)",background:"#fff",color:"var(--adm-t2)",cursor:"pointer",fontWeight:500}} onClick={()=>setSelectedRider(d)}>
+                          <i className="fas fa-search" style={{marginRight:6,fontSize:10}}/> View
                         </button>
                       </div>
-
                     </div>
                   ))
                 )}
@@ -917,9 +1234,12 @@ export default function AdminPage() {
           {/* REVIEWS & FEEDBACK */}
           {tab === "reviews" && (
             <div className="animate-fade-in">
-              <div style={{ marginBottom: 24 }}>
-                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Customer<br />Feedback</h1>
-                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Reviews and suggestions submitted by users</p>
+              <div className="adm-ph">
+                <div>
+                  <div className="adm-eyebrow">Engagement</div>
+                  <div className="adm-title">Customer Feedback</div>
+                  <div className="adm-sub">Reviews and suggestions from {feedbacks.length} users</div>
+                </div>
               </div>
               <div className="admin-desktop-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
                 {feedbacks.length === 0 ? (
@@ -978,9 +1298,12 @@ export default function AdminPage() {
           {/* BANNER MANAGEMENT */}
           {tab === "banners" && (
             <div className="animate-fade-in">
-              <div style={{ marginBottom: 24 }}>
-                <h1 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -1, color: "var(--navy)", lineHeight: 1.1 }}>Banner<br />Management</h1>
-                <p style={{ color: "#8a93a4", marginTop: 8, fontSize: 13, fontWeight: 500 }}>Control all 5 homepage banner slots</p>
+              <div className="adm-ph">
+                <div>
+                  <div className="adm-eyebrow">Content</div>
+                  <div className="adm-title">Banner Management</div>
+                  <div className="adm-sub">Control all 5 homepage banner slots</div>
+                </div>
               </div>
 
               {/* LIVE BANNER SLOTS */}
@@ -1025,8 +1348,40 @@ export default function AdminPage() {
                     <h3 style={{ fontSize: 20, fontWeight: 900, marginBottom: 20 }}>Edit {editingBanner.replace("_", " ").toUpperCase()}</h3>
                     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                       <div>
-                        <label style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, color: "#888", display: "block", marginBottom: 4 }}>IMAGE URL</label>
-                        <input className="glass-input" placeholder="https://..." value={bannerForm.imageUrl} onChange={(e) => setBannerForm({ ...bannerForm, imageUrl: e.target.value })} />
+                        <label style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, color: "#888", display: "block", marginBottom: 8 }}>BANNER IMAGE</label>
+                        {/* File upload dropzone */}
+                        <label htmlFor="banner-img-upload" style={{
+                          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                          gap: 8, border: "2px dashed", borderColor: bannerUploading ? "var(--adm-jade)" : "var(--adm-line2)",
+                          borderRadius: 12, padding: "20px 16px", cursor: bannerUploading ? "wait" : "pointer",
+                          background: bannerUploading ? "var(--adm-jade-pale)" : "var(--adm-parch)",
+                          transition: "all 0.2s"
+                        }}>
+                          {bannerUploading ? (
+                            <><i className="fas fa-spinner fa-spin" style={{ fontSize: 22, color: "var(--adm-jade)" }}/><div style={{ fontSize: 12, color: "var(--adm-jade)" }}>Uploading…</div></>
+                          ) : (
+                            <><i className="fas fa-image" style={{ fontSize: 22, color: "var(--adm-t4)" }}/><div style={{ fontSize: 12, color: "var(--adm-t3)", textAlign: "center" }}>Click to upload banner image<br/><span style={{ fontSize: 10, color: "var(--adm-t4)" }}>JPG, PNG, WEBP · Max 10 MB</span></div></>
+                          )}
+                          <input id="banner-img-upload" type="file" accept="image/*" style={{ display: "none" }}
+                            disabled={bannerUploading}
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              setBannerUploading(true); setBannerUploadErr("");
+                              try {
+                                const fd = new FormData();
+                                fd.append("image", file);
+                                const res = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`, { method: "POST", body: fd });
+                                const json = await res.json();
+                                if (json.success) {
+                                  setBannerForm(prev => ({ ...prev, imageUrl: json.data.url }));
+                                } else { setBannerUploadErr("Upload failed. Try again."); }
+                              } catch { setBannerUploadErr("Upload error. Check connection."); }
+                              finally { setBannerUploading(false); e.target.value = ""; }
+                            }}
+                          />
+                        </label>
+                        {bannerUploadErr && <div style={{ fontSize: 11, color: "var(--adm-rouge)", marginTop: 6 }}>{bannerUploadErr}</div>}
                       </div>
                       {bannerForm.imageUrl && (
                         <div style={{ width: "100%", height: 140, borderRadius: 12, overflow: "hidden", background: "#f0ebe3" }}>
@@ -1103,36 +1458,10 @@ export default function AdminPage() {
               )}
             </div>
           )}
-        </main>
-      </div>
+        </div>{/* end adm-page-inner */}
+        </div>{/* end adm-page */}
+        </div>{/* end adm-main */}
+      </div>{/* end adm-app */}
     </>
   );
 }
-
-const s = {
-  authCard: {
-    width: "100%", maxWidth: 420, background: "rgba(255, 255, 255, 0.9)", backdropFilter: "blur(40px)",
-    border: "1px solid rgba(0,0,0,0.06)", borderRadius: 36, padding: 40,
-    display: "flex", flexDirection: "column", gap: 28,
-  },
-  authLogo: {
-    width: 72, height: 72, borderRadius: 24, display: "flex", alignItems: "center", justifyContent: "center",
-    marginBottom: 8, boxShadow: "0 0 40px rgba(26,13,220,0.1)",
-  },
-  sidebar: {
-    width: 240, position: "fixed", top: 0, left: 0, bottom: 0, zIndex: 40,
-    display: "flex", flexDirection: "column", borderRight: "1px solid rgba(255,255,255,0.04)",
-  },
-  sidebarBtn: {
-    display: "flex", alignItems: "center", gap: 12, padding: "14px 16px",
-    borderRadius: 14, background: "transparent", border: "none",
-    color: "var(--text-secondary)", cursor: "pointer", transition: "all 0.3s ease",
-    fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 600, width: "100%", textAlign: "left",
-  },
-  sidebarBtnActive: {
-    background: "linear-gradient(135deg, var(--navy), var(--gold))", color: "white",
-    boxShadow: "0 4px 20px rgba(26, 13, 220, 0.3)",
-  },
-  sidebarLabel: { fontSize: 14, fontWeight: 600 },
-};
-

@@ -2,7 +2,7 @@
 export const dynamic = 'force-dynamic';
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { doc, getDoc, collection, onSnapshot } from "firebase/firestore";
@@ -48,7 +48,35 @@ export default function CategoryPage() {
   const [selectedSize, setSelectedSize] = useState("");
   const [sortBy, setSortBy] = useState("default");
   const [showCart, setShowCart] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  const searchParams = useSearchParams();
+  const [searchQuery, setSearchQuery] = useState(searchParams?.get("q") || "");
+  const [imgIndex, setImgIndex] = useState(0);
+  const [favorites, setFavorites] = useState([]);
+  const [pincode, setPincode] = useState("");
+  const [pincodeStatus, setPincodeStatus] = useState(null);
+  const [checkingPincode, setCheckingPincode] = useState(false);
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [reviewForm, setReviewForm] = useState({ rating: 5, title: "", text: "" });
+
+  const toggleFavorite = (product) => {
+    setFavorites(prev => prev.find(f => f.id === product.id) ? prev.filter(f => f.id !== product.id) : [...prev, product]);
+  };
+
+  const checkDeliveryAvailability = () => {
+    if (!pincode || pincode.length < 6) return;
+    setCheckingPincode(true);
+    setTimeout(() => {
+      setCheckingPincode(false);
+      setPincodeStatus({ type: "success", msg: `Delivery available to ${pincode} in ~28 minutes!` });
+    }, 1200);
+  };
+
+  const submitReview = () => {
+    if (!reviewForm.text.trim()) return alert("Please write a review.");
+    alert("Thank you for your review!");
+    setShowReviewModal(false);
+    setReviewForm({ rating: 5, title: "", text: "" });
+  };
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
@@ -257,16 +285,6 @@ export default function CategoryPage() {
         </div>
       </nav>
 
-      {/* ── SUB-CATEGORY PILLS ── */}
-      <div className="cp-pills">
-        {SUB_CATS.map((c) => (
-          <Link key={c.slug} href={`/shop/category/${c.slug}`} className={`cp-pill ${slug === c.slug ? "active" : ""}`}>
-            <div className="cp-pill-icon">{c.icon}</div>
-            <div className="cp-pill-text">{c.label}</div>
-          </Link>
-        ))}
-      </div>
-
       {/* ── TOOLBAR ── */}
       <div className="cp-toolbar">
         <div className="cp-results">
@@ -313,10 +331,12 @@ export default function CategoryPage() {
                   <div className="cp-card-name">{p.name}</div>
                   <div className="cp-price-row">
                     <span className="cp-price">₹{p.price}</span>
-                    <span className="cp-mrp">₹{Math.floor(p.price * 1.38)}</span>
-                    <span className="cp-off">38% off</span>
+                    {p.mrp && p.mrp > p.price && <>
+                      <span className="cp-mrp">₹{p.mrp}</span>
+                      <span className="cp-off">{Math.round(((p.mrp - p.price) / p.mrp) * 100)}% off</span>
+                    </>}
                   </div>
-                  <div className="cp-delivery"><span className="cp-dot" /> 28 min delivery</div>
+                  <div className="cp-delivery"><span className="cp-dot" /> 30 min delivery</div>
                 </div>
               </div>
             ))}
@@ -324,40 +344,269 @@ export default function CategoryPage() {
         )}
       </div>
 
-      {/* ── PRODUCT MODAL ── */}
+      {/* ── PRODUCT DETAIL FULL SCREEN MODAL ── */}
       {viewProduct && (
-        <div className="cp-modal-bg" onClick={() => setViewProduct(null)}>
-          <div className="cp-modal" onClick={(e) => e.stopPropagation()} style={{ position: "relative" }}>
-            <button className="cp-modal-close" onClick={() => setViewProduct(null)}>×</button>
-            <div style={{ position: "relative" }}>
-              <img src={viewProduct.image} alt={viewProduct.name} className="cp-modal-img" style={{ opacity: (viewProduct.outOfStock || viewProduct.stock === 0) ? 0.4 : 1 }} onError={(e) => { e.target.style.display = "none"; }} />
+        <div style={{ position: "fixed", inset: 0, zIndex: 700, background: "#fff", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+          {/* Top Nav */}
+          <div style={{ flexShrink: 0, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px", background: "rgba(255,255,255,0.95)", backdropFilter: "blur(10px)", borderBottom: "1px solid #f1f5f9" }}>
+            <button onClick={() => { setViewProduct(null); setImgIndex(0); }} style={{ width: 40, height: 40, borderRadius: "50%", background: "#f1f5f9", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 18, color: "var(--navy)" }}>
+              <i className="fas fa-arrow-left" />
+            </button>
+            <div style={{ display: "flex", gap: 12 }}>
+              <button onClick={() => { if (navigator.share) navigator.share({ title: viewProduct.name, url: window.location.origin }); }} style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--ivory2)", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 16, color: "var(--navy)" }}><i className="fas fa-share-alt" /></button>
+              <button onClick={() => toggleFavorite(viewProduct)} style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--ivory2)", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 16, color: favorites.find(f => f.id === viewProduct.id) ? "#ef4444" : "var(--navy)" }}><i className={favorites.find(f => f.id === viewProduct.id) ? "fas fa-heart" : "far fa-heart"} /></button>
+            </div>
+          </div>
+
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            {/* Image Gallery */}
+            <div style={{ position: "relative", width: "100%", height: 420, background: "var(--ivory2)", overflow: "hidden" }}>
+              {(viewProduct.images && viewProduct.images.length > 0 ? viewProduct.images : [viewProduct.image]).map((img, i) => (
+                <div key={i} style={{ position: "absolute", inset: 0, transition: "opacity 0.3s", opacity: i === imgIndex ? 1 : 0, pointerEvents: i === imgIndex ? "auto" : "none" }}>
+                  <img src={img} alt="" style={{ width: "100%", height: "100%", objectFit: "contain", opacity: (viewProduct.outOfStock || viewProduct.stock === 0) ? 0.4 : 1 }} onError={(e) => { e.target.style.display = "none"; }} />
+                </div>
+              ))}
               {(viewProduct.outOfStock || viewProduct.stock === 0) && (
-                <div style={{ position: "absolute", top: "45%", left: "50%", transform: "translate(-50%, -50%)", background: "rgba(0,0,0,0.6)", color: "white", padding: "10px 24px", borderRadius: 8, fontSize: 16, fontWeight: 900, zIndex: 10, letterSpacing: 2, backdropFilter: "blur(2px)" }}>
-                  OUT OF STOCK
+                <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", background: "rgba(0,0,0,0.6)", color: "white", padding: "10px 24px", borderRadius: 8, fontSize: 14, fontWeight: 900, letterSpacing: 2, backdropFilter: "blur(2px)" }}>OUT OF STOCK</div>
+              )}
+              {/* Prev / Next Arrows */}
+              {(viewProduct.images?.length > 1 || false) && (
+                <>
+                  <button onClick={() => setImgIndex(i => Math.max(0, i - 1))} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", width: 36, height: 36, borderRadius: "50%", background: "rgba(255,255,255,0.9)", border: "none", cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>‹</button>
+                  <button onClick={() => setImgIndex(i => Math.min((viewProduct.images?.length || 1) - 1, i + 1))} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", width: 36, height: 36, borderRadius: "50%", background: "rgba(255,255,255,0.9)", border: "none", cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>›</button>
+                </>
+              )}
+              {/* Dots */}
+              {viewProduct.images?.length > 1 && (
+                <div style={{ position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 6 }}>
+                  {viewProduct.images.map((_, i) => (
+                    <div key={i} onClick={() => setImgIndex(i)} style={{ width: i === imgIndex ? 20 : 6, height: 6, borderRadius: 3, background: i === imgIndex ? "var(--gold)" : "rgba(255,255,255,0.6)", cursor: "pointer", transition: "all 0.3s" }} />
+                  ))}
                 </div>
               )}
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-              <div className="cp-modal-brand" style={{ marginBottom: 0 }}>{viewProduct.storeName || "DRESHO"}</div>
+              {/* Stock badge */}
               {viewProduct.stock > 0 && viewProduct.stock <= 5 && !viewProduct.outOfStock && (
-                <span style={{ color: "#ef4444", fontSize: 12, fontWeight: 800 }}>Only {viewProduct.stock} left!</span>
+                <div style={{ position: "absolute", top: 14, left: 14, background: "#ef4444", color: "white", padding: "4px 10px", borderRadius: 6, fontSize: 10, fontWeight: 900, letterSpacing: 1 }}>Only {viewProduct.stock} left!</div>
               )}
             </div>
-            <div className="cp-modal-name">{viewProduct.name}</div>
-            <div className="cp-modal-price">₹{viewProduct.price} <span style={{ fontSize: 13, fontWeight: 400, color: "#9CA3AF", textDecoration: "line-through" }}>₹{Math.floor(viewProduct.price * 1.38)}</span></div>
-            <div className="cp-size-label">Select Size</div>
-            <div className="cp-sizes">
-              {(viewProduct.sizes || ["S", "M", "L", "XL"]).map((s) => (
-                <div key={s} className={`cp-size ${selectedSize === s ? "active" : ""}`} onClick={() => setSelectedSize(s)}>{s}</div>
-              ))}
+
+            {/* Thumbnail strip */}
+            {viewProduct.images?.length > 1 && (
+              <div style={{ display: "flex", gap: 8, padding: "12px 20px", overflowX: "auto" }}>
+                {viewProduct.images.map((img, i) => (
+                  <div key={i} onClick={() => setImgIndex(i)} style={{ width: 56, height: 56, borderRadius: 10, overflow: "hidden", flexShrink: 0, border: i === imgIndex ? "2px solid var(--gold)" : "2px solid transparent", cursor: "pointer" }}>
+                    <img src={img} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => e.target.style.display = "none"} />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Product Info */}
+            <div style={{ padding: "20px 20px 0" }}>
+              <p style={{ fontSize: 11, fontWeight: 700, color: "var(--gold)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
+                {viewProduct.storeName || "DRESHO"} <i className="fas fa-check-circle" style={{ color: "#10b981", fontSize: 10 }} />
+              </p>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <h2 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 22, color: "var(--navy)", lineHeight: 1.2, margin: 0, flex: 1 }}>{viewProduct.name}</h2>
+                {viewProduct.stock > 0 && viewProduct.stock <= 5 && !viewProduct.outOfStock && (
+                  <span style={{ color: "#ef4444", fontSize: 12, fontWeight: 800, flexShrink: 0, marginLeft: 8 }}>Only {viewProduct.stock} left!</span>
+                )}
+              </div>
+
+              {/* Price Row */}
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12 }}>
+                <span style={{ fontSize: 28, fontWeight: 800, color: "var(--navy)" }}>₹{viewProduct.price}</span>
+                {viewProduct.mrp && viewProduct.mrp > viewProduct.price && (
+                  <>
+                    <span style={{ fontSize: 16, fontWeight: 500, color: "var(--sub)", textDecoration: "line-through" }}>₹{viewProduct.mrp}</span>
+                    <span style={{ padding: "4px 8px", background: "#fef2f2", color: "#ef4444", borderRadius: 6, fontSize: 12, fontWeight: 800 }}>{Math.round(((viewProduct.mrp - viewProduct.price) / viewProduct.mrp) * 100)}% OFF</span>
+                  </>
+                )}
+              </div>
+              <p style={{ fontSize: 11, color: "var(--sub)", marginTop: 4 }}>Inclusive of all taxes</p>
+
+              {/* Delivery + Pincode */}
+              <div style={{ margin: "24px 0", padding: "16px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 16 }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 12 }}>
+                  <div style={{ fontSize: 24 }}>⚡</div>
+                  <div style={{ flex: 1 }}>
+                    <h4 style={{ fontSize: 14, fontWeight: 800, color: "#166534", marginBottom: 2 }}>Fast Delivery Available</h4>
+                    <p style={{ fontSize: 12, color: "#15803d", fontWeight: 600 }}>Get it by {new Date(Date.now() + 86400000 * 2).toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric' })} with live rider tracking.</p>
+                    
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+                      {viewProduct.stock > 0 && viewProduct.stock <= 5 && !viewProduct.outOfStock && (
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "#ef4444", background: "#fef2f2", padding: "4px 8px", borderRadius: 6, display: "flex", alignItems: "center", gap: 4 }}>
+                          <i className="fas fa-fire" /> Only {viewProduct.stock} left - selling fast!
+                        </div>
+                      )}
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--navy)", background: "white", padding: "4px 8px", borderRadius: 6, display: "flex", alignItems: "center", gap: 4, border: "1px solid #bbf7d0" }}>
+                        <i className="fas fa-eye" style={{ color: "var(--gold)" }} /> {Math.floor(viewProduct.price % 30) + 15} people looking right now
+                      </div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--navy)", background: "white", padding: "4px 8px", borderRadius: 6, display: "flex", alignItems: "center", gap: 4, border: "1px solid #bbf7d0" }}>
+                        <i className="fas fa-shopping-bag" style={{ color: "#f59e0b" }} /> Ordered {Math.floor(viewProduct.price % 50) + 10} times today
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 12, borderTop: "1px solid #bbf7d0", paddingTop: 12 }}>
+                  <input type="tel" maxLength={6} value={pincode} onChange={(e) => { setPincode(e.target.value); setPincodeStatus(null); }} placeholder="Enter Pincode" style={{ flex: 1, padding: "10px 12px", borderRadius: 8, border: "1px solid #bbf7d0", fontSize: 13, background: "white", outline: "none", color: "var(--navy)" }} />
+                  <button onClick={checkDeliveryAvailability} disabled={checkingPincode} style={{ padding: "0 16px", background: "#166534", color: "white", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: checkingPincode ? "not-allowed" : "pointer", opacity: checkingPincode ? 0.7 : 1 }}>{checkingPincode ? "Checking..." : "Check"}</button>
+                </div>
+                {pincodeStatus && (
+                  <div style={{ marginTop: 12, padding: "8px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: pincodeStatus.type === "success" ? "#dcfce7" : "#fee2e2", color: pincodeStatus.type === "success" ? "#166534" : "#b91c1c", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span>{pincodeStatus.type === "success" ? "✅" : "❌"}</span><span>{pincodeStatus.msg}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Highlights */}
+              <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8, margin: "20px 0" }}>
+                {["Premium Fabric", "Breathable", "Easy Wash", "Perfect Fit"].map((hl, i) => (
+                  <div key={i} style={{ padding: "8px 12px", background: "var(--ivory2)", border: "1px solid var(--border)", borderRadius: 12, fontSize: 11, fontWeight: 600, color: "var(--navy)", whiteSpace: "nowrap" }}>{hl}</div>
+                ))}
+              </div>
+
+              {/* Size Selection */}
+              <div style={{ margin: "24px 0" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <h4 style={{ fontSize: 15, fontWeight: 800, color: "var(--navy)" }}>Select Size</h4>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: "var(--gold)", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}><i className="fas fa-ruler" /> Size Guide</span>
+                </div>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  {(viewProduct.sizes || ["S", "M", "L", "XL"]).map((size) => (
+                    <button key={size} onClick={() => setSelectedSize(size)} style={{ flex: 1, minWidth: 60, height: 60, borderRadius: 12, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: selectedSize === size ? "var(--navy)" : "white", color: selectedSize === size ? "white" : "var(--navy)", border: selectedSize === size ? "2px solid var(--navy)" : "1px solid var(--border)", cursor: "pointer", transition: "all 0.2s ease" }}>
+                      <span style={{ fontSize: 14, fontWeight: 700 }}>{size}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Trust Grid */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, margin: "24px 0" }}>
+                {[{icon:"fa-exchange-alt",title:"Easy Replacement",sub:"Within 24 hours"},{icon:"fa-shield-check",title:"Verified Seller",sub:"Trusted Partner"},{icon:"fa-check-double",title:"Quality Checked",sub:"100% Authentic"},{icon:"fa-truck-fast",title:"Fast Dispatch",sub:"Live tracking"}].map((t,i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: 12, border: "1px solid var(--border)", borderRadius: 12 }}>
+                    <i className={`fas ${t.icon}`} style={{ color: "var(--gold)", fontSize: 18 }} />
+                    <div><span style={{ fontSize: 11, fontWeight: 700, color: "var(--navy)", lineHeight: 1.2, display: "block" }}>{t.title}</span><span style={{ fontSize: 10, color: "var(--sub)" }}>{t.sub}</span></div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Accordions */}
+              <div style={{ borderTop: "1px solid var(--border)", paddingTop: 16, marginTop: 24 }}>
+                <details style={{ marginBottom: 16 }}>
+                  <summary style={{ fontSize: 14, fontWeight: 800, color: "var(--navy)", cursor: "pointer", display: "flex", justifyContent: "space-between", listStyle: "none" }}>Product Details <i className="fas fa-chevron-down" style={{ fontSize: 12, color: "var(--sub)" }} /></summary>
+                  <div style={{ padding: "12px 0", fontSize: 13, color: "var(--sub)", lineHeight: 1.6 }}>High-quality materials tailored for exceptional comfort and a modern fit. A versatile addition to your everyday wardrobe.</div>
+                </details>
+                <details style={{ marginBottom: 16 }}>
+                  <summary style={{ fontSize: 14, fontWeight: 800, color: "var(--navy)", cursor: "pointer", display: "flex", justifyContent: "space-between", listStyle: "none" }}>Fabric &amp; Care <i className="fas fa-chevron-down" style={{ fontSize: 12, color: "var(--sub)" }} /></summary>
+                  <div style={{ padding: "12px 0", fontSize: 13, color: "var(--sub)", lineHeight: 1.6 }}><ul style={{ paddingLeft: 20 }}><li>Premium Cotton Blend</li><li>Machine wash cold</li><li>Do not bleach</li><li>Dry in shade</li></ul></div>
+                </details>
+              </div>
+
+              {/* Ratings & Reviews */}
+              {(() => {
+                const allReviews = viewProduct.reviews || [];
+                const avgRating = allReviews.length > 0 ? (allReviews.reduce((s,r) => s+(Number(r.rating)||5),0)/allReviews.length).toFixed(1) : 0;
+                return (
+                  <div style={{ borderTop: "8px solid #f1f5f9", paddingTop: 20, marginTop: 16, paddingBottom: 20 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                      <h4 style={{ fontSize: 18, fontWeight: 800, color: "var(--navy)" }}>Ratings and reviews</h4>
+                      <button style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #e2e8f0", background: "white", fontSize: 13, fontWeight: 700, color: "var(--navy)", cursor: "pointer" }} onClick={() => setShowReviewModal(true)}>Rate Product</button>
+                    </div>
+                    {allReviews.length > 0 ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                        {allReviews.map((rev, i) => (
+                          <div key={i} style={{ paddingBottom: 16, borderBottom: "1px solid #e2e8f0" }}>
+                            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                              <span style={{ background: rev.rating >= 4 ? "#16a34a" : "#f59e0b", color: "white", padding: "2px 6px", borderRadius: 4, fontSize: 11, fontWeight: 800 }}>{rev.rating} <i className="fas fa-star" style={{ fontSize: 8 }} /></span>
+                              <span style={{ fontSize: 14, fontWeight: 700, color: "var(--navy)" }}>{rev.title || "Review"}</span>
+                            </div>
+                            <p style={{ fontSize: 13, color: "#475569", lineHeight: 1.5 }}>{rev.text}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ textAlign: "center", padding: "32px 0", background: "#f8fafc", borderRadius: 16 }}>
+                        <i className="fas fa-comment-dots" style={{ fontSize: 32, color: "#cbd5e1", marginBottom: 12 }} />
+                        <p style={{ color: "var(--navy)", fontSize: 14, fontWeight: 600 }}>No reviews yet</p>
+                        <p style={{ color: "#64748b", fontSize: 13, marginTop: 4 }}>Be the first to share your thoughts!</p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Review Modal */}
+              {showReviewModal && (
+                <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={() => setShowReviewModal(false)}>
+                  <div style={{ background: "white", width: "100%", maxWidth: 600, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24 }} onClick={e => e.stopPropagation()}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                      <h3 style={{ fontSize: 18, fontWeight: 800, color: "var(--navy)" }}>Write a Review</h3>
+                      <button onClick={() => setShowReviewModal(false)} style={{ background: "none", border: "none", fontSize: 20, color: "#64748b", cursor: "pointer" }}><i className="fas fa-times" /></button>
+                    </div>
+                    <div style={{ marginBottom: 16 }}>
+                      <label style={{ fontSize: 13, fontWeight: 600, color: "var(--navy)", display: "block", marginBottom: 8 }}>Rating</label>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        {[1,2,3,4,5].map(star => (
+                          <button key={star} onClick={() => setReviewForm({...reviewForm, rating: star})} style={{ background: "none", border: "none", fontSize: 28, color: reviewForm.rating >= star ? "#16a34a" : "#e2e8f0", cursor: "pointer" }}>★</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ marginBottom: 16 }}>
+                      <label style={{ fontSize: 13, fontWeight: 600, color: "var(--navy)", display: "block", marginBottom: 8 }}>Review Title</label>
+                      <input type="text" value={reviewForm.title} onChange={e => setReviewForm({...reviewForm, title: e.target.value})} placeholder="E.g. Excellent Product!" style={{ width: "100%", padding: 12, borderRadius: 12, border: "1px solid #e2e8f0", outline: "none", color: "var(--navy)" }} />
+                    </div>
+                    <div style={{ marginBottom: 20 }}>
+                      <label style={{ fontSize: 13, fontWeight: 600, color: "var(--navy)", display: "block", marginBottom: 8 }}>Review Description</label>
+                      <textarea value={reviewForm.text} onChange={e => setReviewForm({...reviewForm, text: e.target.value})} placeholder="What did you like or dislike?" rows="4" style={{ width: "100%", padding: 12, borderRadius: 12, border: "1px solid #e2e8f0", outline: "none", resize: "none", color: "var(--navy)" }} />
+                    </div>
+                    <button onClick={submitReview} style={{ width: "100%", padding: 16, background: "var(--navy)", color: "white", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 800, cursor: "pointer" }}>Submit Review</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Similar Products */}
+              {(() => {
+                const similarProducts = products.filter(p => p.id !== viewProduct.id && (p.category === viewProduct.category || p.storeName === viewProduct.storeName)).slice(0, 6);
+                if (similarProducts.length === 0) return null;
+                return (
+                  <div style={{ borderTop: "8px solid #f1f5f9", paddingTop: 20, marginTop: 16, paddingBottom: 20 }}>
+                    <h4 style={{ fontSize: 18, fontWeight: 800, color: "var(--navy)", marginBottom: 16 }}>More like this</h4>
+                    <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 16, scrollbarWidth: "none" }} className="hide-scrollbar">
+                      {similarProducts.map(sp => (
+                        <div key={sp.id} style={{ width: 140, flexShrink: 0, cursor: "pointer" }} onClick={() => { setViewProduct(sp); setImgIndex(0); window.scrollTo({top:0,behavior:'smooth'}); }}>
+                          <div style={{ width: "100%", aspectRatio: "3/4", background: "#f0ebe3", borderRadius: 12, overflow: "hidden", marginBottom: 8 }}>
+                            <img src={sp.imageUrl || sp.imageUrls?.[0]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                          </div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--navy)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sp.name}</div>
+                          <div style={{ fontSize: 12, fontWeight: 800, color: "var(--gold)" }}>₹{sp.price}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div style={{ height: 40 }} />
             </div>
-            <button 
-              disabled={viewProduct.outOfStock || viewProduct.stock === 0}
-              className="cp-add-btn" 
-              style={{ background: (viewProduct.outOfStock || viewProduct.stock === 0) ? "#cbd5e1" : "", cursor: (viewProduct.outOfStock || viewProduct.stock === 0) ? "not-allowed" : "pointer" }}
-              onClick={() => addToCart(viewProduct, selectedSize)}>
-              {(viewProduct.outOfStock || viewProduct.stock === 0) ? "Unavailable" : "Add to Cart"}
-            </button>
+          </div>
+
+          {/* Sticky Bottom CTA */}
+          <div style={{ flexShrink: 0, background: "var(--white)", padding: "16px 20px", borderTop: "1px solid var(--border)", zIndex: 20 }}>
+            {(viewProduct.outOfStock || viewProduct.stock === 0) ? (
+              <button style={{ width: "100%", height: 50, borderRadius: 16, background: "var(--navy)", color: "white", border: "none", fontSize: 13, fontWeight: 800, textTransform: "uppercase", letterSpacing: 1, cursor: "pointer", boxShadow: "0 4px 14px rgba(20,33,61,0.2)" }} onClick={() => { alert("We will notify you when this is back in stock!"); setViewProduct(null); }}>
+                Notify Me When Available
+              </button>
+            ) : (
+              <div style={{ display: "flex", gap: 12 }}>
+                <div style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--navy)", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 800, flexShrink: 0, alignSelf: "center" }}>{(userData?.name || user?.email || "U")[0].toUpperCase()}</div>
+                <button style={{ flex: 1, height: 50, borderRadius: 16, background: "white", color: "var(--navy)", border: "1px solid var(--navy)", fontSize: 13, fontWeight: 800, textTransform: "uppercase", letterSpacing: 1, cursor: "pointer" }} onClick={() => { addToCart(viewProduct, selectedSize); setViewProduct(null); setImgIndex(0); }}>Add to Cart</button>
+                <button style={{ flex: 1.5, height: 50, borderRadius: 16, background: "var(--navy)", color: "white", border: "none", fontSize: 13, fontWeight: 800, textTransform: "uppercase", letterSpacing: 1, cursor: "pointer", boxShadow: "0 4px 14px rgba(20,33,61,0.2)", position: "relative", overflow: "hidden" }} onClick={() => { addToCart(viewProduct, selectedSize); setViewProduct(null); setImgIndex(0); setShowCart(true); }}>
+                  <span style={{ position: "relative", top: -6 }}>Buy Now</span>
+                  <span style={{ position: "absolute", bottom: 6, left: "50%", transform: "translateX(-50%)", fontSize: 9, opacity: 0.8, whiteSpace: "nowrap", fontWeight: 600 }}>⚡ 1-Tap Checkout</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

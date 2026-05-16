@@ -72,6 +72,7 @@ export default function SellerPage() {
   const [pStock, setPStock] = useState("");
   const [pCategory, setPCategory] = useState("Men's Wear");
   const [pSizes, setPSizes] = useState(["S", "M", "L", "XL"]);
+  const [pMeasurements, setPMeasurements] = useState({});
   const [pImageFiles, setPImageFiles] = useState([]);
   const [pImagePreviews, setPImagePreviews] = useState([]);
   const [uploading, setUploading] = useState(false);
@@ -309,20 +310,22 @@ export default function SellerPage() {
       await addDoc(collection(db, "products"), {
         sellerId: user.uid, storeName: sellerData.storeName, name: pName,
         price: parseFloat(pPrice), stock: parseInt(pStock) || 0, category: pCategory,
-        sizes: pSizes, 
+        sizes: pSizes,
+        measurements: pMeasurements,
         image: imageUrls[0], // Main image
         images: imageUrls,   // All images
         createdAt: new Date(),
       });
       setShowModal(false);
-      setPName(""); setPPrice(""); setPStock(""); 
+      setPName(""); setPPrice(""); setPStock("");
       setPImageFiles([]); setPImagePreviews([]);
       setPSizes(["S", "M", "L", "XL"]);
+      setPMeasurements({});
     } catch (e) { alert("Upload failed: " + e.message); }
     setUploading(false);
   };
 
-  const categories = ["Men's Wear", "Women's Wear", "Kids Wear", "Ethnic", "Casual", "Formal"];
+  const categories = ["Men's Wear", "Women's Wear", "Kids Wear", "Ethnic", "Casual", "Formal", "Accessories", "Footwear"];
 
   // AUTH SCREEN
   if (!user && !isPending) {
@@ -829,13 +832,50 @@ export default function SellerPage() {
                         <span style={{ fontSize: 12, fontWeight: 800, color: "var(--text-muted)", letterSpacing: 1 }}>ORDER #{o.trackingId}</span>
                         <span style={{ fontWeight: 900, color: "#10b981", fontSize: 15 }}>₹{o.total}</span>
                       </div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
                         {o.items?.map((item, i) => (
                           <p key={i} style={{ fontSize: 14, fontWeight: 600, color: "var(--navy)" }}>
                             <span style={{ color: "var(--text-muted)" }}>{item.qty}×</span> {item.name} {item.size ? <span style={{ color: "var(--gold)" }}>({item.size})</span> : ""}
                           </p>
                         ))}
                       </div>
+
+                      {/* ── Customer Delivery Info ── */}
+                      <div style={{ background: "linear-gradient(135deg, #eef2ff, #f0fdf4)", border: "1px solid #c7d2fe", borderRadius: 14, padding: "14px 16px", marginBottom: 14 }}>
+                        <p style={{ fontSize: 10, fontWeight: 800, color: "#6366f1", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 10 }}>📦 Customer Delivery Info</p>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                          <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                            <i className="fas fa-user" style={{ fontSize: 12, color: "#6366f1", marginTop: 2, flexShrink: 0 }} />
+                            <span style={{ fontSize: 13, fontWeight: 700, color: "#1e1b4b" }}>{o.userName || "—"}</span>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                            <i className="fas fa-phone" style={{ fontSize: 12, color: "#10b981", marginTop: 2, flexShrink: 0 }} />
+                            <a href={`tel:${o.userPhone}`} style={{ fontSize: 13, fontWeight: 700, color: "#065f46", textDecoration: "none" }}>{o.userPhone || "—"}</a>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                            <i className="fas fa-map-marker-alt" style={{ fontSize: 12, color: "#ef4444", marginTop: 2, flexShrink: 0 }} />
+                            <span style={{ fontSize: 12, fontWeight: 600, color: "#374151", lineHeight: 1.5 }}>{o.userAddress || "No address provided"}</span>
+                          </div>
+                          {o.userCoordinates && sellerData?.coordinates ? (
+                            <a
+                              href={(() => { try { const [cLat, cLon] = o.userCoordinates.split(",").map(s => s.trim()); const [sLat, sLon] = sellerData.coordinates.split(",").map(s => s.trim()); return `https://www.google.com/maps/dir/${sLat},${sLon}/${cLat},${cLon}`; } catch { return "#"; } })()}
+                              target="_blank" rel="noopener noreferrer"
+                              style={{ display: "inline-flex", alignItems: "center", gap: 7, marginTop: 6, padding: "9px 14px", borderRadius: 10, background: "linear-gradient(135deg, #4f46e5, #7c3aed)", color: "white", fontSize: 12, fontWeight: 700, textDecoration: "none", boxShadow: "0 3px 10px rgba(79,70,229,0.3)", width: "fit-content" }}
+                            >
+                              <i className="fas fa-route" style={{ fontSize: 13 }} /> View Route on Map
+                            </a>
+                          ) : o.userCoordinates ? (
+                            <a
+                              href={(() => { try { const [cLat, cLon] = o.userCoordinates.split(",").map(s => s.trim()); return `https://www.google.com/maps/search/?api=1&query=${cLat},${cLon}`; } catch { return "#"; } })()}
+                              target="_blank" rel="noopener noreferrer"
+                              style={{ display: "inline-flex", alignItems: "center", gap: 7, marginTop: 6, padding: "9px 14px", borderRadius: 10, background: "#10b981", color: "white", fontSize: 12, fontWeight: 700, textDecoration: "none", boxShadow: "0 3px 10px rgba(16,185,129,0.3)", width: "fit-content" }}
+                            >
+                              <i className="fas fa-map-pin" style={{ fontSize: 13 }} /> View Customer Location
+                            </a>
+                          ) : null}
+                        </div>
+                      </div>
+
                       <button className="auth-btn-primary" style={{ width: "100%", borderRadius: 14, fontSize: 14, background: "var(--navy)", border: "none", height: 48 }} onClick={() => { updateDoc(doc(db, "orders", o.id), { status: "Shipped" }); alert("Order sent to delivery!"); }}>
                         Mark Packed & Handed Over
                       </button>
@@ -980,13 +1020,16 @@ export default function SellerPage() {
                   {categories.map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
 
-                {/* Size toggles */}
+                {/* Size toggles — show standard sizes for clothing, numeric for footwear */}
                 <div>
                   <p style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, letterSpacing: 1 }}>AVAILABLE SIZES</p>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    {["XS", "S", "M", "L", "XL", "XXL"].map((size) => (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {(pCategory === "Footwear"
+                      ? ["4", "5", "6", "7", "8", "9", "10", "11", "12"]
+                      : ["XS", "S", "M", "L", "XL", "XXL"]
+                    ).map((size) => (
                       <button key={size} onClick={() => toggleSize(size)} style={{
-                        width: 42, height: 42, borderRadius: 12, fontSize: 13, fontWeight: 700,
+                        width: 46, height: 46, borderRadius: 12, fontSize: 13, fontWeight: 700,
                         background: pSizes.includes(size) ? "var(--gold)" : "white",
                         color: pSizes.includes(size) ? "white" : "var(--text-muted)",
                         border: pSizes.includes(size) ? "none" : "1px solid #e2e8f0",
@@ -997,6 +1040,63 @@ export default function SellerPage() {
                     ))}
                   </div>
                 </div>
+
+                {/* Category-specific measurements */}
+                {(() => {
+                  const setM = (key, val) => setPMeasurements(prev => ({ ...prev, [key]: val }));
+                  const inputStyle = { padding: "12px 14px", borderRadius: 12, fontSize: 14, background: "white", border: "1px solid #e2e8f0", width: "100%", outline: "none" };
+                  const label = (txt) => <p style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 6, letterSpacing: 1 }}>{txt}</p>;
+
+                  if (pCategory === "Footwear") return (
+                    <div>
+                      <p style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, letterSpacing: 1 }}>👟 FOOTWEAR MEASUREMENTS</p>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <div>{label("FOOT LENGTH (cm)")} <input style={inputStyle} placeholder="e.g. 25.5" value={pMeasurements.footLength || ""} onChange={e => setM("footLength", e.target.value)} /></div>
+                        <div>{label("EU SIZE")} <input style={inputStyle} placeholder="e.g. 40" value={pMeasurements.euSize || ""} onChange={e => setM("euSize", e.target.value)} /></div>
+                        <div>{label("UK SIZE")} <input style={inputStyle} placeholder="e.g. 6" value={pMeasurements.ukSize || ""} onChange={e => setM("ukSize", e.target.value)} /></div>
+                        <div>{label("US SIZE")} <input style={inputStyle} placeholder="e.g. 7" value={pMeasurements.usSize || ""} onChange={e => setM("usSize", e.target.value)} /></div>
+                      </div>
+                    </div>
+                  );
+
+                  if (["Casual", "Formal"].includes(pCategory) && pName.toLowerCase().includes("jean") || pName.toLowerCase().includes("trouser") || pName.toLowerCase().includes("pant")) return (
+                    <div>
+                      <p style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, letterSpacing: 1 }}>👖 BOTTOM WEAR MEASUREMENTS</p>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <div>{label("WAIST (inches)")} <input style={inputStyle} placeholder="e.g. 30" value={pMeasurements.waist || ""} onChange={e => setM("waist", e.target.value)} /></div>
+                        <div>{label("LENGTH (inches)")} <input style={inputStyle} placeholder="e.g. 32" value={pMeasurements.length || ""} onChange={e => setM("length", e.target.value)} /></div>
+                        <div>{label("HIP (cm)")} <input style={inputStyle} placeholder="e.g. 90" value={pMeasurements.hip || ""} onChange={e => setM("hip", e.target.value)} /></div>
+                        <div>{label("RISE (inches)")} <input style={inputStyle} placeholder="e.g. 10" value={pMeasurements.rise || ""} onChange={e => setM("rise", e.target.value)} /></div>
+                      </div>
+                    </div>
+                  );
+
+                  if (["Men's Wear", "Women's Wear", "Kids Wear", "Ethnic", "Casual", "Formal"].includes(pCategory)) return (
+                    <div>
+                      <p style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, letterSpacing: 1 }}>👕 CLOTHING MEASUREMENTS</p>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <div>{label("CHEST (inches)")} <input style={inputStyle} placeholder="e.g. 38" value={pMeasurements.chest || ""} onChange={e => setM("chest", e.target.value)} /></div>
+                        <div>{label("WAIST (inches)")} <input style={inputStyle} placeholder="e.g. 32" value={pMeasurements.waist || ""} onChange={e => setM("waist", e.target.value)} /></div>
+                        <div>{label("SHOULDER (cm)")} <input style={inputStyle} placeholder="e.g. 44" value={pMeasurements.shoulder || ""} onChange={e => setM("shoulder", e.target.value)} /></div>
+                        <div>{label("LENGTH (cm)")} <input style={inputStyle} placeholder="e.g. 70" value={pMeasurements.length || ""} onChange={e => setM("length", e.target.value)} /></div>
+                        {pCategory === "Kids Wear" && <div>{label("AGE GROUP")} <input style={inputStyle} placeholder="e.g. 5-7 Years" value={pMeasurements.ageGroup || ""} onChange={e => setM("ageGroup", e.target.value)} /></div>}
+                      </div>
+                    </div>
+                  );
+
+                  if (pCategory === "Accessories") return (
+                    <div>
+                      <p style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, letterSpacing: 1 }}>💍 ACCESSORY DIMENSIONS</p>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <div>{label("WIDTH (cm)")} <input style={inputStyle} placeholder="e.g. 5" value={pMeasurements.width || ""} onChange={e => setM("width", e.target.value)} /></div>
+                        <div>{label("HEIGHT (cm)")} <input style={inputStyle} placeholder="e.g. 3" value={pMeasurements.height || ""} onChange={e => setM("height", e.target.value)} /></div>
+                        <div style={{ gridColumn: "1/-1" }}>{label("MATERIAL")} <input style={inputStyle} placeholder="e.g. Sterling Silver, Leather" value={pMeasurements.material || ""} onChange={e => setM("material", e.target.value)} /></div>
+                      </div>
+                    </div>
+                  );
+
+                  return null;
+                })()}
               </div>
               <div style={{ display: "flex", gap: 12, marginTop: 24 }}>
                 <button className="auth-btn-ghost" style={{ flex: 1, borderRadius: 16, height: 50 }} onClick={() => setShowModal(false)}>Cancel</button>

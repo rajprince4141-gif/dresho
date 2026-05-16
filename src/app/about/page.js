@@ -252,7 +252,7 @@ export default function AboutPage() {
         }
         .about-cta h2 {
           font-family: 'Cormorant Garamond', serif;
-          font-size: 32px;
+          font-size: 36px;
           font-weight: 300;
           color: #FAF7F2;
           margin-bottom: 12px;
@@ -264,6 +264,8 @@ export default function AboutPage() {
           color: rgba(234,224,210,0.55);
           margin-bottom: 28px;
           position: relative;
+          letter-spacing: 2px;
+          text-transform: uppercase;
         }
         .about-cta-btn {
           display: inline-block;
@@ -306,20 +308,20 @@ export default function AboutPage() {
         {/* ── Top bar ── */}
         <header className="about-topbar">
           <Link href="/" className="about-logo">Dres<span>h</span>o</Link>
-          <Link href="/" className="about-back">\u2190 Back to Shop</Link>
+          <Link href="/" className="about-back">← Back to Shop</Link>
         </header>
 
         {/* ── Hero ── */}
         <section className="about-hero">
           <div className="about-hero-eyebrow">
             <div className="about-hero-eyebrow-line" />
-            <span>Our Story</span>
+            <span>About Dresho</span>
             <div className="about-hero-eyebrow-line" />
           </div>
-          <h1>Fashion, Delivered <em>Instantly</em></h1>
+          <h1>Fast Local Shopping, <em>Delivered</em></h1>
           <p className="about-hero-sub">
-            Dresho is India\u2019s first luxury quick-commerce fashion platform. We bring premium clothing
-            from curated boutiques and top brands straight to your doorstep — in 30 minutes or less.
+            Dresho is a fast local shopping and delivery platform built to make fashion
+            and lifestyle shopping quicker, easier, and smarter.
           </p>
         </section>
 
@@ -328,55 +330,22 @@ export default function AboutPage() {
 
           {/* What is Dresho */}
           <div className="about-section">
-            <h2 className="about-section-title"><span className="icon">\u2728</span> What is Dresho?</h2>
+            <h2 className="about-section-title"><span className="icon">⚡</span> What is Dresho?</h2>
             <p>
-              Dresho is a premium quick-commerce clothing platform designed to revolutionize the way
-              India shops for fashion. Think of it as \u201CInstant Fashion Delivery\u201D \u2014 a curated marketplace
-              where customers can browse handpicked collections from top designers, local boutiques,
-              and trending brands, then receive their order at their doorstep in as little as 30 minutes.
+              From accessories and jewellery to outfits, footwear, and trending essentials —
+              Dresho connects customers with nearby stores and delivers products in minutes.
             </p>
             <p>
-              Unlike traditional e-commerce platforms that take days to deliver, Dresho leverages a
-              hyper-local network of seller partners and delivery riders to ensure your outfit arrives
-              in time \u2014 whether it\u2019s for a last-minute party, a spontaneous date night, or a festival
-              celebration.
+              Our mission is to empower local businesses by bringing them online while giving
+              customers a seamless and fast shopping experience.
             </p>
-          </div>
-
-          {/* How It Works */}
-          <div className="about-section">
-            <h2 className="about-section-title"><span className="icon">\u26A1</span> How It Works</h2>
-            <div className="about-steps">
-              <div className="about-step">
-                <div className="about-step-num">01</div>
-                <div className="about-step-title">Browse & Select</div>
-                <div className="about-step-desc">
-                  Explore curated collections across ethnic wear, western wear, casual, and formal categories.
-                  Filter by brand, size, and price.
-                </div>
-              </div>
-              <div className="about-step">
-                <div className="about-step-num">02</div>
-                <div className="about-step-title">Place Your Order</div>
-                <div className="about-step-desc">
-                  Choose your size, add to cart, and checkout with Cash on Delivery or UPI payment via Razorpay.
-                </div>
-              </div>
-              <div className="about-step">
-                <div className="about-step-num">03</div>
-                <div className="about-step-title">Instant Dispatch</div>
-                <div className="about-step-desc">
-                  Our nearby seller partner packs your order immediately. A delivery rider is assigned within seconds.
-                </div>
-              </div>
-              <div className="about-step">
-                <div className="about-step-num">04</div>
-                <div className="about-step-title">30-Min Delivery</div>
-                <div className="about-step-desc">
-                  Track your rider in real-time. Verify with your delivery OTP and enjoy your new outfit!
-                </div>
-              </div>
-            </div>
+            <p>Built with a vision to redefine local commerce, Dresho focuses on:</p>
+            <ul style={{ paddingLeft: 20, display: "flex", flexDirection: "column", gap: 8, color: "var(--sub, #5A6478)", fontSize: 14, lineHeight: 1.8 }}>
+              <li>⚡ Fast delivery</li>
+              <li>🏪 Local store empowerment</li>
+              <li>💰 Affordable marketplace commissions</li>
+              <li>🛍️ Smart and convenient shopping</li>
+            </ul>
           </div>
 
           {/* Stats */}
@@ -386,96 +355,109 @@ export default function AboutPage() {
               <div className="about-stat-label">Min Delivery</div>
             </div>
             <div className="about-stat">
-              <div className="about-stat-num">500+</div>
-              <div className="about-stat-label">Brands</div>
+              <div className="about-stat-num">1</div>
+              <div className="about-stat-label">City (Growing)</div>
             </div>
             <div className="about-stat">
-              <div className="about-stat-num">5</div>
-              <div className="about-stat-label">Cities</div>
+              <div className="about-stat-num">100%</div>
+              <div className="about-stat-label">Local Sellers</div>
             </div>
             <div className="about-stat">
-              <div className="about-stat-num">10K+</div>
-              <div className="about-stat-label">Happy Customers</div>
+              <div className="about-stat-num">COD</div>
+              <div className="about-stat-label">+ UPI Accepted</div>
             </div>
           </div>
 
-          {/* Mission */}
+          {/* Founding Team */}
           <div className="about-section">
-            <h2 className="about-section-title"><span className="icon">\uD83C\uDFAF</span> Our Mission</h2>
+            <h2 className="about-section-title"><span className="icon">👥</span> Founding Team</h2>
+            <div className="about-team">
+              <div className="about-team-card">
+                <div className="about-team-avatar">K</div>
+                <div className="about-team-name">Krishna Prakash</div>
+                <div className="about-team-role">Founder & CEO</div>
+                <p style={{ fontSize: 13, color: "var(--sub, #5A6478)", marginTop: 12, lineHeight: 1.7 }}>
+                  Leading the vision, growth, operations, and business strategy behind Dresho.
+                </p>
+              </div>
+              <div className="about-team-card">
+                <div className="about-team-avatar">P</div>
+                <div className="about-team-name">Prince Kumar</div>
+                <div className="about-team-role">Co-Founder & Head of Technology</div>
+                <p style={{ fontSize: 13, color: "var(--sub, #5A6478)", marginTop: 12, lineHeight: 1.7 }}>
+                  Leading the technology, platform development, and technical innovation powering Dresho.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Vision */}
+          <div className="about-section">
+            <h2 className="about-section-title"><span className="icon">🎯</span> Our Vision</h2>
             <p>
-              We believe fashion should be accessible, instant, and delightful. Our mission is to
-              eliminate the wait between \u201CI want this outfit\u201D and \u201CI\u2019m wearing it\u201D by building
-              India\u2019s fastest fashion delivery infrastructure.
-            </p>
-            <p>
-              We empower local sellers and boutique owners by providing them with a powerful digital
-              storefront and access to a growing customer base \u2014 all while ensuring customers receive
-              authentic, premium-quality fashion at fair prices.
+              To create a modern local commerce ecosystem where customers can discover and receive
+              products instantly from trusted nearby stores.
             </p>
           </div>
 
-          {/* For Sellers */}
+          {/* How It Works */}
           <div className="about-section">
-            <h2 className="about-section-title"><span className="icon">\uD83D\uDCBC</span> For Sellers & Brand Partners</h2>
-            <p>
-              Dresho offers a dedicated Seller Dashboard where boutique owners and fashion brands can
-              list products, manage inventory, track orders, and receive payments — all from one place.
-              Sellers retain 85% of every sale, with Dresho taking a 15% platform fee that covers
-              technology, logistics coordination, and customer support.
-            </p>
-            <p>
-              Interested in selling on Dresho? Visit our{" "}
-              <Link href="/seller" style={{ color: "var(--gold)", borderBottom: "1px solid var(--gold)" }}>Seller Portal</Link>{" "}
-              to get started.
-            </p>
-          </div>
-
-          {/* Technology */}
-          <div className="about-section">
-            <h2 className="about-section-title"><span className="icon">\uD83D\uDEE0\uFE0F</span> Built With</h2>
-            <p>
-              Dresho is built on modern, scalable technology to ensure a blazing-fast experience:
-            </p>
-            <p>
-              <strong>Frontend:</strong> Next.js (React) with Turbopack for near-instant page loads.
-              <br />
-              <strong>Backend:</strong> Firebase (Authentication, Firestore, Cloud Functions) for real-time data sync.
-              <br />
-              <strong>Payments:</strong> Razorpay for secure UPI and card payments; Cash on Delivery also supported.
-              <br />
-              <strong>Hosting:</strong> Vercel for edge-deployed, globally fast delivery.
-              <br />
-              <strong>Delivery:</strong> GPS-powered rider assignment with OTP verification for secure handoff.
-            </p>
+            <h2 className="about-section-title"><span className="icon">🛵</span> How It Works</h2>
+            <div className="about-steps">
+              <div className="about-step">
+                <div className="about-step-num">01</div>
+                <div className="about-step-title">Browse & Select</div>
+                <div className="about-step-desc">
+                  Explore products from local stores — fashion, accessories, footwear, and more.
+                </div>
+              </div>
+              <div className="about-step">
+                <div className="about-step-num">02</div>
+                <div className="about-step-title">Place Your Order</div>
+                <div className="about-step-desc">
+                  Choose your size, add to cart, and checkout with Cash on Delivery or UPI.
+                </div>
+              </div>
+              <div className="about-step">
+                <div className="about-step-num">03</div>
+                <div className="about-step-title">Instant Dispatch</div>
+                <div className="about-step-desc">
+                  The nearby seller packs your order immediately and a rider is assigned in seconds.
+                </div>
+              </div>
+              <div className="about-step">
+                <div className="about-step-num">04</div>
+                <div className="about-step-title">Delivered Fast</div>
+                <div className="about-step-desc">
+                  Track your rider and receive your order at your doorstep in 30 minutes or less.
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Contact */}
           <div className="about-section">
-            <h2 className="about-section-title"><span className="icon">\uD83D\uDCE9</span> Contact Us</h2>
-            <p>
-              Have questions, feedback, or partnership inquiries? We\u2019d love to hear from you.
-            </p>
+            <h2 className="about-section-title"><span className="icon">📩</span> Contact Us</h2>
+            <p>Have questions, feedback, or partnership inquiries? We&apos;d love to hear from you.</p>
             <p>
               <strong>Email:</strong>{" "}
               <a href="mailto:dresho.business@gmail.com" style={{ color: "var(--gold)" }}>dresho.business@gmail.com</a>
               <br />
-              <strong>WhatsApp:</strong> +91 9128926837 (10 AM \u2013 8 PM)
-              <br />
-              <strong>Will be Registered as:</strong> DRESHO
+              <strong>WhatsApp:</strong> +91 9128926837 (10 AM – 8 PM)
             </p>
           </div>
         </div>
 
         {/* ── CTA ── */}
         <div className="about-cta">
-          <h2>Ready to Experience <em>Instant Fashion</em>?</h2>
-          <p>Join thousands of customers already shopping with 30-minute delivery.</p>
+          <h2>Dresho <em>⚡</em></h2>
+          <p>Fast Local Shopping &amp; Delivery</p>
           <Link href="/" className="about-cta-btn">Start Shopping</Link>
         </div>
 
         {/* ── Footer ── */}
         <div className="about-footer">
-          \u00A9 2026 DRESHO.
+          © 2026 DRESHO. Fast Local Shopping &amp; Delivery.
         </div>
       </div>
     </>
