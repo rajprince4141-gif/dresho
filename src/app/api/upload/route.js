@@ -2,6 +2,10 @@
 // Proxies image uploads to ImgBB so NEXT_PUBLIC_IMGBB_API_KEY is never needed
 // The browser sends the raw file; this route sends it to ImgBB with the secret key.
 
+// Allow up to 10 MB request bodies (Next.js App Router default is 4 MB)
+export const maxDuration = 30;
+export const dynamic = 'force-dynamic';
+
 export async function POST(req) {
   try {
     const formData = await req.formData();
@@ -16,9 +20,9 @@ export async function POST(req) {
       return Response.json({ error: 'File must be under 10 MB' }, { status: 413 });
     }
 
-    // Type guard — images or PDFs (for rider document uploads)
-    if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
-      return Response.json({ error: 'File must be an image or PDF' }, { status: 415 });
+    // Type guard — images only (ImgBB does not support PDFs)
+    if (!file.type.startsWith('image/')) {
+      return Response.json({ error: 'File must be an image (JPG, PNG, etc.)' }, { status: 415 });
     }
 
     // Forward to ImgBB using server-only key

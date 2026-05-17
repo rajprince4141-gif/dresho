@@ -11,6 +11,7 @@ import {
   doc, setDoc, getDoc, collection, query, where,
   onSnapshot, updateDoc, addDoc, deleteDoc,
 } from "firebase/firestore";
+import { requestNotificationPermission } from "@/lib/firebase";
 
 export default function SellerPage() {
   const [user, setUser] = useState(null);
@@ -111,6 +112,13 @@ export default function SellerPage() {
           } else {
             setIsPending(true);
           }
+
+          // Request Push Notification Permission & Save Token
+          requestNotificationPermission().then(token => {
+            if (token && snap.data().fcmToken !== token) {
+              updateDoc(doc(db, "sellers_profile", u.uid), { fcmToken: token });
+            }
+          });
         } else {
           // Not a seller yet! Show registration form
           setUser(u);
@@ -756,6 +764,75 @@ export default function SellerPage() {
                     }} style={{ background: "transparent", color: "var(--navy)", fontSize: 13, fontWeight: 700, border: "none", cursor: "pointer" }}>Add</button>
                   )}
                 </div>
+
+                {/* Store Location — Required for delivery time calculation */}
+                <div className="premium-card" style={{ padding: 16, borderRadius: 16, border: sellerData?.coordinates ? "1px solid #10b981" : "1px solid rgba(245,158,11,0.4)", background: sellerData?.coordinates ? "rgba(16,185,129,0.03)" : "rgba(245,158,11,0.04)" }}>
+                  <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: sellerData?.coordinates ? 0 : 12 }}>
+                    <div style={{ width: 40, height: 40, borderRadius: 10, background: sellerData?.coordinates ? "rgba(16,185,129,0.1)" : "rgba(245,158,11,0.1)", display: "flex", alignItems: "center", justifyContent: "center", color: sellerData?.coordinates ? "#10b981" : "#f59e0b", flexShrink: 0 }}>
+                      <i className="fas fa-location-crosshairs" />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <h4 style={{ fontSize: 13, fontWeight: 800 }}>Store Location <span style={{ fontSize: 10, fontWeight: 600, color: "#ef4444", marginLeft: 4 }}>Required</span></h4>
+                      <p style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.4 }}>
+                        {sellerData?.coordinates
+                          ? `📍 Saved: ${sellerData.coordinates}`
+                          : "Needed to calculate delivery time for customers"}
+                      </p>
+                    </div>
+                    {sellerData?.coordinates && (
+                      <span style={{ color: "#10b981", fontSize: 13, fontWeight: 700, flexShrink: 0 }}><i className="fas fa-check" /> Done</span>
+                    )}
+                  </div>
+
+                  {!sellerData?.coordinates && (
+                    <div style={{ background: "rgba(245,158,11,0.08)", borderRadius: 10, padding: "10px 12px", marginBottom: 10, fontSize: 12, color: "#92400e", lineHeight: 1.5 }}>
+                      ⚠️ Without your location, customers will see a generic "45 min" estimate instead of the real delivery time.
+                    </div>
+                  )}
+
+                  <button
+                    onClick={async () => {
+                      if (!navigator.geolocation) return alert("Geolocation is not supported by your browser.");
+                      navigator.geolocation.getCurrentPosition(
+                        async (pos) => {
+                          const coords = `${pos.coords.latitude}, ${pos.coords.longitude}`;
+                          try {
+                            await updateDoc(doc(db, "sellers_profile", user.uid), { coordinates: coords });
+                            setSellerData({ ...sellerData, coordinates: coords });
+                            alert("✅ Store location saved! Customers will now see accurate delivery times.");
+                          } catch (e) { alert("Failed to save location: " + e.message); }
+                        },
+                        () => alert("Location access denied. Please allow location permission in your browser settings and try again.")
+                      );
+                    }}
+                    style={{ display: sellerData?.coordinates ? "none" : "flex", alignItems: "center", gap: 8, width: "100%", padding: "12px 16px", borderRadius: 10, background: "var(--navy)", color: "white", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700, justifyContent: "center" }}
+                  >
+                    <i className="fas fa-location-dot" /> Pin My Store Location
+                  </button>
+
+                  {sellerData?.coordinates && (
+                    <button
+                      onClick={async () => {
+                        if (!navigator.geolocation) return alert("Geolocation not supported.");
+                        navigator.geolocation.getCurrentPosition(
+                          async (pos) => {
+                            const coords = `${pos.coords.latitude}, ${pos.coords.longitude}`;
+                            try {
+                              await updateDoc(doc(db, "sellers_profile", user.uid), { coordinates: coords });
+                              setSellerData({ ...sellerData, coordinates: coords });
+                              alert("✅ Store location updated!");
+                            } catch (e) { alert("Failed: " + e.message); }
+                          },
+                          () => alert("Location access denied.")
+                        );
+                      }}
+                      style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6, background: "transparent", border: "1px solid rgba(16,185,129,0.3)", color: "#059669", padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                    >
+                      <i className="fas fa-rotate" /> Update Location
+                    </button>
+                  )}
+                </div>
+
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 24, padding: "0 8px" }}>
                 <i className="fas fa-shield-check" style={{ color: "var(--text-muted)" }} />
@@ -763,6 +840,7 @@ export default function SellerPage() {
               </div>
             </div>
           )}
+
 
           {/* INVENTORY */}
           {tab === "inventory" && (

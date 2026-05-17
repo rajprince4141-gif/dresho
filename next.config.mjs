@@ -28,6 +28,12 @@ const securityHeaders = [
 ];
 
 const nextConfig = {
+  experimental: {
+    // Allow up to 10MB uploads via /api/upload (Next.js default is 4MB)
+    serverActions: {
+      bodySizeLimit: '10mb',
+    },
+  },
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: 'images.unsplash.com' },

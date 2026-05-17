@@ -10,6 +10,9 @@ import {
 import {
   doc, getDoc, setDoc, collection, onSnapshot, updateDoc, deleteDoc,
 } from "firebase/firestore";
+import dynamicImport from "next/dynamic";
+
+const LiveMap = dynamicImport(() => import("@/components/LiveMap"), { ssr: false });
 
 // ── Revenue Formula Helpers ──────────────────────────────────────────────
 const calcCommission = (orderTotal) => {
@@ -51,7 +54,7 @@ export default function AdminPage() {
   const [banners, setBanners] = useState({});
   const [bannerRequests, setBannerRequests] = useState([]);
   const [editingBanner, setEditingBanner] = useState(null);
-  const [bannerForm, setBannerForm] = useState({ imageUrl: "", title: "", subtitle: "", tag: "", cta: "", expiry: "" });
+  const [bannerForm, setBannerForm] = useState({ imageUrl: "", title: "", subtitle: "", tag: "", cta: "", linkUrl: "", expiry: "" });
   const [bannerUploading, setBannerUploading] = useState(false);
   const [bannerUploadErr, setBannerUploadErr] = useState("");
 
@@ -87,6 +90,13 @@ export default function AdminPage() {
     });
     return () => unsub();
   }, []);
+
+  // Push Notification state
+  const [pushTitle, setPushTitle] = useState("");
+  const [pushBody, setPushBody] = useState("");
+  const [pushTarget, setPushTarget] = useState("all"); // 'all', 'customers', 'sellers', 'riders', 'specific'
+  const [pushSpecificId, setPushSpecificId] = useState("");
+  const [pushSending, setPushSending] = useState(false);
 
   const [feedbacks, setFeedbacks] = useState([]);
   useEffect(() => {
@@ -184,6 +194,18 @@ export default function AdminPage() {
     alert("Seller Approved! ✅");
   };
 
+  // Reusable helper to send a push notification via the API
+  const sendNotification = async (token, title, body) => {
+    if (!token) return;
+    try {
+      await fetch("/api/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, title, body }),
+      });
+    } catch (e) { console.error("Push notification failed:", e); }
+  };
+
   const removeSeller = async (id, name) => {
     if (!confirm(`Remove "${name}" from Dresho? This cannot be undone.`)) return;
     await deleteDoc(doc(db, "sellers_profile", id));
@@ -205,6 +227,9 @@ export default function AdminPage() {
 
   const approveRider = async (id) => {
     await updateDoc(doc(db, "delivery_profile", id), { approved: true });
+    // Notify the rider
+    const rider = deliveryAgents.find(r => r.id === id);
+    if (rider?.fcmToken) sendNotification(rider.fcmToken, "🎉 You're Approved!", "Congratulations! Your Dresho rider account has been approved. You can now go online and accept deliveries.");
     alert("Rider Approved! ✅");
   };
 
@@ -212,6 +237,16 @@ export default function AdminPage() {
     if (!confirm(`Remove rider "${name}" from Dresho? This cannot be undone.`)) return;
     await deleteDoc(doc(db, "delivery_profile", id));
     alert("Rider removed.");
+  };
+
+  const removeUser = async (id, name) => {
+    if (!confirm(`Permanently delete the user "${name}"? This action cannot be undone.`)) return;
+    try {
+      await deleteDoc(doc(db, "users", id));
+      alert("User deleted successfully.");
+    } catch (e) {
+      alert("Failed to delete user: " + e.message);
+    }
   };
 
   const suspendRider = async (id, current) => {
@@ -228,6 +263,7 @@ export default function AdminPage() {
       subtitle: existing.subtitle || "",
       tag: existing.tag || "",
       cta: existing.cta || "",
+      linkUrl: existing.linkUrl || "",
       expiry: existing.expiry || "",
     });
     setEditingBanner(bannerId);
@@ -271,7 +307,53 @@ export default function AdminPage() {
         assignedSlot: slot,
       });
       alert(`Banner approved for Slot ${slot}, ${duration} days! ✅`);
+      // Notify the seller
+      const seller = sellers.find(s => s.id === req.sellerId);
+      if (seller?.fcmToken) sendNotification(seller.fcmToken, "🎉 Banner Approved!", `Your banner ad has been approved and will run for ${duration} days!`);
     } catch (e) { alert("Failed: " + e.message); }
+  };
+
+  const sendPushNotification = async (e) => {
+    e.preventDefault();
+    if (!pushTitle || !pushBody) return alert("Title and Body are required.");
+    setPushSending(true);
+
+    try {
+      let targetTokens = [];
+      const fetchTokens = (collectionData) => collectionData.map(d => d.fcmToken).filter(Boolean);
+
+      if (pushTarget === "all" || pushTarget === "customers") targetTokens.push(...fetchTokens(users));
+      if (pushTarget === "all" || pushTarget === "sellers") targetTokens.push(...fetchTokens(sellers));
+      if (pushTarget === "all" || pushTarget === "riders") targetTokens.push(...fetchTokens(deliveryAgents));
+      if (pushTarget === "specific" && pushSpecificId) {
+        const u = [...users, ...sellers, ...deliveryAgents].find(d => d.id === pushSpecificId);
+        if (u && u.fcmToken) targetTokens.push(u.fcmToken);
+      }
+
+      if (targetTokens.length === 0) {
+        alert("No users found with valid notification tokens for this target.");
+        setPushSending(false);
+        return;
+      }
+
+      let successCount = 0;
+      for (const token of targetTokens) {
+        const res = await fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token, title: pushTitle, body: pushBody })
+        });
+        if (res.ok) successCount++;
+      }
+
+      alert(`Successfully sent notification to ${successCount} user(s).`);
+      setPushTitle("");
+      setPushBody("");
+    } catch (err) {
+      console.error(err);
+      alert("Error sending notification.");
+    }
+    setPushSending(false);
   };
 
   const rejectBannerRequest = async (reqId) => {
@@ -344,6 +426,7 @@ export default function AdminPage() {
     { label:"Content", items:[
       { id:"reviews", icon:"fa-star",  label:"Ratings & Reviews" },
       { id:"banners", icon:"fa-image", label:"Banners" },
+      { id:"notifications", icon:"fa-bell", label:"Push Notifications" },
     ]},
   ];
 
@@ -400,6 +483,12 @@ export default function AdminPage() {
             </div>
             <div className="adm-tb-spacer"/>
             <div className="adm-tb-date">{new Date().toLocaleDateString("en-IN",{weekday:"short",day:"numeric",month:"short",year:"numeric"})}</div>
+            <div className="adm-tb-divider"/>
+            <Link href="/" style={{ textDecoration: 'none' }}>
+              <button style={{ background: "var(--navy)", color: "#fff", border: "none", padding: "8px 16px", borderRadius: "10px", fontSize: "13px", fontWeight: "700", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", boxShadow: "0 2px 4px rgba(15,23,42,0.1)" }}>
+                <i className="fas fa-external-link-alt" /> View Website
+              </button>
+            </Link>
             <div className="adm-tb-divider"/>
             <div style={{ position: "relative" }}>
               <div className="adm-tb-action" onClick={() => setShowMessages(!showMessages)}>
@@ -1005,7 +1094,10 @@ export default function AdminPage() {
                         <div style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(140deg,var(--adm-gold-hi),#8C620A)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,color:"#fff",flexShrink:0}}>
                           {(u.name||"U").charAt(0).toUpperCase()}
                         </div>
-                        <div style={{fontWeight:600,fontSize:14,color:"var(--adm-t1)"}}>{u.name}</div>
+                        <div style={{fontWeight:600,fontSize:14,color:"var(--adm-t1)", flex: 1}}>{u.name}</div>
+                        <button onClick={() => removeUser(u.id, u.name)} style={{ background: "transparent", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 16, padding: "4px" }} title="Delete User">
+                          <i className="fas fa-trash-alt" />
+                        </button>
                       </div>
                       <div style={{display:"flex",flexDirection:"column",gap:7}}>
                         {[
@@ -1057,15 +1149,9 @@ export default function AdminPage() {
                           <span style={{ fontSize: 13, fontWeight: 700, color: "var(--navy)" }}>{d.name}</span>
                           <span style={{ fontSize: 10, background: "#ecfdf5", color: "#10b981", padding: "2px 6px", borderRadius: 4, fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", animation: "pulse 2s infinite" }}></span> Live</span>
                         </div>
-                        <iframe 
-                          width="100%" 
-                          height="200" 
-                          frameBorder="0" 
-                          scrolling="no" 
-                          marginHeight="0" 
-                          marginWidth="0" 
-                          src={`https://maps.google.com/maps?q=${d.liveLocation.lat},${d.liveLocation.lng}&z=15&output=embed`}
-                        />
+                        <div style={{ width: "100%", height: 200, position: "relative" }}>
+                          <LiveMap lat={d.liveLocation.lat} lng={d.liveLocation.lng} label={d.name} />
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1371,11 +1457,11 @@ export default function AdminPage() {
                               try {
                                 const fd = new FormData();
                                 fd.append("image", file);
-                                const res = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`, { method: "POST", body: fd });
+                                const res = await fetch("/api/upload", { method: "POST", body: fd });
                                 const json = await res.json();
-                                if (json.success) {
-                                  setBannerForm(prev => ({ ...prev, imageUrl: json.data.url }));
-                                } else { setBannerUploadErr("Upload failed. Try again."); }
+                                if (res.ok && json.url) {
+                                  setBannerForm(prev => ({ ...prev, imageUrl: json.url }));
+                                } else { setBannerUploadErr(json.error || "Upload failed. Try again."); }
                               } catch { setBannerUploadErr("Upload error. Check connection."); }
                               finally { setBannerUploading(false); e.target.value = ""; }
                             }}
@@ -1405,6 +1491,10 @@ export default function AdminPage() {
                           <label style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, color: "#888", display: "block", marginBottom: 4 }}>CTA TEXT</label>
                           <input className="glass-input" placeholder="e.g. Shop Now" value={bannerForm.cta} onChange={(e) => setBannerForm({ ...bannerForm, cta: e.target.value })} />
                         </div>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, color: "#888", display: "block", marginBottom: 4 }}>LINK URL (Optional)</label>
+                        <input className="glass-input" placeholder="e.g. /shop/category/women" value={bannerForm.linkUrl} onChange={(e) => setBannerForm({ ...bannerForm, linkUrl: e.target.value })} />
                       </div>
                       <div>
                         <label style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, color: "#888", display: "block", marginBottom: 4 }}>EXPIRY DATE</label>
@@ -1458,10 +1548,60 @@ export default function AdminPage() {
               )}
             </div>
           )}
+          {tab === "notifications" && (
+            <div className="animate-fade-in">
+              <div className="adm-ph">
+                <div>
+                  <div className="adm-eyebrow">Engagement</div>
+                  <div className="adm-title">Push Notifications</div>
+                  <div className="adm-sub">Send manual alerts to your users</div>
+                </div>
+              </div>
+              <div className="adm-grid" style={{ gridTemplateColumns: "1fr" }}>
+                <div className="adm-card">
+                  <div className="adm-card-head"><h3 className="adm-card-title">Compose Message</h3></div>
+                  <div style={{ padding: 20 }}>
+                    <form onSubmit={sendPushNotification} style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 500 }}>
+                      <div>
+                        <label style={{ fontSize: 12, fontWeight: 700, color: "var(--adm-t2)", marginBottom: 6, display: "block" }}>Notification Title</label>
+                        <input className="adm-input" value={pushTitle} onChange={e=>setPushTitle(e.target.value)} placeholder="e.g. 50% OFF Flash Sale!" required />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 12, fontWeight: 700, color: "var(--adm-t2)", marginBottom: 6, display: "block" }}>Notification Message</label>
+                        <textarea className="adm-input" value={pushBody} onChange={e=>setPushBody(e.target.value)} placeholder="e.g. Hurry up! Sale ends in 2 hours." rows={3} required />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 12, fontWeight: 700, color: "var(--adm-t2)", marginBottom: 6, display: "block" }}>Target Audience</label>
+                        <select className="adm-input" value={pushTarget} onChange={e=>setPushTarget(e.target.value)}>
+                          <option value="all">Everyone (Customers, Sellers, Riders)</option>
+                          <option value="customers">Only Customers</option>
+                          <option value="sellers">Only Sellers</option>
+                          <option value="riders">Only Riders</option>
+                          <option value="specific">Specific User ID</option>
+                        </select>
+                      </div>
+                      {pushTarget === "specific" && (
+                        <div>
+                          <label style={{ fontSize: 12, fontWeight: 700, color: "var(--adm-t2)", marginBottom: 6, display: "block" }}>User ID</label>
+                          <input className="adm-input" value={pushSpecificId} onChange={e=>setPushSpecificId(e.target.value)} placeholder="Enter User ID" required />
+                        </div>
+                      )}
+                      <button type="submit" className="adm-btn" style={{ marginTop: 10, alignSelf: "flex-start" }} disabled={pushSending}>
+                        {pushSending ? "Sending..." : "Send Notification"} <i className="fas fa-paper-plane" style={{ marginLeft: 8 }}/>
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
         </div>{/* end adm-page-inner */}
-        </div>{/* end adm-page */}
-        </div>{/* end adm-main */}
-      </div>{/* end adm-app */}
-    </>
+      </div>{/* end adm-page */}
+    </div>{/* end adm-main */}
+  </div>{/* end adm-app */}
+</>
   );
 }
+
+

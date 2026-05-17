@@ -13,8 +13,12 @@ import {
 } from "firebase/auth";
 import {
   doc, setDoc, getDoc, getDocs, collection, query, where,
-  onSnapshot, addDoc, orderBy, arrayUnion, updateDoc
+  onSnapshot, addDoc, orderBy, arrayUnion, arrayRemove, increment, writeBatch,
 } from "firebase/firestore";
+import { requestNotificationPermission } from "@/lib/firebase";
+import dynamicImport from "next/dynamic";
+
+const LiveMap = dynamicImport(() => import("@/components/LiveMap"), { ssr: false });
 
 /* ═══════════════════════════════════════
    Dresho — Customer Shopping Experience
@@ -50,6 +54,7 @@ export default function ShopPage() {
   const [currentCategory, setCurrentCategory] = useState("All");
   const [cart, setCart] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [riderLocations, setRiderLocations] = useState({});
   const [viewProduct, setViewProduct] = useState(null);
   const [selectedSize, setSelectedSize] = useState("");
   const [favorites, setFavorites] = useState([]);
@@ -85,6 +90,41 @@ export default function ShopPage() {
 
   const [loaded, setLoaded] = useState(false);
   const [timeLeft, setTimeLeft] = useState({ h: "04", m: "32", s: "17" });
+  const [heroBanners, setHeroBanners] = useState([]);
+
+  // ── Banners Listener — Admin-controlled hero slides ──
+  useEffect(() => {
+    const bannerIds = ["banner_1", "banner_2", "banner_3", "banner_4", "banner_5"];
+    const unsubs = bannerIds.map((id) =>
+      onSnapshot(doc(db, "banners", id), (snap) => {
+        if (snap.exists()) {
+          const d = snap.data();
+          // Check if banner has not expired
+          const expired = d.expiry && new Date(d.expiry) < new Date();
+          if (!expired && d.imageUrl) {
+            setHeroBanners((prev) => {
+              const filtered = prev.filter((b) => b.id !== id);
+              return [...filtered, { id, ...d }].sort((a, b) => a.id.localeCompare(b.id));
+            });
+          } else {
+            setHeroBanners((prev) => prev.filter((b) => b.id !== id));
+          }
+        } else {
+          setHeroBanners((prev) => prev.filter((b) => b.id !== id));
+        }
+      })
+    );
+    return () => unsubs.forEach((u) => u());
+  }, []);
+
+  // ── Auto-Slide Logic for Hero Banners ──
+  useEffect(() => {
+    const total = heroBanners.length > 0 ? heroBanners.length : 3;
+    const interval = setInterval(() => {
+      setActiveSlide((prev) => (prev >= total - 1 ? 0 : prev + 1));
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [heroBanners.length]);
 
   useEffect(() => {
     let end = new Date().getTime() + 4 * 3600000 + 32 * 60000 + 17000;
@@ -141,44 +181,70 @@ export default function ShopPage() {
     setCheckingPincode(true);
     setPincodeStatus(null);
     try {
-      // Geocode Pincode
+      // Step 1: Geocode the customer's pincode to lat/lng
       const res = await fetch(`https://nominatim.openstreetmap.org/search?postalcode=${pincode}&country=India&format=json`);
       const geoData = await res.json();
-      
+
       if (!geoData || geoData.length === 0) {
         setPincodeStatus({ type: "error", msg: "Invalid pincode or location not found." });
         setCheckingPincode(false);
         return;
       }
-      
-      const pinLat = parseFloat(geoData[0].lat);
-      const pinLng = parseFloat(geoData[0].lon);
 
-      // Fetch online riders
-      const q = query(collection(db, "delivery_profile"), where("online", "==", true));
-      const snap = await getDocs(q);
-      
+      const custLat = parseFloat(geoData[0].lat);
+      const custLng = parseFloat(geoData[0].lon);
+
+      // Step 2: Check if any ONLINE rider is within 4km of the customer's pincode
+      const riderQuery = query(collection(db, "delivery_profile"), where("online", "==", true));
+      const riderSnap = await getDocs(riderQuery);
+
       let riderNearby = false;
-      snap.forEach((docSnap) => {
+      riderSnap.forEach((docSnap) => {
         const data = docSnap.data();
-        if (data.liveLocation && data.liveLocation.lat && data.liveLocation.lng) {
-          const dist = calculateDistance(pinLat, pinLng, data.liveLocation.lat, data.liveLocation.lng);
-          if (dist <= 3) {
-            riderNearby = true;
-          }
+        if (data.liveLocation?.lat && data.liveLocation?.lng) {
+          const dist = calculateDistance(custLat, custLng, data.liveLocation.lat, data.liveLocation.lng);
+          if (dist <= 4) riderNearby = true;
         }
       });
-      
-      if (riderNearby) {
-        setPincodeStatus({ type: "success", msg: `Yes! Deliverable within 30 mins to ${pincode}.` });
-      } else {
-        setPincodeStatus({ type: "error", msg: `No riders within 3km of ${pincode}. Try again after a few hours.` });
+
+      if (!riderNearby) {
+        setPincodeStatus({ type: "error", msg: `No riders available near ${pincode} right now. Try again later.` });
+        setCheckingPincode(false);
+        return;
       }
+
+      // Step 3: Get the current product's seller location to calculate delivery time
+      let deliveryMins = 45; // default fallback
+      const sellerId = viewProduct?.sellerId;
+      if (sellerId) {
+        try {
+          const sellerDoc = await getDoc(doc(db, "sellers_profile", sellerId));
+          if (sellerDoc.exists() && sellerDoc.data().coordinates) {
+            const [sellLat, sellLng] = sellerDoc.data().coordinates.split(",").map(Number);
+            if (sellLat && sellLng) {
+              // Distance from seller to customer (with 1.3x road factor)
+              const distKm = calculateDistance(sellLat, sellLng, custLat, custLng) * 1.3;
+              // Avg city speed: 25 km/h → distKm / 25 * 60 mins
+              const travelMins = Math.round((distKm / 25) * 60);
+              const packingMins = 5; // packing time
+              deliveryMins = travelMins + packingMins;
+              // Clamp: min 10 mins, max 90 mins
+              deliveryMins = Math.max(10, Math.min(90, deliveryMins));
+            }
+          }
+        } catch (_) {}
+      }
+
+      setPincodeStatus({
+        type: "success",
+        msg: `✅ Deliverable to ${pincode}! Estimated delivery: ~${deliveryMins} mins.`,
+      });
     } catch (e) {
-      setPincodeStatus({ type: "error", msg: "Failed to check availability." });
+      setPincodeStatus({ type: "error", msg: "Failed to check delivery availability." });
     }
     setCheckingPincode(false);
   };
+
 
   const submitReview = async () => {
     if (!user) {
@@ -269,6 +335,15 @@ export default function ShopPage() {
 
         setUser(u);
         setUserData({ ...finalData, role: currentRole });
+
+        // Request Push Notification Permission & Save Token
+        if (currentRole === "user" && snap.exists()) {
+          requestNotificationPermission().then(token => {
+            if (token && finalData.fcmToken !== token) {
+              updateDoc(doc(db, "users", u.uid), { fcmToken: token });
+            }
+          });
+        }
       } else {
         setUser(null);
         setUserData(null);
@@ -351,10 +426,40 @@ export default function ShopPage() {
     const unsub = onSnapshot(q, (snap) => {
       const o = [];
       snap.forEach((d) => o.push({ id: d.id, ...d.data() }));
+      // Sort orders by newest first
+      o.sort((a, b) => b.createdAt?.toMillis?.() - a.createdAt?.toMillis?.());
       setOrders(o);
     });
     return () => unsub();
   }, [user]);
+
+  // ── Rider Location Tracking ──
+  useEffect(() => {
+    if (!orders || orders.length === 0) return;
+    const activeRiders = new Set();
+    orders.forEach(o => {
+      if (o.status === "Out for Delivery" && o.riderId) {
+        activeRiders.add(o.riderId);
+      }
+    });
+
+    if (activeRiders.size === 0) return;
+
+    const unsubs = [];
+    activeRiders.forEach(riderId => {
+      const unsub = onSnapshot(doc(db, "delivery_profile", riderId), (docSnap) => {
+        if (docSnap.exists()) {
+          setRiderLocations(prev => ({
+            ...prev,
+            [riderId]: docSnap.data().liveLocation || null
+          }));
+        }
+      });
+      unsubs.push(unsub);
+    });
+
+    return () => unsubs.forEach(fn => fn());
+  }, [orders]);
 
   // ── Setup Recaptcha ──
   // ── Google Sign-In for customers ──
@@ -565,7 +670,7 @@ export default function ShopPage() {
         await new Promise((resolve, reject) => {
           const options = {
             key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "rzp_test_SfdWyoWv6wqHiT",
-            amount: Math.round(grandTotal * 100) || 100, // paise, fallback to 100 to prevent crash
+            amount: Math.round(grandTotal * 100) || 100,
             currency: "INR",
             name: "Dresho",
             description: `Order — ${cart.length} item(s)`,
@@ -602,6 +707,17 @@ export default function ShopPage() {
                   riderId: null,
                   createdAt: new Date(),
                 });
+                // Notify customer (UPI)
+                if (userData?.fcmToken) {
+                  fetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: userData.fcmToken, title: "Order Confirmed! ⚡", body: `Your order #${trackingId} has been placed successfully.` }) });
+                }
+                // Notify seller (UPI)
+                if (sellerId) {
+                  const sellerSnap = await getDoc(doc(db, "sellers_profile", sellerId));
+                  if (sellerSnap.exists() && sellerSnap.data().fcmToken) {
+                    fetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: sellerSnap.data().fcmToken, title: "🔥 New Order Received!", body: `You have a new order from ${userData.name}. Open your dashboard now!` }) });
+                  }
+                }
                 await setDoc(doc(db, "users", user.uid), { address: { line: checkoutAddress, landmark: checkoutLandmark, city: checkoutCity, pincode: checkoutPincode }, phone: checkoutPhone }, { merge: true });
                 setUserData((prev) => ({ ...prev, address: { line: checkoutAddress, landmark: checkoutLandmark, city: checkoutCity, pincode: checkoutPincode }, phone: checkoutPhone }));
                 setCart([]);
@@ -645,6 +761,18 @@ export default function ShopPage() {
         riderId: null,
         createdAt: new Date(),
       });
+      // Notify customer (COD)
+      if (userData?.fcmToken) {
+        fetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: userData.fcmToken, title: "Order Confirmed! ⚡", body: `Your order #${trackingId} has been placed. Pay ₹${grandTotal} on delivery.` }) });
+      }
+      // Notify seller (COD)
+      if (sellerId) {
+        getDoc(doc(db, "sellers_profile", sellerId)).then(sellerSnap => {
+          if (sellerSnap.exists() && sellerSnap.data().fcmToken) {
+            fetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: sellerSnap.data().fcmToken, title: "🔥 New Order Received!", body: `New COD order from ${userData.name}. Open your dashboard!` }) });
+          }
+        });
+      }
       await setDoc(doc(db, "users", user.uid), { address: { line: checkoutAddress, landmark: checkoutLandmark, city: checkoutCity, pincode: checkoutPincode }, phone: checkoutPhone }, { merge: true });
       setUserData((prev) => ({ ...prev, address: { line: checkoutAddress, landmark: checkoutLandmark, city: checkoutCity, pincode: checkoutPincode }, phone: checkoutPhone }));
       setCart([]);
@@ -653,6 +781,154 @@ export default function ShopPage() {
       alert(`✅ Order placed! Your OTP: ${otp}\nPayment: Cash on Delivery`);
     } catch (e) { alert("Order failed: " + e.message); }
     setPlacing(false);
+  };
+
+  const handleReturnOrder = async (orderId) => {
+    const reason = prompt("Please provide a reason for the return:");
+    if (!reason) return;
+    try {
+      await updateDoc(doc(db, "orders", orderId), { status: "Return Requested", returnReason: reason, returnedAt: new Date() });
+      alert("Return request submitted successfully. Our team will contact you shortly.");
+    } catch (e) { alert("Failed to submit return request: " + e.message); }
+  };
+
+  const handleExchangeOrder = async (orderId) => {
+    const details = prompt("Please provide exchange details (e.g., needed size L instead of M):");
+    if (!details) return;
+    try {
+      await updateDoc(doc(db, "orders", orderId), { status: "Exchange Requested", exchangeDetails: details, exchangedAt: new Date() });
+      alert("Exchange request submitted successfully.");
+    } catch (e) { alert("Failed to submit exchange request: " + e.message); }
+  };
+
+  const handleRateProduct = async (orderId) => {
+    const rating = prompt("Rate your product from 1 to 5 stars:");
+    if (!rating || isNaN(rating) || rating < 1 || rating > 5) return alert("Please enter a valid rating between 1 and 5.");
+    const review = prompt("Any feedback you'd like to share? (Optional)");
+    try {
+      await updateDoc(doc(db, "orders", orderId), { rating: Number(rating), review: review || "", ratedAt: new Date() });
+      alert("Thank you for your rating! ⭐");
+    } catch (e) { alert("Failed to submit rating: " + e.message); }
+  };
+
+  const downloadInvoice = async (o) => {
+    try {
+      const { jsPDF } = await import("jspdf");
+      const html2canvas = (await import("html2canvas")).default;
+      
+      const invoiceDiv = document.createElement("div");
+      invoiceDiv.style.width = "800px";
+      invoiceDiv.style.padding = "40px";
+      invoiceDiv.style.background = "#fff";
+      invoiceDiv.style.color = "#000";
+      invoiceDiv.style.fontFamily = "sans-serif";
+      invoiceDiv.style.position = "absolute";
+      invoiceDiv.style.left = "-9999px"; 
+      
+      const orderDate = o.createdAt?.toDate ? o.createdAt.toDate().toLocaleString() : "N/A";
+      
+      let sellerName = "Dresho Official";
+      let sellerContact = "Fulfilled by Dresho Logistics";
+      if (o.sellerId) {
+        const snap = await getDoc(doc(db, "sellers_profile", o.sellerId));
+        if (snap.exists()) {
+           sellerName = snap.data().shopName || "Dresho Verified Seller";
+           sellerContact = snap.data().phone || snap.data().email || "";
+        }
+      }
+
+      let itemsHtml = o.items?.map(item => `
+        <tr style="border-bottom:1px solid #ddd;">
+          <td style="padding:10px 0;">${item.name} ${item.size ? `(${item.size})` : ""}</td>
+          <td style="padding:10px 0; text-align:center;">${item.qty}</td>
+          <td style="padding:10px 0; text-align:right;">₹${item.price}</td>
+          <td style="padding:10px 0; text-align:right;">₹${item.price * item.qty}</td>
+        </tr>
+      `).join("") || "";
+
+      invoiceDiv.innerHTML = `
+        <div style="border-bottom: 2px solid #000; padding-bottom: 20px; margin-bottom: 20px; display:flex; justify-content:space-between; align-items:flex-start;">
+          <div>
+            <h1 style="margin:0; font-size: 32px; font-weight:900; letter-spacing: -1px; color: #16a34a;">DRESHO</h1>
+            <p style="margin:5px 0 0; color:#555; font-size:14px;">support@dresho.com | +91 9876543210</p>
+          </div>
+          <div style="text-align:right;">
+            <h2 style="margin:0; color:#333;">TAX INVOICE</h2>
+            <p style="margin:5px 0 0; font-weight:bold;">Order ID: #${o.trackingId}</p>
+            <p style="margin:5px 0 0; font-size:14px;">Date: ${orderDate}</p>
+          </div>
+        </div>
+        
+        <div style="display:flex; justify-content:space-between; margin-bottom: 30px;">
+          <div style="width: 45%;">
+            <h3 style="margin-bottom:10px; border-bottom:1px solid #eee; padding-bottom:5px;">Billed To:</h3>
+            <p style="margin:0; font-weight:bold;">${userData?.name || "Customer"}</p>
+            <p style="margin:5px 0;">${userData?.phone || o.phone || "N/A"}</p>
+            <p style="margin:5px 0; line-height: 1.5;">${userData?.address?.line || o.address?.line || ""} ${userData?.address?.city || ""}</p>
+          </div>
+          <div style="width: 45%;">
+            <h3 style="margin-bottom:10px; border-bottom:1px solid #eee; padding-bottom:5px;">Sold By:</h3>
+            <p style="margin:0; font-weight:bold;">${sellerName}</p>
+            <p style="margin:5px 0;">${sellerContact}</p>
+          </div>
+        </div>
+        
+        <table style="width:100%; border-collapse:collapse; margin-bottom:20px;">
+          <thead>
+            <tr style="background:#f8fafc; border-bottom:2px solid #cbd5e1;">
+              <th style="padding:10px; text-align:left;">Item Description</th>
+              <th style="padding:10px; text-align:center;">Qty</th>
+              <th style="padding:10px; text-align:right;">Unit Price</th>
+              <th style="padding:10px; text-align:right;">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itemsHtml}
+          </tbody>
+        </table>
+        
+        <div style="display:flex; justify-content:flex-end;">
+          <div style="width: 300px;">
+            <div style="display:flex; justify-content:space-between; padding:5px 0;">
+              <span>Subtotal:</span>
+              <span>₹${o.items?.reduce((acc, i) => acc + (i.price*i.qty), 0) || 0}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; padding:5px 0;">
+              <span>Delivery Fee:</span>
+              <span>₹${o.deliveryFee || 0}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; padding:10px 0; border-top:2px solid #000; font-weight:bold; font-size:18px;">
+              <span>Grand Total:</span>
+              <span>₹${o.total}</span>
+            </div>
+            <div style="text-align:right; font-size:12px; color:#666; margin-top:5px;">
+              Payment Method: ${o.paymentMethod || "Cash on Delivery"}
+            </div>
+          </div>
+        </div>
+        
+        <div style="margin-top: 50px; text-align:center; color:#888; font-size:12px; border-top:1px dashed #ddd; padding-top:20px;">
+          <p>Thank you for shopping with Dresho!</p>
+          <p>This is a computer-generated invoice and does not require a physical signature.</p>
+        </div>
+      `;
+      
+      document.body.appendChild(invoiceDiv);
+      
+      const canvas = await html2canvas(invoiceDiv, { scale: 2 });
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF("p", "mm", "a4");
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      
+      pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
+      pdf.save(`Dresho_Invoice_${o.trackingId}.pdf`);
+      
+      document.body.removeChild(invoiceDiv);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to generate invoice.");
+    }
   };
 
   const filteredProducts = currentCategory === "All" ? products : products.filter((p) => p.category === currentCategory);
@@ -898,68 +1174,70 @@ export default function ShopPage() {
               </div>
             </div>
 
-            {/* HERO BANNER */}
-            <div className="hero-banner" id="heroBanner">
-              <div className="hero-slides" style={{ transform: `translateX(-${activeSlide * 100}%)` }}>
-                {/* Slide 1 */}
-                <div className="hero-slide slide-1">
-                  <div className="slide-content">
-                    <div className="slide-tag"><span>⚡ Express Fashion</span></div>
-                    <h1 className="slide-title">Style Arrives<br/><em>in 30 Minutes</em></h1>
-                    <p className="slide-sub">Premium brands. Real-time inventory.<br/>Delivered to your door faster than you think.</p>
-                    <div className="slide-cta">
-                      <button className="btn-slide-primary" onClick={(e) => { e.stopPropagation(); window.location.href = '/shop/category/all'; }}>Shop Now</button>
-                    </div>
+            {/* HERO BANNER — Dynamic from Firestore admin panel */}
+            {(() => {
+              const defaultSlides = [
+                { id: "default_1", imageUrl: "/banners/banner_new.png", tag: "SPRING / SUMMER 2024", title: "Timeless Style,", subtitle: "Modern You", cta: "Explore Collection ➔", linkUrl: "/shop/category/men" },
+                { id: "default_2", imageUrl: "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=600&q=80", tag: "🥻 New Ethnic Collection", title: "Celebrate Every", subtitle: "Occasion", cta: "Shop Now", badge: "40% Off" },
+                { id: "default_3", imageUrl: "https://images.unsplash.com/photo-1617137968427-85924c800a22?w=600&q=80", tag: "👔 Men's New In", title: "Dress Sharp.", subtitle: "Every Day.", cta: "Shop Now", badge: "Free Delivery" },
+              ];
+              const slides = heroBanners.length > 0 ? heroBanners : defaultSlides;
+              const total = slides.length;
+              const safeSlide = activeSlide >= total ? 0 : activeSlide;
+              return (
+                <div className="hero-banner" id="heroBanner">
+                  <div className="hero-slides" style={{ transform: `translateX(-${safeSlide * 100}%)` }}>
+                    {slides.map((slide, i) => (
+                      <div 
+                        key={slide.id} 
+                        className={`hero-slide slide-${(i % 3) + 1}`} 
+                        onClick={() => window.location.href = slide.linkUrl || '/shop/category/all'}
+                        style={{ cursor: "pointer", background: i === 0 ? "#F3EBE1" : "" }}
+                      >
+                        <div className="slide-content">
+                          {slide.tag && <div className="slide-tag"><span style={{ color: i === 0 ? "var(--navy)" : "" }}>{slide.tag}</span></div>}
+                          <h1 className="slide-title" style={{ color: i === 0 ? "var(--navy)" : "" }}>
+                            {slide.title || "Fashion in"}<br/><em>{slide.subtitle || "30 Minutes"}</em>
+                          </h1>
+                          {slide.subtitle && !slide.title && null}
+                          <div className="slide-cta">
+                            <button className="btn-slide-primary" onClick={(e) => { e.stopPropagation(); window.location.href = slide.linkUrl || '/shop/category/all'; }}>{slide.cta || "Shop Now"}</button>
+                          </div>
+                        </div>
+                        <div className="slide-img-area" style={{ overflow: i === 0 ? "hidden" : "visible" }}>
+                          <img 
+                            src={slide.imageUrl} 
+                            alt={slide.title || "Banner"} 
+                            style={{ 
+                              width: "100%", height: "380px", objectFit: "cover", 
+                              objectPosition: "right top", 
+                              borderRadius: i === 0 ? "0px" : "12px",
+                              filter: i === 0 ? "none" : "",
+                              transform: i === 0 ? "scale(1.5)" : "none",
+                              transformOrigin: i === 0 ? "right center" : "center"
+                            }} 
+                            onError={(e) => { e.target.style.display = "none"; }} 
+                          />
+                          {slide.badge && <div className="slide-badge"><div className="slide-badge-num" style={{ fontSize: 18 }}>{slide.badge}</div></div>}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                  <div className="slide-img-area">
-                    <img src="https://images.unsplash.com/photo-1558769132-cb1aea458c5e?w=600&q=80" alt="Fashion" />
-                    <div className="slide-badge"><div className="slide-badge-num">30</div><div className="slide-badge-txt">Min Delivery</div></div>
+                  <button className="hero-arrow prev" onClick={() => setActiveSlide((p) => (p === 0 ? total - 1 : p - 1))}>‹</button>
+                  <button className="hero-arrow next" onClick={() => setActiveSlide((p) => (p === total - 1 ? 0 : p + 1))}>›</button>
+                  <div className="hero-dots">
+                    {slides.map((_, i) => (
+                      <button key={i} className={`hero-dot ${safeSlide === i ? "active" : ""}`} onClick={() => setActiveSlide(i)} />
+                    ))}
                   </div>
                 </div>
-                {/* Slide 2 */}
-                <div className="hero-slide slide-2">
-                  <div className="slide-content">
-                    <div className="slide-tag"><span>🥻 New Ethnic Collection</span></div>
-                    <h1 className="slide-title">Celebrate Every<br/><em>Occasion</em></h1>
-                    <p className="slide-sub">Handpicked ethnic wear from India's finest designers.<br/>From ₹999 onwards — delivered instantly.</p>
-                    <div className="slide-cta">
-                      <button className="btn-slide-primary" onClick={(e) => { e.stopPropagation(); window.location.href = '/shop/category/all'; }}>Shop Now</button>
-                    </div>
-                  </div>
-                  <div className="slide-img-area">
-                    <img src="https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=600&q=80" alt="Ethnic Wear" />
-                    <div className="slide-badge" style={{ background: "var(--gold2)" }}><div className="slide-badge-num">40%</div><div className="slide-badge-txt">Up to Off</div></div>
-                  </div>
-                </div>
-                {/* Slide 3 */}
-                <div className="hero-slide slide-3">
-                  <div className="slide-content">
-                    <div className="slide-tag"><span>👔 Men's New In</span></div>
-                    <h1 className="slide-title">Dress Sharp.<br/><em>Every Day.</em></h1>
-                    <p className="slide-sub">Premium formals, casuals & ethnic wear for men.<br/>Top brands. Lightning delivery.</p>
-                    <div className="slide-cta">
-                      <button className="btn-slide-primary" onClick={(e) => { e.stopPropagation(); window.location.href = '/shop/category/all'; }}>Shop Now</button>
-                    </div>
-                  </div>
-                  <div className="slide-img-area">
-                    <img src="https://images.unsplash.com/photo-1617137968427-85924c800a22?w=600&q=80" alt="Men's Wear" />
-                    <div className="slide-badge" style={{ background: "var(--green)" }}><div className="slide-badge-num">Free</div><div className="slide-badge-txt">Delivery</div></div>
-                  </div>
-                </div>
-              </div>
-              <button className="hero-arrow prev" onClick={() => setActiveSlide((p) => (p === 0 ? 2 : p - 1))}>‹</button>
-              <button className="hero-arrow next" onClick={() => setActiveSlide((p) => (p === 2 ? 0 : p + 1))}>›</button>
-              <div className="hero-dots">
-                <button className={`hero-dot ${activeSlide === 0 ? "active" : ""}`} onClick={() => setActiveSlide(0)}></button>
-                <button className={`hero-dot ${activeSlide === 1 ? "active" : ""}`} onClick={() => setActiveSlide(1)}></button>
-                <button className={`hero-dot ${activeSlide === 2 ? "active" : ""}`} onClick={() => setActiveSlide(2)}></button>
-              </div>
-            </div>
+              );
+            })()}
 
 
             {/* FLASH SALE COMING SOON */}
-            <div className="flash-sale" style={{ justifyContent: "center", alignItems: "center", padding: "28px 0" }}>
-              <p style={{ fontFamily: "var(--font-d)", fontSize: 22, fontWeight: 700, color: "rgba(255,255,255,0.85)", letterSpacing: 2, textTransform: "uppercase", margin: 0, textAlign: "center" }}>⚡ Flash Sales Coming Soon</p>
+            <div className="flash-sale" style={{ justifyContent: "center", alignItems: "center" }}>
+              <p className="flash-sale-txt">⚡ Flash Sales Coming Soon</p>
             </div>
 
             {/* NEW ARRIVALS */}
@@ -1316,10 +1594,15 @@ export default function ShopPage() {
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                 {orders.map((o) => (
-                  <div key={o.id} className="animate-fade-in-up" style={{ background: "var(--card)", border: "1px solid var(--border)", padding: "24px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: "var(--sub)", letterSpacing: 1 }}>ORDER #{o.trackingId}</span>
-                      <span style={{ padding: "4px 8px", fontSize: 10, fontWeight: 600, textTransform: "uppercase", background: "var(--ivory2)", color: "var(--navy)", border: "1px solid var(--border)" }}>
+                  <div key={o.id} className="animate-fade-in-up" style={{ background: "var(--card)", border: "1px solid var(--border)", padding: "24px", borderRadius: 16 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+                      <div>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: "var(--sub)", letterSpacing: 1, display: "block", marginBottom: 4 }}>ORDER #{o.trackingId}</span>
+                        <span style={{ fontSize: 11, color: "var(--sub)", display: "block" }}>
+                          Ordered on: {o.createdAt?.toDate ? o.createdAt.toDate().toLocaleDateString("en-IN", { day: 'numeric', month: 'short', year: 'numeric' }) : "Unknown date"}
+                        </span>
+                      </div>
+                      <span style={{ padding: "4px 8px", fontSize: 10, fontWeight: 600, textTransform: "uppercase", background: "var(--ivory2)", color: "var(--navy)", border: "1px solid var(--border)", borderRadius: 4 }}>
                         {o.status}
                       </span>
                     </div>
@@ -1361,10 +1644,41 @@ export default function ShopPage() {
                       <span style={{ fontSize: 20, fontWeight: 600, color: "var(--navy)" }}>₹{o.total}</span>
                     </div>
                     {o.status === "Out for Delivery" && (
-                      <div style={{ marginTop: 16, padding: "16px", background: "var(--ivory2)", border: "1px dashed var(--gold)", textAlign: "center" }}>
-                        <p style={{ fontSize: 12, fontWeight: 600, color: "var(--navy)", textTransform: "uppercase", letterSpacing: 1 }}>
+                      <div style={{ marginTop: 16, padding: "16px", background: "var(--ivory2)", border: "1px dashed var(--gold)", textAlign: "center", borderRadius: 12 }}>
+                        <p style={{ fontSize: 12, fontWeight: 600, color: "var(--navy)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>
                           Delivery OTP: <span style={{ fontSize: 24, display: "block", marginTop: 4, color: "var(--gold)" }}>{o.deliveryOtp}</span>
                         </p>
+                        
+                        {/* Live Tracking Map */}
+                        {o.riderId && riderLocations[o.riderId] ? (
+                          <div style={{ width: "100%", height: 200, borderRadius: 12, overflow: "hidden", border: "1px solid var(--border)", position: "relative" }}>
+                            <div style={{ position: "absolute", top: 8, left: 8, zIndex: 10, background: "rgba(255,255,255,0.9)", padding: "4px 8px", borderRadius: 6, fontSize: 10, fontWeight: 800, color: "var(--navy)", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }}>
+                              <i className="fas fa-location-dot" style={{ color: "#16a34a", marginRight: 4 }}/> Live Tracking
+                            </div>
+                            <LiveMap lat={riderLocations[o.riderId].lat} lng={riderLocations[o.riderId].lng} label="Your Delivery Rider" />
+                          </div>
+                        ) : (
+                          <div style={{ width: "100%", height: 100, borderRadius: 12, border: "1px solid var(--border)", background: "#e5e7eb", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column" }}>
+                            <i className="fas fa-satellite-dish" style={{ fontSize: 20, color: "var(--sub)", marginBottom: 8 }}/>
+                            <p style={{ fontSize: 11, color: "var(--sub)", fontWeight: 600 }}>Locating rider...</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {o.status === "Delivered" && (
+                      <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px dashed var(--border)", display: "flex", flexWrap: "wrap", gap: 10 }}>
+                        <button onClick={() => handleExchangeOrder(o.id)} style={{ flex: "1 1 100px", padding: "10px", fontSize: 12, fontWeight: 600, color: "var(--navy)", background: "transparent", border: "1px solid var(--navy)", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                          <i className="fas fa-right-left"></i> Exchange
+                        </button>
+                        <button onClick={() => handleReturnOrder(o.id)} style={{ flex: "1 1 100px", padding: "10px", fontSize: 12, fontWeight: 600, color: "#ef4444", background: "transparent", border: "1px solid #ef4444", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                          <i className="fas fa-undo"></i> Return
+                        </button>
+                        <button onClick={() => handleRateProduct(o.id)} style={{ flex: "1 1 100px", padding: "10px", fontSize: 12, fontWeight: 600, color: "white", background: "var(--navy)", border: "none", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                          <i className="fas fa-star" style={{ color: o.rating ? "#fbbf24" : "white" }}></i> {o.rating ? `Rated ${o.rating}/5` : "Rate Product"}
+                        </button>
+                        <button onClick={() => downloadInvoice(o)} style={{ flex: "1 1 100%", padding: "10px", fontSize: 12, fontWeight: 600, color: "#16a34a", background: "#ecfdf5", border: "1px solid #16a34a", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                          <i className="fas fa-file-pdf"></i> Download E-Bill
+                        </button>
                       </div>
                     )}
                   </div>
@@ -2036,23 +2350,125 @@ export default function ShopPage() {
                   </div>
                 )}
 
-              {/* Similar Products */}
+              {/* Similar Products — Only real products from Firestore */}
               {(() => {
-                const similarProducts = products.filter(p => p.id !== viewProduct.id && (p.category === viewProduct.category || p.storeName === viewProduct.storeName)).slice(0, 6);
+                // Complementary category map: if viewing X, also show Y
+                const complementaryMap = {
+                  "Men's Wear":    ["Formal", "Casual", "Accessories", "Footwear"],
+                  "Women's Wear":  ["Ethnic", "Casual", "Accessories", "Footwear"],
+                  "Ethnic":        ["Accessories", "Footwear", "Women's Wear", "Men's Wear"],
+                  "Formal":        ["Men's Wear", "Accessories", "Footwear"],
+                  "Casual":        ["Men's Wear", "Women's Wear", "Accessories", "Footwear"],
+                  "Kids Wear":     ["Accessories", "Footwear"],
+                  "Accessories":   ["Men's Wear", "Women's Wear", "Ethnic", "Casual"],
+                  "Footwear":      ["Men's Wear", "Women's Wear", "Casual", "Formal"],
+                };
+                const complements = complementaryMap[viewProduct.category] || [];
+
+                // Priority 1: Same category (most similar items, any seller)
+                const sameCategory = products.filter(p =>
+                  p.id !== viewProduct.id && p.category === viewProduct.category
+                );
+                // Priority 2: Complementary categories (complete the outfit, any seller)
+                const complementary = products.filter(p =>
+                  p.id !== viewProduct.id &&
+                  p.category !== viewProduct.category &&
+                  complements.includes(p.category)
+                );
+                // Priority 3: Anything else from Firestore (fallback — never empty)
+                const others = products.filter(p =>
+                  p.id !== viewProduct.id &&
+                  !sameCategory.find(x => x.id === p.id) &&
+                  !complementary.find(x => x.id === p.id)
+                );
+
+                const similarProducts = [
+                  ...sameCategory,
+                  ...complementary,
+                  ...others
+                ].slice(0, 10);
+
                 if (similarProducts.length === 0) return null;
+
                 return (
-                  <div style={{ borderTop: "8px solid #f1f5f9", paddingTop: 20, marginTop: 16, paddingBottom: 20 }}>
-                    <h4 style={{ fontSize: 18, fontWeight: 800, color: "var(--navy)", marginBottom: 16, padding: "0 20px" }}>More like this</h4>
-                    <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 16, scrollbarWidth: "none", padding: "0 20px" }} className="hide-scrollbar">
-                      {similarProducts.map(sp => (
-                        <div key={sp.id} style={{ width: 140, flexShrink: 0, cursor: "pointer" }} onClick={() => { setViewProduct(sp); document.querySelector('.hide-scrollbar').scrollTo({top:0,behavior:'smooth'}); }}>
-                          <div style={{ width: "100%", aspectRatio: "3/4", background: "#f0ebe3", borderRadius: 12, overflow: "hidden", marginBottom: 8 }}>
-                            <img src={sp.imageUrl || sp.imageUrls?.[0]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  <div style={{ borderTop: "8px solid #f1f5f9", paddingTop: 20, marginTop: 8, paddingBottom: 24 }}>
+                    {/* Header */}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", marginBottom: 16 }}>
+                      <div>
+                        <h4 style={{ fontSize: 17, fontWeight: 900, color: "var(--navy)", margin: 0 }}>Similar Products</h4>
+                        <p style={{ fontSize: 11, color: "var(--sub)", marginTop: 3, margin: 0 }}>
+                          {sameCategory.length > 0 ? `More ${viewProduct.category}` : "You may also like"}
+                        </p>
+                      </div>
+                      <div style={{ width: 34, height: 34, borderRadius: "50%", background: "var(--navy)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+                        onClick={() => { setViewProduct(null); setCurrentCategory(viewProduct.category); }}>
+                        <i className="fas fa-arrow-right" style={{ fontSize: 13, color: "white" }} />
+                      </div>
+                    </div>
+
+                    {/* Horizontal Scroll Cards */}
+                    <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 8, padding: "0 20px 8px" }} className="hide-scrollbar">
+                      {similarProducts.map((sp) => {
+                        const img = sp.image || sp.images?.[0] || "";
+                        const avgRating = sp.reviews?.length
+                          ? (sp.reviews.reduce((s, r) => s + (r.rating || 0), 0) / sp.reviews.length).toFixed(1)
+                          : null;
+                        const isNew = sp.createdAt && (Date.now() - (sp.createdAt?.seconds * 1000 || 0)) < 7 * 86400000;
+                        const isSameCategory = sp.category === viewProduct.category;
+                        return (
+                          <div
+                            key={sp.id}
+                            style={{ width: 150, flexShrink: 0, cursor: "pointer", borderRadius: 16, overflow: "hidden", background: "white", border: "1px solid #f1f5f9", boxShadow: "0 2px 8px rgba(0,0,0,0.06)", transition: "transform 0.2s, box-shadow 0.2s" }}
+                            onClick={() => { setViewProduct(sp); setSelectedSize(sp.sizes?.[0] || "M"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                            onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-3px)"; e.currentTarget.style.boxShadow = "0 8px 20px rgba(0,0,0,0.1)"; }}
+                            onMouseLeave={e => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)"; }}
+                          >
+                            {/* Image */}
+                            <div style={{ position: "relative", width: "100%", height: 160, background: "#f0ebe3", overflow: "hidden" }}>
+                              {img ? (
+                                <img src={img} alt={sp.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { e.target.style.display = "none"; }} />
+                              ) : (
+                                <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                  <i className="fas fa-shirt" style={{ fontSize: 32, color: "#d1cbc2" }} />
+                                </div>
+                              )}
+                              {/* Badge */}
+                              {isSameCategory && (
+                                <div style={{ position: "absolute", top: 8, left: 8, background: "#14213d", color: "white", fontSize: 9, fontWeight: 800, padding: "3px 7px", borderRadius: 6, letterSpacing: 0.5 }}>
+                                  SIMILAR
+                                </div>
+                              )}
+                              {isNew && !isSameCategory && (
+                                <div style={{ position: "absolute", top: 8, left: 8, background: "#10b981", color: "white", fontSize: 9, fontWeight: 800, padding: "3px 7px", borderRadius: 6, letterSpacing: 0.5 }}>
+                                  NEW
+                                </div>
+                              )}
+                              {(sp.outOfStock || sp.stock === 0) && (
+                                <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                  <span style={{ fontSize: 10, fontWeight: 800, color: "white", letterSpacing: 1 }}>OUT OF STOCK</span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Info */}
+                            <div style={{ padding: "10px 10px 12px" }}>
+                              {avgRating && (
+                                <div style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#14213d", color: "white", fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 6, marginBottom: 6 }}>
+                                  {avgRating} <i className="fas fa-star" style={{ fontSize: 8 }} />
+                                </div>
+                              )}
+                              <div style={{ fontSize: 12, fontWeight: 700, color: "#0f172a", lineHeight: 1.4, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", marginBottom: 4 }}>
+                                {sp.name}
+                              </div>
+                              <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 4 }}>{sp.category}</div>
+                              <div style={{ fontSize: 14, fontWeight: 900, color: "#14213d" }}>₹{Number(sp.price).toLocaleString("en-IN")}</div>
+                              {sp.stock > 0 && sp.stock <= 5 && (
+                                <div style={{ fontSize: 10, color: "#ef4444", fontWeight: 700, marginTop: 3 }}>Only {sp.stock} left!</div>
+                              )}
+                            </div>
                           </div>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--navy)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sp.name}</div>
-                          <div style={{ fontSize: 12, fontWeight: 800, color: "var(--gold)" }}>₹{sp.price}</div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 );

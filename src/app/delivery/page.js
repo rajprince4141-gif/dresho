@@ -11,6 +11,7 @@ import {
   doc, setDoc, getDoc, collection, query, where,
   onSnapshot, updateDoc, increment,
 } from "firebase/firestore";
+import { requestNotificationPermission } from "@/lib/firebase";
 
 export default function DeliveryPage() {
   const [user, setUser] = useState(null);
@@ -53,8 +54,16 @@ export default function DeliveryPage() {
   const [showScanner, setShowScanner] = useState(false);
 
   useEffect(() => {
+    let profileUnsub;
     const unsub = onAuthStateChanged(auth, async (u) => {
       if (u) {
+        // Enforce Single Device Login
+        let deviceId = localStorage.getItem("dreshoDeviceId");
+        if (!deviceId) {
+          deviceId = Math.random().toString(36).substring(2, 15);
+          localStorage.setItem("dreshoDeviceId", deviceId);
+        }
+
         let snap = await getDoc(doc(db, "delivery_profile", u.uid));
         
         // Race condition fix
@@ -64,6 +73,11 @@ export default function DeliveryPage() {
         }
 
         if (snap.exists() && snap.data().role === "delivery") {
+          // Update device ID in Firestore
+          if (snap.data().activeDeviceId !== deviceId) {
+             await updateDoc(doc(db, "delivery_profile", u.uid), { activeDeviceId: deviceId });
+          }
+
           const lastActive = localStorage.getItem("dreshoLastActive");
           const now = Date.now();
           if (lastActive && now - parseInt(lastActive) > 10 * 60 * 1000) {
@@ -82,11 +96,31 @@ export default function DeliveryPage() {
           setUser(u);
           setRiderData(snap.data());
           setIsOnline(snap.data().online || false);
+
+          // Request Push Notification Permission & Save Token
+          requestNotificationPermission().then(token => {
+            if (token && snap.data().fcmToken !== token) {
+              updateDoc(doc(db, "delivery_profile", u.uid), { fcmToken: token });
+            }
+          });
+
+          // Real-time listener for Single Device Logout
+          profileUnsub = onSnapshot(doc(db, "delivery_profile", u.uid), (docSnap) => {
+            if (docSnap.exists()) {
+              const data = docSnap.data();
+              if (data.activeDeviceId && data.activeDeviceId !== deviceId) {
+                alert("You have logged in from another device. You will be logged out here.");
+                signOut(auth);
+                setUser(null);
+                setRiderData(null);
+                setAuthStep("welcome");
+              }
+            }
+          });
         } else {
           // Not a delivery agent yet. Keep auth user and continue registration.
           setUser(u);
           setRiderData(null);
-          // Let the user start at the welcome page instead of forcing 'phone' step
         }
       } else { 
         setUser(null); 
@@ -95,7 +129,10 @@ export default function DeliveryPage() {
       }
       setAuthReady(true);
     });
-    return () => unsub();
+    return () => {
+      unsub();
+      if (profileUnsub) profileUnsub();
+    };
   }, []);
 
   // ── LIVE LOCATION TRACKING ──
@@ -221,12 +258,10 @@ export default function DeliveryPage() {
         return data.url;
       };
 
-      const [aadhaarUrl, panUrl, licenseUrl, rcUrl] = await Promise.all([
-        uploadFile(aadhaarFile),
-        uploadFile(panFile),
-        uploadFile(licenseFile),
-        uploadFile(rcFile),
-      ]);
+      const aadhaarUrl = await uploadFile(aadhaarFile);
+      const panUrl = await uploadFile(panFile);
+      const licenseUrl = await uploadFile(licenseFile);
+      const rcUrl = await uploadFile(rcFile);
 
       await updateDoc(doc(db, "delivery_profile", user.uid), {
         documents: { aadhaarUrl, panUrl, licenseUrl, rcUrl },
@@ -667,7 +702,7 @@ export default function DeliveryPage() {
                       <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 12, border: doc.state ? "2px solid var(--gold)" : "2px dashed rgba(0,0,0,0.12)", cursor: "pointer", background: doc.state ? "rgba(176,125,58,0.06)" : "#f8f9fa" }}>
                         <i className={`fas ${doc.state ? "fa-check-circle" : "fa-upload"}`} style={{ color: doc.state ? "var(--gold)" : "var(--text-muted)", fontSize: 16 }} />
                         <span style={{ fontSize: 12, color: doc.state ? "var(--navy)" : "var(--text-muted)", fontWeight: 600 }}>{doc.state ? doc.state.name : `Tap to upload ${doc.label}`}</span>
-                        <input type="file" accept="image/*,.pdf" style={{ display: "none" }} onChange={(e) => { if (e.target.files[0]) doc.setter(e.target.files[0]); }} />
+                        <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => { if (e.target.files[0]) doc.setter(e.target.files[0]); }} />
                       </label>
                     </div>
                   ))}
