@@ -1,6 +1,10 @@
 import "./globals.css";
 
 export const metadata = {
+  metadataBase: new URL("https://www.dresho.in"),
+  alternates: {
+    canonical: "/",
+  },
   title: "Dresho — Fashion Delivered in 30 Minutes | Hazaribagh, Jharkhand",
   description:
     "Dresho is Hazaribagh's first quick-commerce fashion platform. Order trending clothes, kurtas, ethnic wear & more from local boutiques — delivered to your door in just 30 minutes. Fast. Fresh. Local.",
