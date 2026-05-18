@@ -9,9 +9,10 @@ import {
 } from "firebase/auth";
 import {
   doc, setDoc, getDoc, collection, query, where,
-  onSnapshot, updateDoc, increment,
+  onSnapshot, updateDoc, increment, getDocs
 } from "firebase/firestore";
 import { requestNotificationPermission } from "@/lib/firebase";
+import NotificationBell from "@/components/NotificationBell";
 
 export default function DeliveryPage() {
   const [user, setUser] = useState(null);
@@ -52,6 +53,8 @@ export default function DeliveryPage() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [activePaymentOrder, setActivePaymentOrder] = useState(null);
   const [showScanner, setShowScanner] = useState(false);
+  const [deliveryOtpInput, setDeliveryOtpInput] = useState("");
+  const [otpVerified, setOtpVerified] = useState(false);
 
   useEffect(() => {
     let profileUnsub;
@@ -183,7 +186,7 @@ export default function DeliveryPage() {
   // Available jobs
   useEffect(() => {
     if (!user || !riderData?.approved) return;
-    const q = query(collection(db, "orders"), where("status", "==", "Shipped"), where("riderId", "==", null));
+    const q = query(collection(db, "orders"), where("status", "==", "PACKED"), where("riderId", "==", null));
     const unsub = onSnapshot(q, async (snap) => {
       const o = []; 
       const sellerIds = new Set();
@@ -205,7 +208,7 @@ export default function DeliveryPage() {
             sellerMap[doc.id] = doc.data();
           }
         });
-        setSellersData(sellerMap);
+        setSellersData(prev => ({ ...prev, ...sellerMap }));
       }
     });
     return () => unsub();
@@ -214,10 +217,30 @@ export default function DeliveryPage() {
   // Active deliveries
   useEffect(() => {
     if (!user || !riderData?.approved) return;
-    const q = query(collection(db, "orders"), where("riderId", "==", user.uid), where("status", "==", "Out for Delivery"));
-    const unsub = onSnapshot(q, (snap) => {
-      const o = []; snap.forEach((d) => o.push({ id: d.id, ...d.data() }));
+    const q = query(collection(db, "orders"), where("riderId", "==", user.uid), where("status", "==", "OUT_FOR_DELIVERY"));
+    const unsub = onSnapshot(q, async (snap) => {
+      const o = []; 
+      const sellerIds = new Set();
+      snap.forEach((d) => {
+        const data = d.data();
+        o.push({ id: d.id, ...data });
+        if (data.sellerId) sellerIds.add(data.sellerId);
+      });
       setActiveDeliveries(o);
+
+      if (sellerIds.size > 0) {
+        const sellerPromises = Array.from(sellerIds).map(sellerId => 
+          getDoc(doc(db, "sellers_profile", sellerId))
+        );
+        const sellerDocs = await Promise.all(sellerPromises);
+        const sellerMap = {};
+        sellerDocs.forEach(doc => {
+          if (doc.exists()) {
+            sellerMap[doc.id] = doc.data();
+          }
+        });
+        setSellersData(prev => ({ ...prev, ...sellerMap }));
+      }
     });
     return () => unsub();
   }, [user, riderData]);
@@ -349,13 +372,32 @@ export default function DeliveryPage() {
   };
 
   const acceptOrder = async (orderId) => {
-    await updateDoc(doc(db, "orders", orderId), { riderId: user.uid, status: "Out for Delivery" });
+    // Notify the customer that rider is assigned and it's out for delivery
+    const oSnap = await getDoc(doc(db, "orders", orderId));
+    if (oSnap.exists()) {
+      const oData = oSnap.data();
+      fetch("/api/notify", { 
+        method: "POST", 
+        headers: { "Content-Type": "application/json" }, 
+        body: JSON.stringify({ 
+          userId: oData.userId, 
+          role: "customer", 
+          title: "Out for Delivery! 🚚", 
+          body: `Your order #${oData.trackingId} is out for delivery with rider ${riderData?.name}.`, 
+          link: "/shop?section=orders" 
+        }) 
+      });
+    }
+
+    await updateDoc(doc(db, "orders", orderId), { riderId: user.uid, status: "OUT_FOR_DELIVERY" });
     setTab("active");
   };
 
   const openPaymentModal = (order) => {
     setActivePaymentOrder(order);
     setShowScanner(false);
+    setDeliveryOtpInput("");
+    setOtpVerified(false);
     setShowPaymentModal(true);
   };
 
@@ -380,8 +422,8 @@ export default function DeliveryPage() {
   };
 
   const completeDelivery = async (methodUsed) => {
-    if (!activePaymentOrder) return;
-    
+    if (!activePaymentOrder || !otpVerified) return;
+
     // Calculate distance-based earnings
     const sellerData = sellersData[activePaymentOrder.sellerId];
     let deliveryEarning = 40; // Default fallback
@@ -395,11 +437,25 @@ export default function DeliveryPage() {
     }
 
     await updateDoc(doc(db, "orders", activePaymentOrder.id), { 
-      status: "Delivered",
+      status: "DELIVERED",
       paymentStatus: methodUsed === "COD_CASH" || methodUsed === "COD_UPI" ? "Paid" : activePaymentOrder.paymentStatus,
       deliveryHandoverMethod: methodUsed,
       actualDeliveryFee: deliveryEarning
     });
+
+    // Notify Customer about successful delivery
+    fetch("/api/notify", { 
+      method: "POST", headers: { "Content-Type": "application/json" }, 
+      body: JSON.stringify({ userId: activePaymentOrder.userId, role: "customer", title: "Order Delivered! 🎉", body: `Your order #${activePaymentOrder.trackingId} has been successfully delivered.`, link: "/shop?section=orders" }) 
+    });
+
+    // Notify Seller about successful delivery
+    if (activePaymentOrder.sellerId) {
+      fetch("/api/notify", { 
+        method: "POST", headers: { "Content-Type": "application/json" }, 
+        body: JSON.stringify({ userId: activePaymentOrder.sellerId, role: "seller", title: "Order Delivered!", body: `Order #${activePaymentOrder.trackingId} was successfully delivered.`, link: "/seller" }) 
+      });
+    }
     
     await updateDoc(doc(db, "delivery_profile", user.uid), {
       earnings: increment(deliveryEarning),
@@ -849,7 +905,9 @@ export default function DeliveryPage() {
             <h1>Hey, {riderData.name?.split(" ")[0]} 👋</h1>
             <p>{isOnline ? "Good to see you online" : "You are offline"}</p>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <NotificationBell userId={user.uid} role="rider" />
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
             <div className="rider-avatar" onClick={toggleOnline}>
               {riderData.photoURL ? <img src={riderData.photoURL} alt="" className="rider-avatar" /> : (riderData.name || "R")[0]}
               <div className={`online-dot ${isOnline ? "on" : "off"}`} />
@@ -857,6 +915,7 @@ export default function DeliveryPage() {
             <span style={{ fontSize: 10, color: "#64748b", cursor: "pointer", fontWeight: 600, letterSpacing: 0.5 }} onClick={toggleOnline}>
               {isOnline ? "GO OFFLINE" : "GO ONLINE"}
             </span>
+          </div>
           </div>
         </header>
 
@@ -1246,45 +1305,75 @@ export default function DeliveryPage() {
         {showPaymentModal && activePaymentOrder && (
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 1000, display: "flex", alignItems: "flex-end" }} onClick={() => setShowPaymentModal(false)}>
             <div style={{ background: "#ffffff", width: "100%", borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: "30px 20px 40px", borderTop: "none" }} onClick={(e) => e.stopPropagation()}>
-              <h3 style={{ fontSize: 20, fontWeight: 800, margin: "0 0 8px", color: "#0f172a", textAlign: "center" }}>Handover Order</h3>
-              <p style={{ color: "#64748b", fontSize: 14, marginBottom: 24, textAlign: "center" }}>Amount to Collect: <strong style={{ color: "#10b981", fontSize: 18 }}>₹{activePaymentOrder.total}</strong></p>
+              <h3 style={{ fontSize: 20, fontWeight: 800, margin: "0 0 8px", color: "#0f172a", textAlign: "center" }}>
+                {otpVerified ? "Handover Order" : "Verify Customer"}
+              </h3>
+              <p style={{ color: "#64748b", fontSize: 14, marginBottom: 16, textAlign: "center" }}>
+                Amount to Collect: <strong style={{ color: "#10b981", fontSize: 18 }}>₹{activePaymentOrder.total}</strong>
+              </p>
               
-              {!showScanner ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {activePaymentOrder.paymentMethod === "UPI" || activePaymentOrder.paymentStatus === "Paid" ? (
-                    <div style={{ padding: "16px", borderRadius: 16, background: "rgba(34,197,94,0.1)", color: "#22c55e", fontWeight: 700, border: "1px solid rgba(34,197,94,0.2)", textAlign: "center" }}>
-                      <i className="fas fa-check-circle" style={{ marginRight: 8 }}/> Order Prepaid Online
+              {!otpVerified ? (
+                <>
+                  <div style={{ marginBottom: 24 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8, display: "block", textAlign: "center" }}>Ask Customer for Delivery OTP</label>
+                    <input 
+                      type="number" 
+                      placeholder="____" 
+                      value={deliveryOtpInput}
+                      onChange={(e) => setDeliveryOtpInput(e.target.value)}
+                      style={{ width: "100%", padding: "16px", borderRadius: 16, border: "2px solid #e2e8f0", fontSize: 28, fontWeight: 900, textAlign: "center", color: "#0f172a", letterSpacing: 12 }}
+                    />
+                  </div>
+                  <div style={{ display: "flex", gap: 12 }}>
+                    <button style={{ flex: 1, padding: "16px", borderRadius: 14, background: "#f1f5f9", color: "#64748b", border: "none", fontSize: 15, fontWeight: 700, cursor: "pointer" }} onClick={() => setShowPaymentModal(false)}>
+                      CANCEL
+                    </button>
+                    <button style={{ flex: 1, padding: "16px", borderRadius: 14, background: "var(--navy)", color: "white", border: "none", fontSize: 15, fontWeight: 700, cursor: "pointer" }} onClick={() => {
+                      if (deliveryOtpInput === activePaymentOrder.deliveryOtp) {
+                        setOtpVerified(true);
+                      } else {
+                        alert("❌ Incorrect OTP! Please ask the customer for the correct 4-digit Delivery OTP.");
+                      }
+                    }}>
+                      VERIFY OTP
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {!showScanner ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                      {activePaymentOrder.paymentMethod === "UPI" || activePaymentOrder.paymentStatus === "Paid" ? (
+                        <div style={{ padding: "16px", borderRadius: 16, background: "rgba(34,197,94,0.1)", color: "#22c55e", fontWeight: 700, border: "1px solid rgba(34,197,94,0.2)", textAlign: "center" }}>
+                          <i className="fas fa-check-circle" style={{ marginRight: 8 }}/> Order Prepaid Online
+                        </div>
+                      ) : (
+                        <>
+                          <button style={{ width: "100%", padding: "16px", borderRadius: 14, background: "#f59e0b", color: "white", border: "none", fontSize: 15, fontWeight: 700, cursor: "pointer" }} onClick={() => completeDelivery("COD_CASH")}>
+                            <i className="fas fa-money-bill-wave" style={{ marginRight: 8 }}/> Customer Handed Cash
+                          </button>
+                          <button style={{ width: "100%", padding: "16px", borderRadius: 14, background: "transparent", color: "#6366f1", border: "2px solid #6366f1", fontSize: 15, fontWeight: 700, cursor: "pointer" }} onClick={() => setShowScanner(true)}>
+                            <i className="fas fa-qrcode" style={{ marginRight: 8 }}/> Pay via UPI Scanner
+                          </button>
+                        </>
+                      )}
+                      
+                      <button style={{ width: "100%", padding: "16px", borderRadius: 14, background: "#10b981", color: "white", border: "none", fontSize: 15, fontWeight: 700, marginTop: 8, cursor: "pointer", boxShadow: "0 4px 12px rgba(16,185,129,0.3)" }} onClick={() => completeDelivery(activePaymentOrder.paymentMethod)}>
+                        {activePaymentOrder.paymentMethod === "UPI" || activePaymentOrder.paymentStatus === "Paid" ? "Complete Delivery" : "Skip Payment & Complete"}
+                      </button>
                     </div>
                   ) : (
-                    <>
-                      <button style={{ width: "100%", padding: "16px", borderRadius: 14, background: "#f59e0b", color: "white", border: "none", fontSize: 15, fontWeight: 700, cursor: "pointer" }} onClick={() => completeDelivery("COD_CASH")}>
-                        <i className="fas fa-money-bill-wave" style={{ marginRight: 8 }}/> Customer Handed Cash
+                    <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center" }}>
+                      <div style={{ background: "#f8fafc", padding: "20px", borderRadius: 20, marginBottom: 16, display: "inline-block" }}>
+                        <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=upi://pay?pa=7903102375@ybl&pn=Dresho&am=${activePaymentOrder.total}&cu=INR`} alt="UPI QR" style={{ width: 160, height: 160, borderRadius: 12 }} />
+                      </div>
+                      <p style={{ fontSize: 14, fontWeight: 700, color: "#64748b", marginBottom: 20 }}>Scan with PhonePe, GPay, Paytm</p>
+                      <button style={{ width: "100%", padding: "16px", borderRadius: 14, background: "#10b981", color: "white", border: "none", fontSize: 15, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 12px rgba(16,185,129,0.3)" }} onClick={() => completeDelivery("COD_UPI")}>
+                        <i className="fas fa-check" style={{ marginRight: 8 }}/> Payment Received
                       </button>
-                      <button style={{ width: "100%", padding: "16px", borderRadius: 14, background: "transparent", color: "#6366f1", border: "2px solid #6366f1", fontSize: 15, fontWeight: 700, cursor: "pointer" }} onClick={() => setShowScanner(true)}>
-                        <i className="fas fa-qrcode" style={{ marginRight: 8 }}/> Pay via UPI Scanner
-                      </button>
-                    </>
+                    </div>
                   )}
-                  
-                  <button style={{ width: "100%", padding: "16px", borderRadius: 14, background: "#22c55e", color: "white", border: "none", fontSize: 15, fontWeight: 700, cursor: "pointer", marginTop: 12 }} onClick={() => completeDelivery("PREPAID")}>
-                    {activePaymentOrder.paymentMethod === "UPI" || activePaymentOrder.paymentStatus === "Paid" ? "Complete Delivery" : "Skip Payment & Complete"}
-                  </button>
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
-                  <div style={{ width: 200, height: 200, background: "white", borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", color: "#161722" }}>
-                    <i className="fas fa-qrcode" style={{ fontSize: 48, marginBottom: 12 }}/>
-                    <p style={{ fontSize: 12, fontWeight: 700 }}>Company UPI</p>
-                  </div>
-                  <p style={{ fontSize: 13, color: "#64748b" }}>Ask customer to scan and pay ₹{activePaymentOrder.total}</p>
-                  
-                  <button style={{ width: "100%", padding: "16px", borderRadius: 14, background: "#10b981", color: "white", border: "none", fontSize: 15, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 12px rgba(16,185,129,0.2)" }} onClick={() => completeDelivery("COD_UPI")}>
-                    Confirm Payment Received
-                  </button>
-                  <button style={{ width: "100%", padding: "16px", borderRadius: 14, background: "transparent", color: "#64748b", border: "1px solid #e2e8f0", fontSize: 15, fontWeight: 700, cursor: "pointer" }} onClick={() => setShowScanner(false)}>
-                    Back to Options
-                  </button>
-                </div>
+                </>
               )}
             </div>
           </div>

@@ -319,39 +319,43 @@ export default function AdminPage() {
     setPushSending(true);
 
     try {
-      let targetTokens = [];
-      const fetchTokens = (collectionData) => collectionData.map(d => d.fcmToken).filter(Boolean);
+      let payload = {
+        title: pushTitle,
+        body: pushBody,
+        link: "/shop"
+      };
 
-      if (pushTarget === "all" || pushTarget === "customers") targetTokens.push(...fetchTokens(users));
-      if (pushTarget === "all" || pushTarget === "sellers") targetTokens.push(...fetchTokens(sellers));
-      if (pushTarget === "all" || pushTarget === "riders") targetTokens.push(...fetchTokens(deliveryAgents));
-      if (pushTarget === "specific" && pushSpecificId) {
-        const u = [...users, ...sellers, ...deliveryAgents].find(d => d.id === pushSpecificId);
-        if (u && u.fcmToken) targetTokens.push(u.fcmToken);
+      if (pushTarget === "all") {
+        payload.type = "broadcast_all";
+      } else if (pushTarget === "riders") {
+        payload.type = "broadcast_riders";
+      } else if (pushTarget === "sellers") {
+        payload.type = "broadcast_sellers";
+      } else if (pushTarget === "specific" && pushSpecificId) {
+        payload.type = "single";
+        payload.userId = pushSpecificId;
+      } else {
+        // Customer segmentation
+        payload.type = "broadcast_customers";
+        payload.segment = pushTarget; // e.g., "customers", "segment_men", "segment_women", "segment_sneakers"
       }
 
-      if (targetTokens.length === 0) {
-        alert("No users found with valid notification tokens for this target.");
-        setPushSending(false);
-        return;
-      }
+      const res = await fetch("/api/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
 
-      let successCount = 0;
-      for (const token of targetTokens) {
-        const res = await fetch("/api/notify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token, title: pushTitle, body: pushBody })
-        });
-        if (res.ok) successCount++;
+      if (res.ok) {
+        alert("Notification Broadcast successfully sent via Engine!");
+        setPushTitle("");
+        setPushBody("");
+      } else {
+        alert("Failed to send notification");
       }
-
-      alert(`Successfully sent notification to ${successCount} user(s).`);
-      setPushTitle("");
-      setPushBody("");
-    } catch (err) {
-      console.error(err);
-      alert("Error sending notification.");
+    } catch (e) {
+      console.error(e);
+      alert("Error sending push notification");
     }
     setPushSending(false);
   };
@@ -1573,8 +1577,11 @@ export default function AdminPage() {
                       <div>
                         <label style={{ fontSize: 12, fontWeight: 700, color: "var(--adm-t2)", marginBottom: 6, display: "block" }}>Target Audience</label>
                         <select className="adm-input" value={pushTarget} onChange={e=>setPushTarget(e.target.value)}>
-                          <option value="all">Everyone (Customers, Sellers, Riders)</option>
-                          <option value="customers">Only Customers</option>
+                          <option value="all">Everyone (Global Blast)</option>
+                          <option value="customers">All Customers</option>
+                          <option value="segment_men">Customers (Menswear Interest)</option>
+                          <option value="segment_women">Customers (Womenswear Interest)</option>
+                          <option value="segment_sneakers">Customers (Sneakerheads)</option>
                           <option value="sellers">Only Sellers</option>
                           <option value="riders">Only Riders</option>
                           <option value="specific">Specific User ID</option>

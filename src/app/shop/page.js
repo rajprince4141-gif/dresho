@@ -13,10 +13,11 @@ import {
 } from "firebase/auth";
 import {
   doc, setDoc, getDoc, getDocs, collection, query, where,
-  onSnapshot, addDoc, orderBy, arrayUnion, arrayRemove, increment, writeBatch,
+  onSnapshot, addDoc, updateDoc, orderBy, arrayUnion, arrayRemove, increment, writeBatch,
 } from "firebase/firestore";
 import { requestNotificationPermission } from "@/lib/firebase";
 import dynamicImport from "next/dynamic";
+import NotificationBell from "@/components/NotificationBell";
 
 const LiveMap = dynamicImport(() => import("@/components/LiveMap"), { ssr: false });
 
@@ -698,7 +699,7 @@ export default function ShopPage() {
                   total: grandTotal,
                   adminCommission,
                   sellerEarnings,
-                  status: "Pending",
+                  status: "PLACED",
                   paymentMethod: "UPI",
                   paymentStatus: "Paid",
                   paymentId: response.razorpay_payment_id,
@@ -707,17 +708,35 @@ export default function ShopPage() {
                   riderId: null,
                   createdAt: new Date(),
                 });
-                // Notify customer (UPI)
-                if (userData?.fcmToken) {
-                  fetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: userData.fcmToken, title: "Order Confirmed! ⚡", body: `Your order #${trackingId} has been placed successfully.` }) });
-                }
-                // Notify seller (UPI)
+
+                // Notify customer via Central Engine
+                fetch("/api/notify", { 
+                  method: "POST", 
+                  headers: { "Content-Type": "application/json" }, 
+                  body: JSON.stringify({ 
+                    userId: user.uid, 
+                    role: "customer",
+                    title: "Order Placed Successfully", 
+                    body: `Your order #${trackingId} has been placed successfully.`,
+                    link: "/shop?section=orders"
+                  }) 
+                });
+
+                // Notify seller via Central Engine
                 if (sellerId) {
-                  const sellerSnap = await getDoc(doc(db, "sellers_profile", sellerId));
-                  if (sellerSnap.exists() && sellerSnap.data().fcmToken) {
-                    fetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: sellerSnap.data().fcmToken, title: "🔥 New Order Received!", body: `You have a new order from ${userData.name}. Open your dashboard now!` }) });
-                  }
+                  fetch("/api/notify", { 
+                    method: "POST", 
+                    headers: { "Content-Type": "application/json" }, 
+                    body: JSON.stringify({ 
+                      userId: sellerId, 
+                      role: "seller",
+                      title: "New Order Received!", 
+                      body: `You have a new order from ${userData?.name}. Open your dashboard now!`,
+                      link: "/seller"
+                    }) 
+                  });
                 }
+
                 await setDoc(doc(db, "users", user.uid), { address: { line: checkoutAddress, landmark: checkoutLandmark, city: checkoutCity, pincode: checkoutPincode }, phone: checkoutPhone }, { merge: true });
                 setUserData((prev) => ({ ...prev, address: { line: checkoutAddress, landmark: checkoutLandmark, city: checkoutCity, pincode: checkoutPincode }, phone: checkoutPhone }));
                 setCart([]);
@@ -753,26 +772,43 @@ export default function ShopPage() {
         total: grandTotal,
         adminCommission,
         sellerEarnings,
-        status: "Pending",
-        paymentMethod,
+        status: "PLACED",
+        paymentMethod: "COD",
         paymentStatus: "Pending",
         trackingId,
         deliveryOtp: otp,
         riderId: null,
         createdAt: new Date(),
       });
-      // Notify customer (COD)
-      if (userData?.fcmToken) {
-        fetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: userData.fcmToken, title: "Order Confirmed! ⚡", body: `Your order #${trackingId} has been placed. Pay ₹${grandTotal} on delivery.` }) });
-      }
-      // Notify seller (COD)
+
+      // Notify customer (COD) via Central Engine
+      fetch("/api/notify", { 
+        method: "POST", 
+        headers: { "Content-Type": "application/json" }, 
+        body: JSON.stringify({ 
+          userId: user.uid, 
+          role: "customer",
+          title: "Order Placed Successfully", 
+          body: `Your COD order #${trackingId} has been placed successfully.`,
+          link: "/shop?section=orders"
+        }) 
+      });
+
+      // Notify seller (COD) via Central Engine
       if (sellerId) {
-        getDoc(doc(db, "sellers_profile", sellerId)).then(sellerSnap => {
-          if (sellerSnap.exists() && sellerSnap.data().fcmToken) {
-            fetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: sellerSnap.data().fcmToken, title: "🔥 New Order Received!", body: `New COD order from ${userData.name}. Open your dashboard!` }) });
-          }
+        fetch("/api/notify", { 
+          method: "POST", 
+          headers: { "Content-Type": "application/json" }, 
+          body: JSON.stringify({ 
+            userId: sellerId, 
+            role: "seller",
+            title: "New COD Order Received!", 
+            body: `You have a new COD order from ${userData?.name}. Open your dashboard now!`,
+            link: "/seller"
+          }) 
         });
       }
+
       await setDoc(doc(db, "users", user.uid), { address: { line: checkoutAddress, landmark: checkoutLandmark, city: checkoutCity, pincode: checkoutPincode }, phone: checkoutPhone }, { merge: true });
       setUserData((prev) => ({ ...prev, address: { line: checkoutAddress, landmark: checkoutLandmark, city: checkoutCity, pincode: checkoutPincode }, phone: checkoutPhone }));
       setCart([]);
@@ -1110,6 +1146,7 @@ export default function ShopPage() {
 
 
             <div className="nav-actions">
+              {user && <NotificationBell userId={user.uid} role={userData?.role || "customer"} />}
               {userData?.role === "user" && (
                 <button onClick={() => setCurrentSection("orders")} className="nav-action-btn">
                   <span className="nav-action-icon">📦</span>
@@ -1920,7 +1957,7 @@ export default function ShopPage() {
               </div>
             </div>
 
-            <div style={{ flex: 1, paddingBottom: 40, overflowY: "auto" }} className="hide-scrollbar">
+            <div id="product-modal-scroll" style={{ flex: 1, paddingBottom: 40, overflowY: "auto" }} className="hide-scrollbar">
               {/* Image Gallery */}
               <div style={{ width: "100%", height: 450, background: "var(--ivory2)", position: "relative", display: "flex", overflowX: "auto", scrollSnapType: "x mandatory", scrollBehavior: "smooth", WebkitOverflowScrolling: "touch" }} className="hide-scrollbar">
                 {(viewProduct.images && viewProduct.images.length > 0 ? viewProduct.images : [viewProduct.image]).map((img, i) => (
@@ -2407,7 +2444,7 @@ export default function ShopPage() {
                     </div>
 
                     {/* Horizontal Scroll Cards */}
-                    <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 8, padding: "0 20px 8px" }} className="hide-scrollbar">
+                    <div style={{ display: "flex", gap: 20, overflowX: "auto", paddingBottom: 16, padding: "0 20px 16px" }} className="hide-scrollbar">
                       {similarProducts.map((sp) => {
                         const img = sp.image || sp.images?.[0] || "";
                         const avgRating = sp.reviews?.length
@@ -2418,13 +2455,13 @@ export default function ShopPage() {
                         return (
                           <div
                             key={sp.id}
-                            style={{ width: 150, flexShrink: 0, cursor: "pointer", borderRadius: 16, overflow: "hidden", background: "white", border: "1px solid #f1f5f9", boxShadow: "0 2px 8px rgba(0,0,0,0.06)", transition: "transform 0.2s, box-shadow 0.2s" }}
-                            onClick={() => { setViewProduct(sp); setSelectedSize(sp.sizes?.[0] || "M"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                            onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-3px)"; e.currentTarget.style.boxShadow = "0 8px 20px rgba(0,0,0,0.1)"; }}
-                            onMouseLeave={e => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)"; }}
+                            style={{ width: 220, flexShrink: 0, cursor: "pointer", borderRadius: 20, overflow: "hidden", background: "white", border: "1px solid #f1f5f9", boxShadow: "0 4px 12px rgba(0,0,0,0.06)", transition: "transform 0.2s, box-shadow 0.2s" }}
+                            onClick={() => { setViewProduct(sp); setSelectedSize(sp.sizes?.[0] || "M"); document.getElementById("product-modal-scroll")?.scrollTo({ top: 0, behavior: "smooth" }); }}
+                            onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.boxShadow = "0 12px 24px rgba(0,0,0,0.12)"; }}
+                            onMouseLeave={e => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.06)"; }}
                           >
                             {/* Image */}
-                            <div style={{ position: "relative", width: "100%", height: 160, background: "#f0ebe3", overflow: "hidden" }}>
+                            <div style={{ position: "relative", width: "100%", height: 280, background: "#f0ebe3", overflow: "hidden" }}>
                               {img ? (
                                 <img src={img} alt={sp.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { e.target.style.display = "none"; }} />
                               ) : (
@@ -2482,7 +2519,25 @@ export default function ShopPage() {
               {(viewProduct.outOfStock || viewProduct.stock === 0) ? (
                 <button 
                   style={{ width: "100%", height: 50, borderRadius: 16, background: "var(--navy)", color: "white", border: "none", fontSize: 13, fontWeight: 800, textTransform: "uppercase", letterSpacing: 1, cursor: "pointer", boxShadow: "0 4px 14px rgba(20,33,61,0.2)" }} 
-                  onClick={() => { alert("We will notify you when this is back in stock!"); setViewProduct(null); }}>
+                  onClick={async () => { 
+                    if (!user) return alert("Please log in to receive restock alerts.");
+                    try {
+                      await addDoc(collection(db, "restock_requests"), {
+                        productId: viewProduct.id,
+                        productName: viewProduct.name,
+                        size: selectedSize,
+                        userId: user.uid,
+                        fcmToken: userData?.fcmToken || null,
+                        requestedAt: new Date(),
+                        fulfilled: false
+                      });
+                      alert(`Awesome! We will notify you the second ${viewProduct.name} (Size: ${selectedSize}) is back in stock!`); 
+                      setViewProduct(null); 
+                    } catch (e) {
+                      console.error(e);
+                      alert("Error setting up alert. Try again.");
+                    }
+                  }}>
                   Notify Me When Available
                 </button>
               ) : (

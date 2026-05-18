@@ -11,6 +11,7 @@ import {
   doc, setDoc, getDoc, collection, query, where,
   onSnapshot, updateDoc, addDoc, deleteDoc,
 } from "firebase/firestore";
+import NotificationBell from "@/components/NotificationBell";
 import { requestNotificationPermission } from "@/lib/firebase";
 
 export default function SellerPage() {
@@ -606,6 +607,7 @@ export default function SellerPage() {
                 <span className="slider round"></span>
               </label>
             </div>
+            <NotificationBell userId={user.uid} role="seller" />
             <button className="btn-icon" onClick={() => signOut(auth)}>
               <i className="fas fa-power-off" style={{ fontSize: 14 }} />
             </button>
@@ -872,12 +874,22 @@ export default function SellerPage() {
                         <div style={{ display: "flex", gap: 6 }}>
                           <button onClick={() => { 
                             const ns = prompt("Enter new stock quantity:", p.stock);
-                            if(ns !== null) updateDoc(doc(db, "products", p.id), { stock: parseInt(ns) || 0 });
+                            if(ns !== null) {
+                              const parsed = parseInt(ns) || 0;
+                              updateDoc(doc(db, "products", p.id), { stock: parsed });
+                              if (parsed > 0 && (p.stock === 0 || p.outOfStock)) {
+                                fetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "restock_alert", data: { productId: p.id }, title: "It's Back! 🎉", body: `${p.name} is back in stock! Grab your size now.`, link: "/shop" }) });
+                              }
+                            }
                           }} style={{ background: "#f1f5f9", border: "none", color: "var(--navy)", padding: "6px 10px", borderRadius: 8, fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
                             Edit
                           </button>
                           <button onClick={() => { 
-                            updateDoc(doc(db, "products", p.id), { outOfStock: !p.outOfStock });
+                            const newOos = !p.outOfStock;
+                            updateDoc(doc(db, "products", p.id), { outOfStock: newOos });
+                            if (!newOos) {
+                              fetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "restock_alert", data: { productId: p.id }, title: "It's Back! 🎉", body: `${p.name} is back in stock! Grab your size now.`, link: "/shop" }) });
+                            }
                           }} style={{ background: p.outOfStock ? "#fef2f2" : "#f1f5f9", border: "none", color: p.outOfStock ? "#ef4444" : "var(--navy)", padding: "6px 10px", borderRadius: 8, fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
                             {p.outOfStock ? "Mark In Stock" : "OOS"}
                           </button>
@@ -896,31 +908,38 @@ export default function SellerPage() {
           {/* ORDERS */}
           {tab === "orders" && (
             <div className="animate-fade-in">
-              <h3 style={{ fontSize: 18, fontWeight: 900, marginBottom: 16, color: "var(--navy)" }}>Processing Required</h3>
-              {orders.filter((o) => o.status === "Pending").length === 0 ? (
+              <h3 style={{ fontSize: 18, fontWeight: 900, marginBottom: 4, color: "var(--navy)" }}>Active Orders</h3>
+              <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 20, lineHeight: 1.6 }}>
+                Manage your new and processing orders. First accept them, then pack them!
+              </p>
+
+              {orders.filter((o) => o.status === "PLACED" || o.status === "CONFIRMED").length === 0 ? (
                 <div style={{ textAlign: "center", padding: "40px 20px", background: "white", borderRadius: 24, border: "1px solid rgba(0,0,0,0.05)" }}>
                   <i className="fas fa-check-circle" style={{ fontSize: 40, marginBottom: 12, color: "#10b981", opacity: 0.8 }} />
-                  <p style={{ fontWeight: 700, color: "var(--text-muted)", fontSize: 14 }}>No pending orders</p>
+                  <p style={{ fontSize: 14, fontWeight: 800, color: "var(--navy)" }}>All Caught Up!</p>
+                  <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 6 }}>No active orders at the moment.</p>
                 </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                  {orders.filter((o) => o.status === "Pending").map((o) => (
-                    <div key={o.id} className="premium-card" style={{ padding: "20px", borderRadius: 20, cursor: "default", background: "white", border: "1px solid #e2e8f0", boxShadow: "0 4px 12px rgba(0,0,0,0.03)" }}>
+                  {orders.filter((o) => o.status === "PLACED" || o.status === "CONFIRMED").map((o) => (
+                    <div key={o.id} className="premium-card" style={{ padding: "20px", borderRadius: 20, cursor: "default", background: "white", border: o.status === "PLACED" ? "2px solid #3b82f6" : "1px solid #e2e8f0", boxShadow: "0 4px 12px rgba(0,0,0,0.03)" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", paddingBottom: 14, borderBottom: "1px solid #f1f5f9", marginBottom: 12 }}>
-                        <span style={{ fontSize: 12, fontWeight: 800, color: "var(--text-muted)", letterSpacing: 1 }}>ORDER #{o.trackingId}</span>
+                        <span style={{ fontSize: 12, fontWeight: 800, color: o.status === "PLACED" ? "#3b82f6" : "var(--text-muted)", letterSpacing: 1 }}>
+                          ORDER #{o.trackingId} <span style={{ background: o.status === "PLACED" ? "#dbeafe" : "#fef3c7", padding: "2px 6px", borderRadius: 4, marginLeft: 6 }}>{o.status}</span>
+                        </span>
                         <span style={{ fontWeight: 900, color: "#10b981", fontSize: 15 }}>₹{o.total}</span>
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
                         {o.items?.map((item, i) => (
                           <p key={i} style={{ fontSize: 14, fontWeight: 600, color: "var(--navy)" }}>
-                            <span style={{ color: "var(--text-muted)" }}>{item.qty}×</span> {item.name} {item.size ? <span style={{ color: "var(--gold)" }}>({item.size})</span> : ""}
+                            <span style={{ color: "var(--text-muted)" }}>{item.qty}x</span> {item.name} {item.size ? <span style={{ color: "var(--gold)" }}>({item.size})</span> : ""}
                           </p>
                         ))}
                       </div>
 
-                      {/* ── Customer Delivery Info ── */}
+                      {/* 👤 Customer Delivery Info 👤 */}
                       <div style={{ background: "linear-gradient(135deg, #eef2ff, #f0fdf4)", border: "1px solid #c7d2fe", borderRadius: 14, padding: "14px 16px", marginBottom: 14 }}>
-                        <p style={{ fontSize: 10, fontWeight: 800, color: "#6366f1", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 10 }}>📦 Customer Delivery Info</p>
+                        <p style={{ fontSize: 10, fontWeight: 800, color: "#6366f1", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 10 }}>📍 Customer Delivery Info</p>
                         <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
                           <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
                             <i className="fas fa-user" style={{ fontSize: 12, color: "#6366f1", marginTop: 2, flexShrink: 0 }} />
@@ -934,29 +953,38 @@ export default function SellerPage() {
                             <i className="fas fa-map-marker-alt" style={{ fontSize: 12, color: "#ef4444", marginTop: 2, flexShrink: 0 }} />
                             <span style={{ fontSize: 12, fontWeight: 600, color: "#374151", lineHeight: 1.5 }}>{o.userAddress || "No address provided"}</span>
                           </div>
-                          {o.userCoordinates && sellerData?.coordinates ? (
-                            <a
-                              href={(() => { try { const [cLat, cLon] = o.userCoordinates.split(",").map(s => s.trim()); const [sLat, sLon] = sellerData.coordinates.split(",").map(s => s.trim()); return `https://www.google.com/maps/dir/${sLat},${sLon}/${cLat},${cLon}`; } catch { return "#"; } })()}
-                              target="_blank" rel="noopener noreferrer"
-                              style={{ display: "inline-flex", alignItems: "center", gap: 7, marginTop: 6, padding: "9px 14px", borderRadius: 10, background: "linear-gradient(135deg, #4f46e5, #7c3aed)", color: "white", fontSize: 12, fontWeight: 700, textDecoration: "none", boxShadow: "0 3px 10px rgba(79,70,229,0.3)", width: "fit-content" }}
-                            >
-                              <i className="fas fa-route" style={{ fontSize: 13 }} /> View Route on Map
-                            </a>
-                          ) : o.userCoordinates ? (
-                            <a
-                              href={(() => { try { const [cLat, cLon] = o.userCoordinates.split(",").map(s => s.trim()); return `https://www.google.com/maps/search/?api=1&query=${cLat},${cLon}`; } catch { return "#"; } })()}
-                              target="_blank" rel="noopener noreferrer"
-                              style={{ display: "inline-flex", alignItems: "center", gap: 7, marginTop: 6, padding: "9px 14px", borderRadius: 10, background: "#10b981", color: "white", fontSize: 12, fontWeight: 700, textDecoration: "none", boxShadow: "0 3px 10px rgba(16,185,129,0.3)", width: "fit-content" }}
-                            >
-                              <i className="fas fa-map-pin" style={{ fontSize: 13 }} /> View Customer Location
-                            </a>
-                          ) : null}
                         </div>
                       </div>
 
-                      <button className="auth-btn-primary" style={{ width: "100%", borderRadius: 14, fontSize: 14, background: "var(--navy)", border: "none", height: 48 }} onClick={() => { updateDoc(doc(db, "orders", o.id), { status: "Shipped" }); alert("Order sent to delivery!"); }}>
-                        Mark Packed & Handed Over
-                      </button>
+                      {o.status === "PLACED" ? (
+                        <button className="auth-btn-primary" style={{ width: "100%", borderRadius: 14, fontSize: 14, background: "#3b82f6", border: "none", height: 48 }} 
+                          onClick={() => { 
+                            updateDoc(doc(db, "orders", o.id), { status: "CONFIRMED" }); 
+                          }}
+                        >
+                          ACCEPT ORDER
+                        </button>
+                      ) : (
+                        <button className="auth-btn-primary" style={{ width: "100%", borderRadius: 14, fontSize: 14, background: "var(--navy)", border: "none", height: 48 }} 
+                          onClick={() => { 
+                            updateDoc(doc(db, "orders", o.id), { status: "PACKED" }); 
+                            // Broadcast to riders!
+                            fetch("/api/notify", { 
+                              method: "POST", 
+                              headers: { "Content-Type": "application/json" }, 
+                              body: JSON.stringify({ 
+                                type: "broadcast_riders", 
+                                title: "New Delivery Available! 🛵", 
+                                body: `Pickup from ${sellerData?.storeName}. Distance: ~2km. Earn approx ₹40.`,
+                                link: "/delivery",
+                                data: { orderId: o.id }
+                              }) 
+                            });
+                          }}
+                        >
+                          MARK AS PACKED
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>

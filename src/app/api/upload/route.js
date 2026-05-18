@@ -1,18 +1,19 @@
 // ── POST /api/upload ─────────────────────────────────────────────────────────
-// Proxies image uploads to ImgBB so NEXT_PUBLIC_IMGBB_API_KEY is never needed
-// The browser sends the raw file; this route sends it to ImgBB with the secret key.
+// Handles all image/document uploads across the platform (Sellers, Riders, Admin)
+// Uploads directly to Firebase Storage using the Admin SDK.
 
-// Allow up to 10 MB request bodies (Next.js App Router default is 4 MB)
+import { adminStorage } from "@/lib/firebase-admin";
+
 export const maxDuration = 30;
 export const dynamic = 'force-dynamic';
 
 export async function POST(req) {
   try {
     const formData = await req.formData();
-    const file = formData.get('image');
+    const file = formData.get('image'); // Usually named 'image' in the frontend
 
     if (!file) {
-      return Response.json({ error: 'No image provided' }, { status: 400 });
+      return Response.json({ error: 'No file provided' }, { status: 400 });
     }
 
     // Size guard — 10 MB max (allows document uploads)
@@ -20,34 +21,45 @@ export async function POST(req) {
       return Response.json({ error: 'File must be under 10 MB' }, { status: 413 });
     }
 
-    // Type guard — images only (ImgBB does not support PDFs)
-    if (!file.type.startsWith('image/')) {
-      return Response.json({ error: 'File must be an image (JPG, PNG, etc.)' }, { status: 415 });
+    // Process file into a buffer
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // Generate unique filename
+    const ext = file.name.split('.').pop() || 'png';
+    const cleanName = file.name.replace(/[^a-zA-Z0-9]/g, '_');
+    const fileName = `uploads/${Date.now()}_${Math.random().toString(36).substring(7)}_${cleanName}.${ext}`;
+
+    // Upload to Firebase Storage
+    const bucket = adminStorage.bucket();
+    const fileUpload = bucket.file(fileName);
+
+    await fileUpload.save(buffer, {
+      metadata: {
+        contentType: file.type || 'application/octet-stream',
+      },
+    });
+
+    // Make the file public (optional, but good practice if bucket allows it)
+    try {
+      await fileUpload.makePublic();
+    } catch (e) {
+      // If uniform bucket-level access is enabled, makePublic() might throw. 
+      // We catch it and ignore, as the alt=media URL still works if Firebase rules allow read.
+      console.warn("Could not make file public (uniform access may be enabled):", e.message);
     }
 
-    // Forward to ImgBB using server-only key
-    const imgbbForm = new FormData();
-    imgbbForm.append('image', file);
-
-    const imgbbRes = await fetch(
-      `https://api.imgbb.com/1/upload?key=${process.env.IMGBB_API_KEY}`,
-      { method: 'POST', body: imgbbForm }
-    );
-
-    const data = await imgbbRes.json();
-
-    if (!data.success) {
-      console.error('[ImgBB] Upload failed:', data.error?.message);
-      return Response.json({ error: 'Upload failed' }, { status: 502 });
-    }
+    // Generate Firebase Storage direct download URL
+    const url = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(fileName)}?alt=media`;
 
     return Response.json({
-      url:       data.data.url,
-      deleteUrl: data.data.delete_url,
+      url: url,
+      success: true
     });
 
   } catch (err) {
-    console.error('[Upload] error:', err.message);
-    return Response.json({ error: 'Internal error' }, { status: 500 });
+    console.error('[Upload] error:', err.stack);
+    return Response.json({ error: 'Internal upload error' }, { status: 500 });
   }
 }
+

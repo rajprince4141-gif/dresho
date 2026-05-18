@@ -9,6 +9,7 @@ if (!admin.apps.length) {
         // Replace escaped newlines with actual newlines to support Vercel deployment
         privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
       }),
+      storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
     });
     console.log('Firebase Admin Initialized successfully.');
   } catch (error) {
@@ -19,5 +20,6 @@ if (!admin.apps.length) {
 export const adminAuth = admin.auth();
 export const adminDb = admin.firestore();
 export const adminMessaging = admin.messaging();
+export const adminStorage = admin.storage();
 
 export default admin;
