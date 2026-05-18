@@ -1459,8 +1459,35 @@ export default function AdminPage() {
                               if (!file) return;
                               setBannerUploading(true); setBannerUploadErr("");
                               try {
+                                const compressImage = (file) => new Promise((resolve, reject) => {
+                                  const reader = new FileReader();
+                                  reader.readAsDataURL(file);
+                                  reader.onload = (event) => {
+                                    const img = new Image();
+                                    img.src = event.target.result;
+                                    img.onload = () => {
+                                      const canvas = document.createElement("canvas");
+                                      let width = img.width, height = img.height;
+                                      const MAX_DIM = 1200;
+                                      if (width > height && width > MAX_DIM) { height *= MAX_DIM / width; width = MAX_DIM; }
+                                      else if (height > MAX_DIM) { width *= MAX_DIM / height; height = MAX_DIM; }
+                                      canvas.width = width; canvas.height = height;
+                                      canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+                                      canvas.toBlob((blob) => {
+                                        if (blob) resolve(new File([blob], file.name || "banner.jpg", { type: "image/jpeg" }));
+                                        else reject(new Error("Canvas to Blob failed"));
+                                      }, "image/jpeg", 0.7);
+                                    };
+                                    img.onerror = reject;
+                                  };
+                                  reader.onerror = reject;
+                                });
+                                
+                                let fileToUpload = file;
+                                try { fileToUpload = await compressImage(file); } catch(err) { console.log("Compression skipped", err); }
+
                                 const fd = new FormData();
-                                fd.append("image", file);
+                                fd.append("image", fileToUpload);
                                 const res = await fetch("/api/upload", { method: "POST", body: fd });
                                 const json = await res.json();
                                 if (res.ok && json.url) {

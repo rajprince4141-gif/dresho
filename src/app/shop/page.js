@@ -874,78 +874,104 @@ export default function ShopPage() {
       }
 
       let itemsHtml = o.items?.map(item => `
-        <tr style="border-bottom:1px solid #ddd;">
-          <td style="padding:10px 0;">${item.name} ${item.size ? `(${item.size})` : ""}</td>
-          <td style="padding:10px 0; text-align:center;">${item.qty}</td>
-          <td style="padding:10px 0; text-align:right;">₹${item.price}</td>
-          <td style="padding:10px 0; text-align:right;">₹${item.price * item.qty}</td>
+        <tr>
+          <td style="padding:16px; font-size: 13px; color: #333;">${item.name} ${item.size ? `(${item.size})` : ""}</td>
+          <td style="padding:16px; text-align:center; font-size: 13px; color: #333;">${item.qty}</td>
+          <td style="padding:16px; text-align:center; font-size: 13px; color: #333;">₹${Number(item.price).toFixed(2)}</td>
+          <td style="padding:16px; text-align:right; font-size: 13px; color: #333;">₹${(Number(item.price) * Number(item.qty)).toFixed(2)}</td>
         </tr>
       `).join("") || "";
 
+      const orderDateStr = o.createdAt?.toDate ? o.createdAt.toDate().toLocaleDateString('en-GB') : "N/A";
+      const subtotal = o.items?.reduce((acc, i) => acc + (i.price*i.qty), 0) || 0;
+
       invoiceDiv.innerHTML = `
-        <div style="border-bottom: 2px solid #000; padding-bottom: 20px; margin-bottom: 20px; display:flex; justify-content:space-between; align-items:flex-start;">
-          <div>
-            <h1 style="margin:0; font-size: 32px; font-weight:900; letter-spacing: -1px; color: #16a34a;">DRESHO</h1>
-            <p style="margin:5px 0 0; color:#555; font-size:14px;">support@dresho.com | +91 9876543210</p>
-          </div>
-          <div style="text-align:right;">
-            <h2 style="margin:0; color:#333;">TAX INVOICE</h2>
-            <p style="margin:5px 0 0; font-weight:bold;">Order ID: #${o.trackingId}</p>
-            <p style="margin:5px 0 0; font-size:14px;">Date: ${orderDate}</p>
-          </div>
-        </div>
-        
-        <div style="display:flex; justify-content:space-between; margin-bottom: 30px;">
-          <div style="width: 45%;">
-            <h3 style="margin-bottom:10px; border-bottom:1px solid #eee; padding-bottom:5px;">Billed To:</h3>
-            <p style="margin:0; font-weight:bold;">${userData?.name || "Customer"}</p>
-            <p style="margin:5px 0;">${userData?.phone || o.phone || "N/A"}</p>
-            <p style="margin:5px 0; line-height: 1.5;">${userData?.address?.line || o.address?.line || ""} ${userData?.address?.city || ""}</p>
-          </div>
-          <div style="width: 45%;">
-            <h3 style="margin-bottom:10px; border-bottom:1px solid #eee; padding-bottom:5px;">Sold By:</h3>
-            <p style="margin:0; font-weight:bold;">${sellerName}</p>
-            <p style="margin:5px 0;">${sellerContact}</p>
-          </div>
-        </div>
-        
-        <table style="width:100%; border-collapse:collapse; margin-bottom:20px;">
-          <thead>
-            <tr style="background:#f8fafc; border-bottom:2px solid #cbd5e1;">
-              <th style="padding:10px; text-align:left;">Item Description</th>
-              <th style="padding:10px; text-align:center;">Qty</th>
-              <th style="padding:10px; text-align:right;">Unit Price</th>
-              <th style="padding:10px; text-align:right;">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${itemsHtml}
-          </tbody>
-        </table>
-        
-        <div style="display:flex; justify-content:flex-end;">
-          <div style="width: 300px;">
-            <div style="display:flex; justify-content:space-between; padding:5px 0;">
-              <span>Subtotal:</span>
-              <span>₹${o.items?.reduce((acc, i) => acc + (i.price*i.qty), 0) || 0}</span>
-            </div>
-            <div style="display:flex; justify-content:space-between; padding:5px 0;">
-              <span>Delivery Fee:</span>
-              <span>₹${o.deliveryFee || 0}</span>
-            </div>
-            <div style="display:flex; justify-content:space-between; padding:10px 0; border-top:2px solid #000; font-weight:bold; font-size:18px;">
-              <span>Grand Total:</span>
-              <span>₹${o.total}</span>
-            </div>
-            <div style="text-align:right; font-size:12px; color:#666; margin-top:5px;">
-              Payment Method: ${o.paymentMethod || "Cash on Delivery"}
+        <div style="font-family: Arial, sans-serif; color: #000; background: white; position: relative; padding-bottom: 60px;">
+          
+          <!-- Header Section -->
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 60px;">
+            <h1 style="color: #1a0f91; font-size: 64px; font-weight: 500; margin: 0; letter-spacing: 2px;">Invoice</h1>
+            <div style="background: #1a0f91; color: white; width: 140px; height: 140px; border-radius: 24px; display: flex; align-items: center; justify-content: center;">
+              <span style="font-size: 32px; font-weight: 800; font-family: 'Georgia', serif; letter-spacing: 1px;">Dresho</span>
             </div>
           </div>
-        </div>
-        
-        <div style="margin-top: 50px; text-align:center; color:#888; font-size:12px; border-top:1px dashed #ddd; padding-top:20px;">
-          <p>Thank you for shopping with Dresho!</p>
-          <p>This is a computer-generated invoice and does not require a physical signature.</p>
+
+          <!-- Bill To & Details -->
+          <div style="display: flex; justify-content: space-between; margin-bottom: 40px; font-size: 14px;">
+            <div>
+              <h3 style="margin: 0 0 10px 0; font-size: 14px; font-weight: 800;">Bill To:</h3>
+              <p style="margin: 4px 0;">${userData?.name || "Customer"}</p>
+              <p style="margin: 4px 0;">${userData?.address?.line || o.address?.line || ""} ${userData?.address?.city || ""}</p>
+              <p style="margin: 4px 0;">${userData?.email || o.email || userData?.phone || o.phone || "No contact info"}</p>
+            </div>
+            <div style="text-align: right; margin-top: 24px;">
+              <p style="margin: 4px 0;">Date: ${orderDateStr}</p>
+              <p style="margin: 4px 0;">Invoice Number : ${o.trackingId}</p>
+            </div>
+          </div>
+
+          <!-- Table -->
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+            <thead>
+              <tr style="background: #1a0f91; color: white; text-align: left; font-size: 12px; letter-spacing: 1px;">
+                <th style="padding: 16px; font-weight: 600;">ITEM DESCRIPTION</th>
+                <th style="padding: 16px; text-align: center; font-weight: 600;">QUANTITY</th>
+                <th style="padding: 16px; text-align: center; font-weight: 600;">PRICE</th>
+                <th style="padding: 16px; text-align: right; font-weight: 600;">TOTAL</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itemsHtml}
+            </tbody>
+          </table>
+          
+          <div style="border-bottom: 2px solid #333; margin-bottom: 20px;"></div>
+
+          <!-- Totals Section -->
+          <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+            <div style="margin-top: 40px;">
+              <p style="margin: 0; font-weight: 700; font-size: 12px;">Payment Method:</p>
+              <p style="margin: 4px 0; font-size: 12px; color: #555;">${o.paymentMethod || "Cash on Delivery"}</p>
+            </div>
+            
+            <div style="width: 320px;">
+              <div style="display: flex; justify-content: space-between; padding: 4px 16px; font-size: 13px;">
+                <span>Sub-Total :</span>
+                <span>₹ ${subtotal.toFixed(2)}</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; padding: 4px 16px; font-size: 13px; margin-bottom: 12px;">
+                <span>Delivery Fee :</span>
+                <span>₹ ${(o.deliveryFee || 0).toFixed(2)}</span>
+              </div>
+              
+              <div style="background: #1a0f91; color: white; display: flex; justify-content: space-between; padding: 12px 16px; font-size: 15px; font-weight: 600;">
+                <span>Total Amount :</span>
+                <span>₹ ${Number(o.total).toFixed(2)}</span>
+              </div>
+
+              <!-- Total Due block inside right column to match layout -->
+              <div style="text-align: right; margin-top: 40px;">
+                <p style="margin: 0; font-size: 14px; font-weight: 600;">Total Due</p>
+                <p style="margin: 0; font-size: 56px; font-weight: 600; letter-spacing: -1px; color: #111;">${Number(o.total).toFixed(2)}</p>
+              </div>
+            </div>
+          </div>
+
+          <div style="border-bottom: 2px solid #333; margin-top: 20px; margin-bottom: 30px;"></div>
+
+          <!-- Footer -->
+          <div style="display: flex; justify-content: space-between; align-items: flex-end;">
+            <h2 style="font-family: 'Georgia', serif; font-size: 36px; font-weight: 400; margin: 0; letter-spacing: 2px; color: #333;">THANK YOU</h2>
+            <div style="text-align: right;">
+              <p style="margin: 0; font-size: 12px; font-weight: 800; color: #555;">Terms and Conditions</p>
+              <p style="margin: 4px 0 0 0; font-size: 11px; color: #888;">Return and exchange within 24 hours</p>
+              <p style="margin: 4px 0 0 0; font-size: 11px; color: #888;">Support: dresho.business@gmail.com</p>
+            </div>
+          </div>
+
+          <!-- Corner decorations -->
+          <div style="position: absolute; bottom: -40px; left: -40px; width: 80px; height: 80px; background: #1a0f91;"></div>
+          <div style="position: absolute; bottom: -40px; right: -40px; width: 80px; height: 80px; background: #1a0f91;"></div>
         </div>
       `;
       
@@ -1617,105 +1643,116 @@ export default function ShopPage() {
 
         {/* ── ORDERS ── */}
         {currentSection === "orders" && (
-          <div style={{ padding: "32px 20px" }} className="animate-fade-in">
-            <h3 style={{ fontFamily: "var(--font-d)", fontSize: 28, fontWeight: 400, color: "var(--navy)", marginBottom: 24 }}>My Orders</h3>
+          <div style={{ padding: "20px 0 80px 0", background: "#f1f5f9", minHeight: "100vh" }} className="animate-fade-in">
+            <div style={{ padding: "0 20px" }}>
+              <h3 style={{ fontFamily: "var(--font-d)", fontSize: 24, fontWeight: 600, color: "var(--navy)", marginBottom: 16 }}>My Orders</h3>
+              
+              {/* Search Bar & Filters */}
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+                <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, background: "white", padding: "12px 16px", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+                  <i className="fas fa-search" style={{ color: "#94a3b8" }} />
+                  <input placeholder="Search your order here" style={{ border: "none", outline: "none", width: "100%", fontSize: 14, color: "var(--navy)" }} />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 600, color: "var(--navy)", background: "white", padding: "12px 16px", borderRadius: 8, border: "1px solid #e2e8f0", cursor: "pointer" }}>
+                  <i className="fas fa-sliders-h" /> Filters
+                </div>
+              </div>
+            </div>
+
             {orders.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "80px 20px", background: "var(--ivory2)", borderRadius: 16 }}>
-                <span style={{ fontSize: 50, marginBottom: 16, display: "block" }}>📦</span>
-                <h4 style={{ fontWeight: 800, color: "var(--navy)", fontSize: 20, marginBottom: 8 }}>No orders yet</h4>
+              <div style={{ textAlign: "center", padding: "60px 20px" }}>
+                <span style={{ fontSize: 40, marginBottom: 12, display: "block" }}>📦</span>
+                <h4 style={{ fontWeight: 800, color: "var(--navy)", fontSize: 18, marginBottom: 8 }}>No orders yet</h4>
                 <p style={{ fontWeight: 500, color: "var(--sub)", fontSize: 13, marginBottom: 24 }}>You haven't placed any orders. Start exploring our collection!</p>
-                <button onClick={() => setCurrentSection("home")} style={{ padding: "12px 32px", background: "var(--navy)", color: "white", borderRadius: 12, border: "none", fontSize: 14, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 12px rgba(20,33,61,0.2)" }}>
+                <button onClick={() => setCurrentSection("home")} style={{ padding: "10px 24px", background: "var(--navy)", color: "white", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                   Start Shopping
                 </button>
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {orders.map((o) => (
-                  <div key={o.id} className="animate-fade-in-up" style={{ background: "var(--card)", border: "1px solid var(--border)", padding: "24px", borderRadius: 16 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
-                      <div>
-                        <span style={{ fontSize: 11, fontWeight: 600, color: "var(--sub)", letterSpacing: 1, display: "block", marginBottom: 4 }}>ORDER #{o.trackingId}</span>
-                        <span style={{ fontSize: 11, color: "var(--sub)", display: "block" }}>
-                          Ordered on: {o.createdAt?.toDate ? o.createdAt.toDate().toLocaleDateString("en-IN", { day: 'numeric', month: 'short', year: 'numeric' }) : "Unknown date"}
-                        </span>
+                  <div key={o.id} className="animate-fade-in-up" style={{ background: "white", padding: "16px 20px" }}>
+                    {o.items?.map((item, i) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: i !== o.items.length - 1 ? 16 : 0 }}>
+                        <div style={{ width: 64, height: 64, borderRadius: 8, background: "#f8fafc", flexShrink: 0, overflow: "hidden", border: "1px solid #e2e8f0" }}>
+                          <img src={item.image} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <h4 style={{ 
+                            fontSize: 14, fontWeight: 600, marginBottom: 4,
+                            color: o.status === "Delivered" ? "#16a34a" : o.status === "Cancelled" ? "#0f172a" : "#16a34a"
+                          }}>
+                            {o.status === "Delivered" 
+                              ? `Delivered on ${o.createdAt?.toDate ? o.createdAt.toDate().toLocaleDateString("en-US", {month: "short", day: "2-digit"}) : ""}`
+                              : o.status === "Cancelled" 
+                              ? `Cancelled on ${o.createdAt?.toDate ? o.createdAt.toDate().toLocaleDateString("en-US", {month: "short", day: "2-digit"}) : ""}`
+                              : o.status}
+                          </h4>
+                          <p style={{ fontSize: 12, color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {item.name}
+                          </p>
+                        </div>
+                        <i className="fas fa-chevron-right" style={{ color: "#cbd5e1", fontSize: 14 }} />
                       </div>
-                      <span style={{ padding: "4px 8px", fontSize: 10, fontWeight: 600, textTransform: "uppercase", background: "var(--ivory2)", color: "var(--navy)", border: "1px solid var(--border)", borderRadius: 4 }}>
-                        {o.status}
-                      </span>
-                    </div>
+                    ))}
 
-                    {/* Order Tracking Timeline */}
-                    <div style={{ padding: "16px 0", borderBottom: "1px solid var(--border2)", marginBottom: 16, display: o.status === "Cancelled" ? "none" : "block" }}>
-                      {(() => {
-                        const steps = ["Pending", "Assigned", "Picked Up", "Out for Delivery", "Delivered"];
-                        let currentIdx = steps.indexOf(o.status);
-                        if (currentIdx === -1 && o.status !== "Cancelled") currentIdx = 0;
-                        if (o.status === "Cancelled") return <div style={{color:"#ef4444",fontWeight:800, fontSize: 14}}>Order Cancelled</div>;
-                        return (
-                          <div style={{ display: "flex", justifyContent: "space-between", position: "relative", padding: "0 10px" }}>
-                            <div style={{ position: "absolute", top: 12, left: 24, right: 24, height: 4, background: "var(--border)", zIndex: 0, borderRadius: 2 }} />
-                            <div style={{ position: "absolute", top: 12, left: 24, width: `calc(${(currentIdx / (steps.length - 1)) * 100}% - 48px)`, height: 4, background: "#16a34a", zIndex: 1, borderRadius: 2, transition: "width 1s cubic-bezier(0.4, 0, 0.2, 1)" }} />
-                            {steps.map((step, idx) => (
-                              <div key={idx} style={{ display: "flex", flexDirection: "column", alignItems: "center", zIndex: 2, gap: 8, opacity: idx <= currentIdx ? 1 : 0.4, width: 60 }}>
-                                <div style={{ width: 28, height: 28, borderRadius: "50%", background: idx <= currentIdx ? "#16a34a" : "var(--ivory2)", color: idx <= currentIdx ? "white" : "var(--sub)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, border: "3px solid var(--card)", boxShadow: idx <= currentIdx ? "0 2px 8px rgba(22,163,74,0.3)" : "none", transition: "all 0.3s" }}>
-                                  {idx < currentIdx ? <i className="fas fa-check" /> : idx + 1}
-                                </div>
-                                <span style={{ fontSize: 9, fontWeight: 700, color: idx <= currentIdx ? "var(--navy)" : "var(--sub)", textAlign: "center", lineHeight: 1.2 }}>{step}</span>
-                              </div>
-                            ))}
-                          </div>
-                        );
-                      })()}
-                    </div>
-
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
-                      {o.items?.map((item, i) => (
-                        <p key={i} style={{ fontSize: 13, color: "var(--sub)", display: "flex", justifyContent: "space-between" }}>
-                          <span>{item.qty}× {item.name} {item.size ? `(${item.size})` : ""}</span>
-                          <span style={{ fontWeight: 600, color: "var(--navy)" }}>₹{item.price * item.qty}</span>
-                        </p>
-                      ))}
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 16, borderTop: "1px solid var(--border2)" }}>
-                      <span style={{ fontSize: 12, color: "var(--sub)", textTransform: "uppercase", letterSpacing: 1 }}>Total</span>
-                      <span style={{ fontSize: 20, fontWeight: 600, color: "var(--navy)" }}>₹{o.total}</span>
-                    </div>
-                    {o.status === "Out for Delivery" && (
-                      <div style={{ marginTop: 16, padding: "16px", background: "var(--ivory2)", border: "1px dashed var(--gold)", textAlign: "center", borderRadius: 12 }}>
-                        <p style={{ fontSize: 12, fontWeight: 600, color: "var(--navy)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>
-                          Delivery OTP: <span style={{ fontSize: 24, display: "block", marginTop: 4, color: "var(--gold)" }}>{o.deliveryOtp}</span>
-                        </p>
-                        
-                        {/* Live Tracking Map */}
-                        {o.riderId && riderLocations[o.riderId] ? (
-                          <div style={{ width: "100%", height: 200, borderRadius: 12, overflow: "hidden", border: "1px solid var(--border)", position: "relative" }}>
-                            <div style={{ position: "absolute", top: 8, left: 8, zIndex: 10, background: "rgba(255,255,255,0.9)", padding: "4px 8px", borderRadius: 6, fontSize: 10, fontWeight: 800, color: "var(--navy)", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }}>
-                              <i className="fas fa-location-dot" style={{ color: "#16a34a", marginRight: 4 }}/> Live Tracking
-                            </div>
-                            <LiveMap lat={riderLocations[o.riderId].lat} lng={riderLocations[o.riderId].lng} label="Your Delivery Rider" />
-                          </div>
-                        ) : (
-                          <div style={{ width: "100%", height: 100, borderRadius: 12, border: "1px solid var(--border)", background: "#e5e7eb", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column" }}>
-                            <i className="fas fa-satellite-dish" style={{ fontSize: 20, color: "var(--sub)", marginBottom: 8 }}/>
-                            <p style={{ fontSize: 11, color: "var(--sub)", fontWeight: 600 }}>Locating rider...</p>
-                          </div>
-                        )}
+                    {/* Rate & Review Footer */}
+                    {o.status === "Delivered" && (
+                      <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #f1f5f9", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <span style={{ fontSize: 12, color: "#475569" }}>Rate & Review</span>
+                        <div style={{ display: "flex", gap: 8 }} onClick={() => handleRateProduct(o.id)}>
+                          {[1,2,3,4,5].map(star => (
+                            <i key={star} className={o.rating && star <= o.rating ? "fas fa-star" : "far fa-star"} style={{ color: o.rating && star <= o.rating ? "#16a34a" : "#cbd5e1", fontSize: 16, cursor: "pointer" }} />
+                          ))}
+                        </div>
                       </div>
                     )}
+
+                    {/* Action Buttons for Delivered */}
                     {o.status === "Delivered" && (
-                      <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px dashed var(--border)", display: "flex", flexWrap: "wrap", gap: 10 }}>
-                        <button onClick={() => handleExchangeOrder(o.id)} style={{ flex: "1 1 100px", padding: "10px", fontSize: 12, fontWeight: 600, color: "var(--navy)", background: "transparent", border: "1px solid var(--navy)", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                          <i className="fas fa-right-left"></i> Exchange
-                        </button>
-                        <button onClick={() => handleReturnOrder(o.id)} style={{ flex: "1 1 100px", padding: "10px", fontSize: 12, fontWeight: 600, color: "#ef4444", background: "transparent", border: "1px solid #ef4444", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                          <i className="fas fa-undo"></i> Return
-                        </button>
-                        <button onClick={() => handleRateProduct(o.id)} style={{ flex: "1 1 100px", padding: "10px", fontSize: 12, fontWeight: 600, color: "white", background: "var(--navy)", border: "none", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                          <i className="fas fa-star" style={{ color: o.rating ? "#fbbf24" : "white" }}></i> {o.rating ? `Rated ${o.rating}/5` : "Rate Product"}
-                        </button>
-                        <button onClick={() => downloadInvoice(o)} style={{ flex: "1 1 100%", padding: "10px", fontSize: 12, fontWeight: 600, color: "#16a34a", background: "#ecfdf5", border: "1px solid #16a34a", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                          <i className="fas fa-file-pdf"></i> Download E-Bill
-                        </button>
+                      <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
+                        <button onClick={() => handleExchangeOrder(o.id)} style={{ flex: 1, padding: "8px", fontSize: 12, fontWeight: 600, color: "#0f172a", background: "white", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer" }}>Exchange</button>
+                        <button onClick={() => handleReturnOrder(o.id)} style={{ flex: 1, padding: "8px", fontSize: 12, fontWeight: 600, color: "#0f172a", background: "white", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer" }}>Return</button>
+                        <button onClick={() => downloadInvoice(o)} style={{ flex: 1, padding: "8px", fontSize: 12, fontWeight: 600, color: "#16a34a", background: "#ecfdf5", border: "1px solid #16a34a", borderRadius: 8, cursor: "pointer" }}>E-Bill</button>
+                      </div>
+                    )}
+
+                    {/* Active Tracking timeline */}
+                    {o.status !== "Delivered" && o.status !== "Cancelled" && (
+                      <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #f1f5f9" }}>
+                        {(() => {
+                          const steps = ["Pending", "Assigned", "Picked Up", "Out for Delivery", "Delivered"];
+                          let currentIdx = steps.indexOf(o.status);
+                          if (currentIdx === -1 && o.status !== "Cancelled") currentIdx = 0;
+                          return (
+                            <div style={{ display: "flex", justifyContent: "space-between", position: "relative", padding: "0 10px" }}>
+                              <div style={{ position: "absolute", top: 8, left: 20, right: 20, height: 2, background: "#e2e8f0", zIndex: 0 }} />
+                              <div style={{ position: "absolute", top: 8, left: 20, width: `calc(${(currentIdx / (steps.length - 1)) * 100}% - 40px)`, height: 2, background: "#16a34a", zIndex: 1, transition: "width 1s cubic-bezier(0.4, 0, 0.2, 1)" }} />
+                              {steps.map((step, idx) => (
+                                <div key={idx} style={{ display: "flex", flexDirection: "column", alignItems: "center", zIndex: 2, gap: 6, opacity: idx <= currentIdx ? 1 : 0.4, width: 40 }}>
+                                  <div style={{ width: 18, height: 18, borderRadius: "50%", background: idx <= currentIdx ? "#16a34a" : "#f1f5f9", color: idx <= currentIdx ? "white" : "#94a3b8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 800 }}>
+                                    {idx < currentIdx ? <i className="fas fa-check" /> : idx + 1}
+                                  </div>
+                                  <span style={{ fontSize: 8, fontWeight: 600, color: idx <= currentIdx ? "#0f172a" : "#64748b", textAlign: "center", lineHeight: 1.1 }}>{step}</span>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()}
+                        {o.status === "Out for Delivery" && (
+                          <div style={{ marginTop: 16, padding: "12px", background: "#f8fafc", border: "1px dashed #cbd5e1", textAlign: "center", borderRadius: 8 }}>
+                            <p style={{ fontSize: 11, fontWeight: 600, color: "#475569", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Delivery OTP: <span style={{ fontSize: 16, color: "#16a34a", fontWeight: 800 }}>{o.deliveryOtp}</span></p>
+                            {o.riderId && riderLocations[o.riderId] ? (
+                              <div style={{ width: "100%", height: 120, borderRadius: 8, overflow: "hidden", border: "1px solid #e2e8f0", position: "relative" }}>
+                                <LiveMap lat={riderLocations[o.riderId].lat} lng={riderLocations[o.riderId].lng} label="Rider" />
+                              </div>
+                            ) : (
+                              <div style={{ width: "100%", height: 60, borderRadius: 8, background: "#e2e8f0", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                <span style={{ fontSize: 10, color: "#64748b" }}>Locating rider...</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

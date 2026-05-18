@@ -1201,11 +1201,8 @@ export default function SellerPage() {
                   if (pCategory === "Footwear") return (
                     <div>
                       <p style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, letterSpacing: 1 }}>👟 FOOTWEAR MEASUREMENTS</p>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                        <div>{label("FOOT LENGTH (cm)")} <input style={inputStyle} placeholder="e.g. 25.5" value={pMeasurements.footLength || ""} onChange={e => setM("footLength", e.target.value)} /></div>
-                        <div>{label("EU SIZE")} <input style={inputStyle} placeholder="e.g. 40" value={pMeasurements.euSize || ""} onChange={e => setM("euSize", e.target.value)} /></div>
-                        <div>{label("UK SIZE")} <input style={inputStyle} placeholder="e.g. 6" value={pMeasurements.ukSize || ""} onChange={e => setM("ukSize", e.target.value)} /></div>
-                        <div>{label("US SIZE")} <input style={inputStyle} placeholder="e.g. 7" value={pMeasurements.usSize || ""} onChange={e => setM("usSize", e.target.value)} /></div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
+                        <div>{label("FOOT LENGTH (cm)")} <input style={inputStyle} placeholder="e.g. 25.1, 25.6, 26.4 (comma separated for each size)" value={pMeasurements.footLength || ""} onChange={e => setM("footLength", e.target.value)} /></div>
                       </div>
                     </div>
                   );
