@@ -823,7 +823,7 @@ export default function ShopPage() {
     const reason = prompt("Please provide a reason for the return:");
     if (!reason) return;
     try {
-      await updateDoc(doc(db, "orders", orderId), { status: "Return Requested", returnReason: reason, returnedAt: new Date() });
+      await setDoc(doc(db, "orders", orderId), { status: "Return Requested", returnReason: reason, returnedAt: new Date() }, { merge: true });
       alert("Return request submitted successfully. Our team will contact you shortly.");
     } catch (e) { alert("Failed to submit return request: " + e.message); }
   };
@@ -832,7 +832,7 @@ export default function ShopPage() {
     const details = prompt("Please provide exchange details (e.g., needed size L instead of M):");
     if (!details) return;
     try {
-      await updateDoc(doc(db, "orders", orderId), { status: "Exchange Requested", exchangeDetails: details, exchangedAt: new Date() });
+      await setDoc(doc(db, "orders", orderId), { status: "Exchange Requested", exchangeDetails: details, exchangedAt: new Date() }, { merge: true });
       alert("Exchange request submitted successfully.");
     } catch (e) { alert("Failed to submit exchange request: " + e.message); }
   };
@@ -842,7 +842,7 @@ export default function ShopPage() {
     if (!rating || isNaN(rating) || rating < 1 || rating > 5) return alert("Please enter a valid rating between 1 and 5.");
     const review = prompt("Any feedback you'd like to share? (Optional)");
     try {
-      await updateDoc(doc(db, "orders", orderId), { rating: Number(rating), review: review || "", ratedAt: new Date() });
+      await setDoc(doc(db, "orders", orderId), { rating: Number(rating), review: review || "", ratedAt: new Date() }, { merge: true });
       alert("Thank you for your rating! ⭐");
     } catch (e) { alert("Failed to submit rating: " + e.message); }
   };
