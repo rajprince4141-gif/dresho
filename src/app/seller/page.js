@@ -224,13 +224,62 @@ export default function SellerPage() {
     );
   };
 
+  const compressImage = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target.result;
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          let width = img.width;
+          let height = img.height;
+          const MAX_WIDTH = 1200;
+          const MAX_HEIGHT = 1200;
+          if (width > height) {
+            if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
+          } else {
+            if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, width, height);
+          canvas.toBlob((blob) => {
+            if (blob) {
+              const ext = file.name.split('.').pop() || 'jpg';
+              const compressedFile = new File([blob], file.name || `image.${ext}`, { type: "image/jpeg", lastModified: Date.now() });
+              resolve(compressedFile);
+            } else {
+              reject(new Error("Canvas to Blob failed"));
+            }
+          }, "image/jpeg", 0.7);
+        };
+        img.onerror = (error) => reject(error);
+      };
+      reader.onerror = (error) => reject(error);
+    });
+  };
+
   const uploadToImgBB = async (file) => {
-    const formData = new FormData();
-    formData.append("image", file);
-    const res = await fetch("/api/upload", { method: "POST", body: formData });
-    const data = await res.json();
-    if (!res.ok || !data.url) throw new Error(data.error || "Image upload failed.");
-    return data.url;
+    try {
+      const compressedFile = await compressImage(file);
+      const formData = new FormData();
+      formData.append("image", compressedFile);
+      const res = await fetch("/api/upload", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok || !data.url) throw new Error(data.error || "Image upload failed.");
+      return data.url;
+    } catch (e) {
+      // Fallback
+      const formData = new FormData();
+      formData.append("image", file);
+      const res = await fetch("/api/upload", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok || !data.url) throw new Error(data.error || "Image upload failed.");
+      return data.url;
+    }
   };
 
   const submitRegistration = async () => {
@@ -308,12 +357,8 @@ export default function SellerPage() {
     try {
       const imageUrls = [];
       for (const file of pImageFiles) {
-        const formData = new FormData();
-        formData.append("image", file);
-        const imgRes = await fetch("/api/upload", { method: "POST", body: formData });
-        const imgData = await imgRes.json();
-        if (!imgRes.ok || !imgData.url) throw new Error(imgData.error || "Image upload failed.");
-        imageUrls.push(imgData.url);
+        const url = await uploadToImgBB(file);
+        imageUrls.push(url);
       }
       
       await addDoc(collection(db, "products"), {
