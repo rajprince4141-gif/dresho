@@ -709,6 +709,30 @@ export default function ShopPage() {
                   createdAt: new Date(),
                 });
 
+                // Direct in-app notification for customer
+                await addDoc(collection(db, "notifications"), {
+                  userId: user.uid,
+                  role: "customer",
+                  title: "Order Placed Successfully",
+                  body: `Your order #${trackingId} has been placed successfully.`,
+                  link: "/shop?section=orders",
+                  read: false,
+                  createdAt: new Date().toISOString(),
+                });
+
+                // Direct in-app notification for seller
+                if (sellerId) {
+                  await addDoc(collection(db, "notifications"), {
+                    userId: sellerId,
+                    role: "seller",
+                    title: "New Order Received!",
+                    body: `You have a new order from ${userData?.name}. Open your dashboard now!`,
+                    link: "/seller",
+                    read: false,
+                    createdAt: new Date().toISOString(),
+                  });
+                }
+
                 // Notify customer via Central Engine
                 fetch("/api/notify", { 
                   method: "POST", 
@@ -780,6 +804,30 @@ export default function ShopPage() {
         riderId: null,
         createdAt: new Date(),
       });
+
+      // Direct in-app notification for customer
+      await addDoc(collection(db, "notifications"), {
+        userId: user.uid,
+        role: "customer",
+        title: "Order Placed Successfully",
+        body: `Your COD order #${trackingId} has been placed successfully.`,
+        link: "/shop?section=orders",
+        read: false,
+        createdAt: new Date().toISOString(),
+      });
+
+      // Direct in-app notification for seller
+      if (sellerId) {
+        await addDoc(collection(db, "notifications"), {
+          userId: sellerId,
+          role: "seller",
+          title: "New COD Order Received!",
+          body: `You have a new COD order from ${userData?.name}. Open your dashboard now!`,
+          link: "/seller",
+          read: false,
+          createdAt: new Date().toISOString(),
+        });
+      }
 
       // Notify customer (COD) via Central Engine
       fetch("/api/notify", { 
