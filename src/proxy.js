@@ -6,7 +6,7 @@ const rateLimitMap = new Map();
 const RATE_LIMIT = 60;         // Max 60 requests
 const TIME_WINDOW = 60 * 1000; // Per 1 minute
 
-export function middleware(request) {
+export function proxy(request) {
   const response = NextResponse.next();
   const { pathname } = request.nextUrl;
 

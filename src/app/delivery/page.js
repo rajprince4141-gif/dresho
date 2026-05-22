@@ -5,7 +5,7 @@ import Link from "next/link";
 import { auth, db, IMGBB_API_KEY } from "@/lib/firebase";
 import {
   GoogleAuthProvider, signInWithPopup,
-  onAuthStateChanged, signOut,
+  signOut,
 } from "firebase/auth";
 import {
   doc, setDoc, getDoc, collection, query, where,
@@ -14,13 +14,16 @@ import {
 import { requestNotificationPermission } from "@/lib/firebase";
 import NotificationBell from "@/components/NotificationBell";
 
-export default function DeliveryPage() {
-  const [user, setUser] = useState(null);
-  const [riderData, setRiderData] = useState(null);
-  const [isPending, setIsPending] = useState(false);
+// Custom Hooks
+import { useAuth } from "@/hooks/useAuth";
+import { useOrders } from "@/hooks/useOrders";
 
-  // Auth flow states
-  const [authStep, setAuthStep] = useState("welcome"); // welcome, google, phone, details, complete
+// Modular Utilities
+import { calculateHaversineDistance, calculateDeliveryEarning } from "@/utils/distanceCalculator";
+import { isValidPhone } from "@/utils/validators";
+
+export default function DeliveryPage() {
+  const { user, userData: riderData, loading: authLoadingState, isPending, setIsPending, authStep, setAuthStep, logout, setUserData: setRiderData } = useAuth("delivery");
   const [authPhone, setAuthPhone] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [authReady, setAuthReady] = useState(false);
@@ -45,8 +48,8 @@ export default function DeliveryPage() {
 
   const [isOnline, setIsOnline] = useState(false);
   const [tab, setTab] = useState("jobs");
-  const [availableOrders, setAvailableOrders] = useState([]);
-  const [activeDeliveries, setActiveDeliveries] = useState([]);
+  const [orderSegment, setOrderSegment] = useState("new");
+  const { availableOrders, activeDeliveries } = useOrders({ role: "delivery", riderId: user?.uid, approved: riderData?.approved });
   const [sellersData, setSellersData] = useState({});
 
   // Payment Modal
@@ -56,87 +59,19 @@ export default function DeliveryPage() {
   const [deliveryOtpInput, setDeliveryOtpInput] = useState("");
   const [otpVerified, setOtpVerified] = useState(false);
 
+  // Sync auth ready state
   useEffect(() => {
-    let profileUnsub;
-    const unsub = onAuthStateChanged(auth, async (u) => {
-      if (u) {
-        // Enforce Single Device Login
-        let deviceId = localStorage.getItem("dreshoDeviceId");
-        if (!deviceId) {
-          deviceId = Math.random().toString(36).substring(2, 15);
-          localStorage.setItem("dreshoDeviceId", deviceId);
-        }
-
-        let snap = await getDoc(doc(db, "delivery_profile", u.uid));
-        
-        // Race condition fix
-        if (!snap.exists()) {
-          await new Promise(r => setTimeout(r, 2000));
-          snap = await getDoc(doc(db, "delivery_profile", u.uid));
-        }
-
-        if (snap.exists() && snap.data().role === "delivery") {
-          // Update device ID in Firestore
-          if (snap.data().activeDeviceId !== deviceId) {
-             await updateDoc(doc(db, "delivery_profile", u.uid), { activeDeviceId: deviceId });
-          }
-
-          const lastActive = localStorage.getItem("dreshoLastActive");
-          const now = Date.now();
-          if (lastActive && now - parseInt(lastActive) > 10 * 60 * 1000) {
-            localStorage.setItem("dreshoSavedEmail", u.email || "");
-            await signOut(auth);
-            localStorage.removeItem("dreshoLastActive");
-            setUser(null);
-            setRiderData(null);
-            setAuthStep("welcome");
-            setAuthReady(true);
-            alert("Session expired. Please login again.");
-            return;
-          }
-          localStorage.setItem("dreshoLastActive", now.toString());
-
-          setUser(u);
-          setRiderData(snap.data());
-          setIsOnline(snap.data().online || false);
-
-          // Request Push Notification Permission & Save Token
-          requestNotificationPermission().then(token => {
-            if (token && snap.data().fcmToken !== token) {
-              updateDoc(doc(db, "delivery_profile", u.uid), { fcmToken: token });
-            }
-          });
-
-          // Real-time listener for Single Device Logout
-          profileUnsub = onSnapshot(doc(db, "delivery_profile", u.uid), (docSnap) => {
-            if (docSnap.exists()) {
-              const data = docSnap.data();
-              if (data.activeDeviceId && data.activeDeviceId !== deviceId) {
-                alert("You have logged in from another device. You will be logged out here.");
-                signOut(auth);
-                setUser(null);
-                setRiderData(null);
-                setAuthStep("welcome");
-              }
-            }
-          });
-        } else {
-          // Not a delivery agent yet. Keep auth user and continue registration.
-          setUser(u);
-          setRiderData(null);
-        }
-      } else { 
-        setUser(null); 
-        setRiderData(null); 
-        setAuthStep("welcome"); 
-      }
+    if (!authLoadingState) {
       setAuthReady(true);
-    });
-    return () => {
-      unsub();
-      if (profileUnsub) profileUnsub();
-    };
-  }, []);
+    }
+  }, [authLoadingState]);
+
+  // Sync online status when riderData is loaded
+  useEffect(() => {
+    if (riderData) {
+      setIsOnline(riderData.online || false);
+    }
+  }, [riderData]);
 
   // ── LIVE LOCATION TRACKING ──
   useEffect(() => {
@@ -172,78 +107,29 @@ export default function DeliveryPage() {
     };
   }, [isOnline, user, riderData?.approved]);
 
-  // Keep session active for Rider while the page is open
+  // Resolve seller profiles for available and active orders
   useEffect(() => {
-    if (user && riderData?.role === "delivery") {
-      // Update the last active timestamp every minute while the app is open
-      const interval = setInterval(() => {
-        localStorage.setItem("dreshoLastActive", Date.now().toString());
-      }, 60000);
-      return () => clearInterval(interval);
+    const sellerIds = new Set();
+    availableOrders.forEach(o => { if (o.sellerId) sellerIds.add(o.sellerId); });
+    activeDeliveries.forEach(o => { if (o.sellerId) sellerIds.add(o.sellerId); });
+
+    if (sellerIds.size > 0) {
+      const fetchSellers = async () => {
+        const sellerPromises = Array.from(sellerIds).map(sellerId => 
+          getDoc(doc(db, "sellers_profile", sellerId))
+        );
+        const sellerDocs = await Promise.all(sellerPromises);
+        const sellerMap = {};
+        sellerDocs.forEach(doc => {
+          if (doc.exists()) {
+            sellerMap[doc.id] = doc.data();
+          }
+        });
+        setSellersData(prev => ({ ...prev, ...sellerMap }));
+      };
+      fetchSellers();
     }
-  }, [user, riderData]);
-
-  // Available jobs
-  useEffect(() => {
-    if (!user || !riderData?.approved) return;
-    const q = query(collection(db, "orders"), where("status", "==", "PACKED"), where("riderId", "==", null));
-    const unsub = onSnapshot(q, async (snap) => {
-      const o = []; 
-      const sellerIds = new Set();
-      snap.forEach((d) => {
-        o.push({ id: d.id, ...d.data() });
-        if (d.data().sellerId) sellerIds.add(d.data().sellerId);
-      });
-      setAvailableOrders(o);
-      
-      // Fetch seller data for all unique seller IDs
-      if (sellerIds.size > 0) {
-        const sellerPromises = Array.from(sellerIds).map(sellerId => 
-          getDoc(doc(db, "sellers_profile", sellerId))
-        );
-        const sellerDocs = await Promise.all(sellerPromises);
-        const sellerMap = {};
-        sellerDocs.forEach(doc => {
-          if (doc.exists()) {
-            sellerMap[doc.id] = doc.data();
-          }
-        });
-        setSellersData(prev => ({ ...prev, ...sellerMap }));
-      }
-    });
-    return () => unsub();
-  }, [user, riderData]);
-
-  // Active deliveries
-  useEffect(() => {
-    if (!user || !riderData?.approved) return;
-    const q = query(collection(db, "orders"), where("riderId", "==", user.uid), where("status", "==", "OUT_FOR_DELIVERY"));
-    const unsub = onSnapshot(q, async (snap) => {
-      const o = []; 
-      const sellerIds = new Set();
-      snap.forEach((d) => {
-        const data = d.data();
-        o.push({ id: d.id, ...data });
-        if (data.sellerId) sellerIds.add(data.sellerId);
-      });
-      setActiveDeliveries(o);
-
-      if (sellerIds.size > 0) {
-        const sellerPromises = Array.from(sellerIds).map(sellerId => 
-          getDoc(doc(db, "sellers_profile", sellerId))
-        );
-        const sellerDocs = await Promise.all(sellerPromises);
-        const sellerMap = {};
-        sellerDocs.forEach(doc => {
-          if (doc.exists()) {
-            sellerMap[doc.id] = doc.data();
-          }
-        });
-        setSellersData(prev => ({ ...prev, ...sellerMap }));
-      }
-    });
-    return () => unsub();
-  }, [user, riderData]);
+  }, [availableOrders, activeDeliveries]);
 
   const handleGoogleSignIn = async (hintEmail = null) => {
     setAuthLoading(true);
@@ -263,7 +149,7 @@ export default function DeliveryPage() {
   };
 
   const handlePhoneContinue = () => {
-    if (authPhone.length !== 10) return alert("Enter a valid 10-digit mobile number.");
+    if (!isValidPhone(authPhone)) return alert("Enter a valid 10-digit mobile number.");
     setAuthStep("details");
   };
 
@@ -276,6 +162,8 @@ export default function DeliveryPage() {
         const formData = new FormData();
         formData.append("image", file);
         const res = await fetch("/api/upload", { method: "POST", body: formData });
+        const ct = res.headers.get("content-type") || "";
+        if (!ct.includes("application/json")) throw new Error(`Server error (${res.status}). Please try again.`);
         const data = await res.json();
         if (!res.ok || !data.url) throw new Error(data.error || "Document upload failed.");
         return data.url;
@@ -310,13 +198,15 @@ export default function DeliveryPage() {
     const formData = new FormData();
     formData.append("image", file);
     const res = await fetch("/api/upload", { method: "POST", body: formData });
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.includes("application/json")) throw new Error(`Server error (${res.status}). Please try again.`);
     const data = await res.json();
     if (!res.ok || !data.url) throw new Error(data.error || "Image upload failed.");
     return data.url;
   };
 
   const submitRegistration = async () => {
-    if (authPhone.length !== 10) return alert("Enter a valid 10-digit mobile number.");
+    if (!isValidPhone(authPhone)) return alert("Enter a valid 10-digit mobile number.");
     if (!riderName || !city || !address || !vehicleType) return alert("Fill all required fields.");
     setAuthLoading(true);
     try {
@@ -376,21 +266,210 @@ export default function DeliveryPage() {
     const oSnap = await getDoc(doc(db, "orders", orderId));
     if (oSnap.exists()) {
       const oData = oSnap.data();
+      let newStatus = oData.status;
+      let title = "Rider Assigned! 🚚";
+      let body = `Rider ${riderData?.name} has accepted your order and is on the way.`;
+
+      if (oData.status === "Rider Searching") {
+        newStatus = "Rider Accepted";
+      } else if (oData.status === "Return Approved") {
+        newStatus = "Pickup Assigned";
+        title = "Return Rider Assigned! 🚚";
+        body = `Rider ${riderData?.name} is on the way to pick up your return for order #${oData.trackingId}.`;
+      } else if (oData.status === "Exchange Approved") {
+        newStatus = "Pickup Scheduled";
+        title = "Exchange Rider Assigned! 🚚";
+        body = `Rider ${riderData?.name} is on the way to pick up replacement and perform exchange swap for order #${oData.trackingId}.`;
+      }
+
       fetch("/api/notify", { 
         method: "POST", 
         headers: { "Content-Type": "application/json" }, 
         body: JSON.stringify({ 
           userId: oData.userId, 
           role: "customer", 
-          title: "Out for Delivery! 🚚", 
-          body: `Your order #${oData.trackingId} is out for delivery with rider ${riderData?.name}.`, 
+          title: title, 
+          body: body, 
           link: "/shop?section=orders" 
         }) 
       });
-    }
 
-    await updateDoc(doc(db, "orders", orderId), { riderId: user.uid, status: "OUT_FOR_DELIVERY" });
+      if (oData.sellerId) {
+        let sellerTitle = "Rider Assigned";
+        let sellerBody = `Rider ${riderData?.name} has accepted the job for order #${oData.trackingId}.`;
+        if (oData.status === "Return Approved" || oData.status === "Exchange Approved") {
+          sellerTitle = "Return/Exchange Rider Assigned";
+        } else {
+          sellerBody = `Rider ${riderData?.name} has accepted the job for order #${oData.trackingId}. Please prepare the items.`;
+        }
+        
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: oData.sellerId,
+            role: "seller",
+            title: sellerTitle,
+            body: sellerBody,
+            link: "/seller"
+          })
+        });
+      }
+
+      await updateDoc(doc(db, "orders", orderId), { 
+        riderId: user.uid, 
+        riderName: riderData?.name || "Rider",
+        riderPhone: riderData?.phone || "",
+        riderAcceptedAt: new Date(),
+        status: newStatus 
+      });
+    }
     setTab("active");
+  };
+
+  const handleMarkArrivedAtStore = async (order) => {
+    try {
+      await updateDoc(doc(db, "orders", order.id), {
+        riderArrivedAtStore: true,
+        riderArrivedAtStoreAt: new Date()
+      });
+      alert("Status updated: Arrived at store!");
+
+      // Notify customer
+      fetch("/api/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: order.userId,
+          role: "customer",
+          title: "Rider Arrived at Store! 🏪",
+          body: `Rider ${riderData?.name || "Rider"} has arrived at the store to pick up your order #${order.trackingId}.`,
+          link: "/shop?section=orders"
+        })
+      });
+
+      // Notify seller
+      if (order.sellerId) {
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: order.sellerId,
+            role: "seller",
+            title: "Rider Arrived at Store",
+            body: `Rider ${riderData?.name || "Rider"} has arrived at your store to pick up order #${order.trackingId}.`,
+            link: "/seller"
+          })
+        });
+      }
+    } catch (e) {
+      alert("Error updating status: " + e.message);
+    }
+  };
+
+  const handleMarkArrivedAtCustomer = async (order) => {
+    try {
+      await updateDoc(doc(db, "orders", order.id), {
+        riderArrivedAtCustomer: true,
+        riderArrivedAtCustomerAt: new Date()
+      });
+      alert("Status updated: Arrived at customer location!");
+
+      // Notify customer
+      fetch("/api/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: order.userId,
+          role: "customer",
+          title: "Rider Arrived! 📍",
+          body: `Rider ${riderData?.name || "Rider"} has arrived at your location with your order! Please share the OTP.`,
+          link: "/shop?section=orders"
+        })
+      });
+    } catch (e) {
+      alert("Error updating status: " + e.message);
+    }
+  };
+
+  const handleConfirmPickup = async (order) => {
+    try {
+      await updateDoc(doc(db, "orders", order.id), {
+        status: "Picked Up",
+        pickedUpAt: new Date()
+      });
+      alert("Pickup confirmed! Start delivery when ready.");
+
+      // Notify customer
+      fetch("/api/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: order.userId,
+          role: "customer",
+          title: "Order Picked Up! 📦",
+          body: `Your order #${order.trackingId} has been picked up by the rider and is on the way.`,
+          link: "/shop?section=orders"
+        })
+      });
+
+      // Notify seller
+      if (order.sellerId) {
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: order.sellerId,
+            role: "seller",
+            title: "Order Picked Up",
+            body: `Rider ${riderData?.name} has picked up the order #${order.trackingId} from your store.`,
+            link: "/seller"
+          })
+        });
+      }
+    } catch (e) {
+      alert("Error confirming pickup: " + e.message);
+    }
+  };
+
+  const handleStartDelivery = async (order) => {
+    try {
+      await updateDoc(doc(db, "orders", order.id), {
+        status: "Out For Delivery",
+        outForDeliveryAt: new Date()
+      });
+      alert("Delivery started! Go to the customer's address and verify OTP.");
+
+      // Notify customer
+      fetch("/api/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: order.userId,
+          role: "customer",
+          title: "Out for Delivery! 🚚",
+          body: `Your order #${order.trackingId} is out for delivery with rider ${riderData?.name}.`,
+          link: "/shop?section=orders"
+        })
+      });
+
+      // Notify seller
+      if (order.sellerId) {
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: order.sellerId,
+            role: "seller",
+            title: "Out for Delivery",
+            body: `Rider ${riderData?.name} is out for delivery for order #${order.trackingId}.`,
+            link: "/seller"
+          })
+        });
+      }
+    } catch (e) {
+      alert("Error starting delivery: " + e.message);
+    }
   };
 
   const openPaymentModal = (order) => {
@@ -401,25 +480,7 @@ export default function DeliveryPage() {
     setShowPaymentModal(true);
   };
 
-  // Distance calculation using Haversine formula
-  const calculateDistance = (lat1, lon1, lat2, lon2) => {
-    if (!lat1 || !lon1 || !lat2 || !lon2) return 0;
-    const R = 6371; // Earth's radius in km
-    const dLat = (lat2 - lat1) * (Math.PI / 180);
-    const dLon = (lon2 - lon1) * (Math.PI / 180);
-    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
-      Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c; // Distance in km
-  };
-
-  // Calculate earnings based on distance — Official Dresho Payout Rule
-  const calculateDeliveryEarning = (distance) => {
-    if (distance <= 3) return 22;  // 0–3 km: ₹22
-    if (distance <= 6) return 32;  // 3–6 km: ₹32
-    return 40;                     // 6+ km:  ₹40
-  };
+  const calculateDistance = (lat1, lon1, lat2, lon2) => calculateHaversineDistance(lat1, lon1, lat2, lon2);
 
   const completeDelivery = async (methodUsed) => {
     if (!activePaymentOrder || !otpVerified) return;
@@ -436,11 +497,24 @@ export default function DeliveryPage() {
       deliveryEarning = calculateDeliveryEarning(currentDistance);
     }
 
+    const cartTotal = Number(activePaymentOrder.cartTotal) || 0;
+    const total = Number(activePaymentOrder.total) || 0;
+    const deliveryFee = Number(activePaymentOrder.deliveryFee) || 0;
+    const platformCommission = Math.round(cartTotal * 0.10);
+    const deliveryCharges = deliveryFee || deliveryEarning || 40;
+    const gatewayCharges = activePaymentOrder.paymentMethod === "UPI" ? Math.round(total * 0.02) : 20;
+    const sellerPayout = cartTotal - platformCommission - deliveryCharges - gatewayCharges;
+
     await updateDoc(doc(db, "orders", activePaymentOrder.id), { 
-      status: "DELIVERED",
+      status: "Delivered",
       paymentStatus: methodUsed === "COD_CASH" || methodUsed === "COD_UPI" ? "Paid" : activePaymentOrder.paymentStatus,
       deliveryHandoverMethod: methodUsed,
-      actualDeliveryFee: deliveryEarning
+      actualDeliveryFee: deliveryEarning,
+      platformCommission,
+      deliveryCharges,
+      gatewayCharges,
+      sellerPayout,
+      deliveredAt: new Date()
     });
 
     // Notify Customer about successful delivery
@@ -473,6 +547,211 @@ export default function DeliveryPage() {
     setShowPaymentModal(false);
     alert(`Delivery Success! ₹${deliveryEarning} added to wallet.`);
     setTab("jobs");
+  };
+
+  const handleConfirmCustomerPickup = async (order) => {
+    try {
+      await updateDoc(doc(db, "orders", order.id), {
+        status: "Return Picked Up",
+        pickedUpFromCustomer: true,
+        pickedUpFromCustomerAt: new Date()
+      });
+      alert("Pickup confirmed! You now have the returned item. Please deliver it back to the store.");
+      
+      // Notify customer
+      fetch("/api/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: order.userId,
+          role: "customer",
+          title: "Item Picked Up! 📦",
+          body: `Rider ${riderData?.name} has picked up the return item for order #${order.trackingId}.`,
+          link: "/shop?section=orders"
+        })
+      });
+
+      // Notify seller
+      if (order.sellerId) {
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: order.sellerId,
+            role: "seller",
+            title: "Return Item Picked Up",
+            body: `Rider ${riderData?.name} has picked up the return item from the customer for order #${order.trackingId}.`,
+            link: "/seller"
+          })
+        });
+      }
+    } catch (e) {
+      alert("Error confirming pickup: " + e.message);
+    }
+  };
+
+  const handleConfirmReturnHandover = async (order) => {
+    try {
+      const sellerData = sellersData[order.sellerId];
+      let deliveryEarning = 40; // Default fallback
+      let currentDistance = 0;
+      
+      if (sellerData?.coordinates && order.userCoordinates) {
+        const [sellLat, sellLon] = sellerData.coordinates.split(",").map(Number);
+        const [custLat, custLon] = order.userCoordinates.split(",").map(Number);
+        currentDistance = calculateDistance(sellLat, sellLon, custLat, custLon);
+        deliveryEarning = calculateDeliveryEarning(currentDistance);
+      }
+
+      await updateDoc(doc(db, "orders", order.id), {
+        status: "Return Completed",
+        returnedAt: new Date(),
+        actualDeliveryFee: deliveryEarning
+      });
+
+      // Update rider earnings
+      await updateDoc(doc(db, "delivery_profile", user.uid), {
+        earnings: increment(deliveryEarning),
+        deliveryCount: increment(1),
+        totalDistance: increment(currentDistance)
+      });
+      
+      setRiderData((prev) => ({
+        ...prev,
+        earnings: (prev.earnings || 0) + deliveryEarning,
+        deliveryCount: (prev.deliveryCount || 0) + 1,
+        totalDistance: (prev.totalDistance || 0) + currentDistance
+      }));
+
+      alert(`Return complete! Item handed back to seller. ₹${deliveryEarning} added to wallet.`);
+      
+      // Notify customer
+      fetch("/api/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: order.userId,
+          role: "customer",
+          title: "Return Completed! 🎉",
+          body: `Your return for order #${order.trackingId} has been successfully received and completed.`,
+          link: "/shop?section=orders"
+        })
+      });
+
+      // Notify seller
+      if (order.sellerId) {
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: order.sellerId,
+            role: "seller",
+            title: "Return Completed",
+            body: `Order #${order.trackingId} return item has been delivered back to your store.`,
+            link: "/seller"
+          })
+        });
+      }
+
+      setTab("jobs");
+    } catch (e) {
+      alert("Error confirming return handover: " + e.message);
+    }
+  };
+
+  const handleConfirmSellerPickup = async (order) => {
+    try {
+      await updateDoc(doc(db, "orders", order.id), {
+        status: "Replacement Processing",
+        pickedUpFromSeller: true,
+        pickedUpFromSellerAt: new Date()
+      });
+      alert("Pickup from seller confirmed! Please go to the customer to perform the exchange swap.");
+      
+      // Notify customer
+      fetch("/api/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: order.userId,
+          role: "customer",
+          title: "Exchange Item Dispatched! 🚚",
+          body: `Rider ${riderData?.name} has picked up your replacement item from the store and is on the way.`,
+          link: "/shop?section=orders"
+        })
+      });
+    } catch (e) {
+      alert("Error confirming pickup from seller: " + e.message);
+    }
+  };
+
+  const handlePerformExchangeSwap = async (order) => {
+    try {
+      const sellerData = sellersData[order.sellerId];
+      let deliveryEarning = 40; // Default fallback
+      let currentDistance = 0;
+      
+      if (sellerData?.coordinates && order.userCoordinates) {
+        const [sellLat, sellLon] = sellerData.coordinates.split(",").map(Number);
+        const [custLat, custLon] = order.userCoordinates.split(",").map(Number);
+        currentDistance = calculateDistance(sellLat, sellLon, custLat, custLon);
+        deliveryEarning = calculateDeliveryEarning(currentDistance);
+      }
+
+      await updateDoc(doc(db, "orders", order.id), {
+        status: "Exchange Completed",
+        exchangedAt: new Date(),
+        actualDeliveryFee: deliveryEarning
+      });
+
+      // Update rider earnings
+      await updateDoc(doc(db, "delivery_profile", user.uid), {
+        earnings: increment(deliveryEarning),
+        deliveryCount: increment(1),
+        totalDistance: increment(currentDistance)
+      });
+      
+      setRiderData((prev) => ({
+        ...prev,
+        earnings: (prev.earnings || 0) + deliveryEarning,
+        deliveryCount: (prev.deliveryCount || 0) + 1,
+        totalDistance: (prev.totalDistance || 0) + currentDistance
+      }));
+
+      alert(`Exchange complete! Items successfully swapped. ₹${deliveryEarning} added to wallet.`);
+      
+      // Notify customer
+      fetch("/api/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: order.userId,
+          role: "customer",
+          title: "Exchange Completed! 🎉",
+          body: `Your exchange swap for order #${order.trackingId} has been successfully completed.`,
+          link: "/shop?section=orders"
+        })
+      });
+
+      // Notify seller
+      if (order.sellerId) {
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: order.sellerId,
+            role: "seller",
+            title: "Exchange Completed",
+            body: `Order #${order.trackingId} exchange swap has been successfully completed.`,
+            link: "/seller"
+          })
+        });
+      }
+
+      setTab("jobs");
+    } catch (e) {
+      alert("Error performing swap: " + e.message);
+    }
   };
 
   const formatOnlineTime = (minutes) => {
@@ -993,6 +1272,100 @@ export default function DeliveryPage() {
               // ACTIVE DELIVERY CARD
               activeDeliveries.slice(0,1).map((o) => {
                 const seller = sellersData[o.sellerId];
+                const isReturn = o.status === "Return Approved";
+                const isExchange = o.status === "Exchange Approved";
+                const isReverse = isReturn || isExchange;
+
+                if (isReverse) {
+                  return (
+                    <div key={o.id} className="job-card" style={{ borderLeft: isReturn ? "6px solid #f97316" : "6px solid #8b5cf6" }}>
+                      <div className="job-header">
+                        <span className="job-id">#{o.id.substring(0,8).toUpperCase()}</span>
+                        <span className="job-badge" style={{ background: isReturn ? "rgba(249,115,22,0.15)" : "rgba(139,92,246,0.15)", color: isReturn ? "#ea580c" : "#7c3aed" }}>
+                          {isReturn ? "Return Pickup" : "Exchange Swap"}
+                        </span>
+                      </div>
+                      
+                      <div style={{ padding: "12px 14px", borderRadius: 12, background: "#f8fafc", border: "1px solid #e2e8f0", marginBottom: 14 }}>
+                        <h4 style={{ fontSize: 13, fontWeight: 800, color: "#1e293b", marginBottom: 6 }}>
+                          {isReturn ? (
+                            o.pickedUpFromCustomer ? "Step 2: Deliver Item back to Seller" : "Step 1: Pick up Item from Customer"
+                          ) : (
+                            o.pickedUpFromSeller ? "Step 2: Swap Item with Customer" : "Step 1: Pick up Replacement from Seller"
+                          )}
+                        </h4>
+                        <p style={{ fontSize: 12, color: "#64748b", margin: 0 }}>
+                          Reason: <strong style={{ color: "#334155" }}>{o.returnReason || "No reason"}</strong>
+                          {o.returnRemarks && <span> · Remarks: <em>{o.returnRemarks}</em></span>}
+                        </p>
+                      </div>
+
+                      <div className="job-store">
+                        <div className="store-img">🏪</div>
+                        <div className="store-info">
+                          <h4>{seller?.storeName || seller?.name || "Store"}</h4>
+                          <p><i className="fas fa-map-marker-alt" /> {seller?.shopAddress || seller?.address}</p>
+                        </div>
+                      </div>
+
+                      <div style={{ background: "linear-gradient(135deg, #fff7ed, #fef2f2)", border: "1px solid #fde68a", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+                        <p style={{ fontSize: 10, fontWeight: 800, color: "#d97706", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8 }}>📍 Customer Pickup Details</p>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          <div style={{ display: "flex", alignItems: "flex-start", gap: 7 }}>
+                            <i className="fas fa-user" style={{ fontSize: 11, color: "#d97706", marginTop: 2, flexShrink: 0 }} />
+                            <span style={{ fontSize: 13, fontWeight: 700, color: "#1e1b4b" }}>{o.userName || "—"}</span>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "flex-start", gap: 7 }}>
+                            <i className="fas fa-map-marker-alt" style={{ fontSize: 11, color: "#ef4444", marginTop: 2, flexShrink: 0 }} />
+                            <span style={{ fontSize: 12, fontWeight: 600, color: "#374151", lineHeight: 1.5 }}>{o.userAddress || "No address provided"}</span>
+                          </div>
+                          {o.userCoordinates && seller?.coordinates && (
+                            <a
+                              href={(() => { try { const [cLat, cLon] = o.userCoordinates.split(",").map(s => s.trim()); const [sLat, sLon] = seller.coordinates.split(",").map(s => s.trim()); return `https://www.google.com/maps/dir/${sLat},${sLon}/${cLat},${cLon}`; } catch { return "#"; } })()}
+                              target="_blank" rel="noopener noreferrer"
+                              style={{ display: "inline-flex", alignItems: "center", gap: 7, marginTop: 6, padding: "9px 14px", borderRadius: 10, background: "linear-gradient(135deg, #f97316, #ea580c)", color: "white", fontSize: 12, fontWeight: 700, textDecoration: "none", boxShadow: "0 3px 10px rgba(249,115,22,0.3)", width: "fit-content" }}
+                            >
+                              <i className="fas fa-route" style={{ fontSize: 13 }} /> Navigate Route
+                            </a>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="action-btns">
+                        <a href={`tel:${o.userPhone}`} className="btn-call"><i className="fas fa-phone" /></a>
+                        
+                        {isReturn ? (
+                          !o.pickedUpFromCustomer ? (
+                            <button className="active-btn" style={{ flex: 1, background: "#f97316", boxShadow: "0 4px 12px rgba(249,115,22,0.2)" }} onClick={() => handleConfirmCustomerPickup(o)}>
+                              Confirm Customer Pickup <i className="fas fa-box" style={{ marginLeft: 8 }} />
+                            </button>
+                          ) : (
+                            <button className="active-btn" style={{ flex: 1, background: "#22c55e", boxShadow: "0 4px 12px rgba(34,197,94,0.2)" }} onClick={() => handleConfirmReturnHandover(o)}>
+                              Confirm Return Handover to Seller <i className="fas fa-store" style={{ marginLeft: 8 }} />
+                            </button>
+                          )
+                        ) : (
+                          !o.pickedUpFromSeller ? (
+                            <button className="active-btn" style={{ flex: 1, background: "#8b5cf6", boxShadow: "0 4px 12px rgba(139,92,246,0.2)" }} onClick={() => handleConfirmSellerPickup(o)}>
+                              Confirm Pickup from Seller <i className="fas fa-store" style={{ marginLeft: 8 }} />
+                            </button>
+                          ) : (
+                            <button className="active-btn" style={{ flex: 1, background: "#22c55e", boxShadow: "0 4px 12px rgba(34,197,94,0.2)" }} onClick={() => handlePerformExchangeSwap(o)}>
+                              Perform Exchange Swap <i className="fas fa-sync" style={{ marginLeft: 8 }} />
+                            </button>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+
+                // Standard order
+                const isPreparing = o.status === "Rider Accepted" || o.status === "Preparing";
+                const isReady = o.status === "Ready For Pickup";
+                const isPickedUp = o.status === "Picked Up";
+                const isOutForDelivery = o.status === "Out For Delivery";
+
                 return (
                   <div key={o.id} className="job-card">
                     <div className="job-header">
@@ -1045,11 +1418,54 @@ export default function DeliveryPage() {
                       </div>
                     </div>
 
+                    {/* Navigation & Call Shortcuts */}
+                    <div className="action-btns" style={{ marginBottom: 12 }}>
+                      <a href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(o.userCoordinates || o.userAddress)}`} target="_blank" className="btn-call" style={{ background: "rgba(139,92,246,0.1)", color: "#8b5cf6", flex: 1 }}>
+                        <i className="fas fa-location-arrow" style={{ marginRight: 6 }} /> Navigation
+                      </a>
+                      
+                      <a href={`tel:${o.userPhone}`} className="btn-call" style={{ background: "rgba(34,197,94,0.1)", color: "#22c55e", flex: 1 }}>
+                        <i className="fas fa-phone" style={{ marginRight: 6 }} /> Call Customer
+                      </a>
+                    </div>
+
+                    {/* Primary Action Flow */}
                     <div className="action-btns">
-                      <a href={`tel:${o.userPhone}`} className="btn-call"><i className="fas fa-phone" /></a>
-                      <button className="active-btn" style={{ flex: 1 }} onClick={() => openPaymentModal(o)}>
-                        I&apos;ve Delivered the Order <i className="fas fa-chevron-right" />
-                      </button>
+                      {(isPreparing || isReady) && !o.riderArrivedAtStore && (
+                        <button className="active-btn" style={{ flex: 1, background: "#3b82f6", boxShadow: "0 4px 12px rgba(59,130,246,0.2)" }} onClick={() => handleMarkArrivedAtStore(o)}>
+                          Arrived at Store 🏪
+                        </button>
+                      )}
+
+                      {isPreparing && o.riderArrivedAtStore && (
+                        <button className="active-btn" style={{ flex: 1, background: "#64748b", boxShadow: "none", cursor: "not-allowed" }} disabled>
+                          Store preparing order... <i className="fas fa-spinner fa-spin" style={{ marginLeft: 8 }} />
+                        </button>
+                      )}
+                      
+                      {isReady && o.riderArrivedAtStore && (
+                        <button className="active-btn" style={{ flex: 1, background: "#8b5cf6", boxShadow: "0 4px 12px rgba(139,92,246,0.2)" }} onClick={() => handleConfirmPickup(o)}>
+                          Confirm Pickup <i className="fas fa-box" style={{ marginLeft: 8 }} />
+                        </button>
+                      )}
+
+                      {isPickedUp && (
+                        <button className="active-btn" style={{ flex: 1, background: "#ea580c", boxShadow: "0 4px 12px rgba(234,88,12,0.2)" }} onClick={() => handleStartDelivery(o)}>
+                          Start Delivery / Out for Delivery <i className="fas fa-truck" style={{ marginLeft: 8 }} />
+                        </button>
+                      )}
+
+                      {isOutForDelivery && !o.riderArrivedAtCustomer && (
+                        <button className="active-btn" style={{ flex: 1, background: "#f59e0b", boxShadow: "0 4px 12px rgba(245,158,11,0.2)" }} onClick={() => handleMarkArrivedAtCustomer(o)}>
+                          Arrived at Customer Location 📍
+                        </button>
+                      )}
+
+                      {isOutForDelivery && o.riderArrivedAtCustomer && (
+                        <button className="active-btn" style={{ flex: 1 }} onClick={() => openPaymentModal(o)}>
+                          Mark Delivered <i className="fas fa-check" style={{ marginLeft: 8 }} />
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -1066,12 +1482,29 @@ export default function DeliveryPage() {
                   distance = calculateDistance(sellLat, sellLon, custLat, custLon);
                   calculatedEarning = calculateDeliveryEarning(distance);
                 }
+                const isReturn = o.status === "Return Approved";
+                const isExchange = o.status === "Exchange Approved";
+                const isReverse = isReturn || isExchange;
+
                 return (
-                  <div key={o.id} className="job-card">
+                  <div key={o.id} className="job-card" style={isReverse ? { borderLeft: isReturn ? "6px solid #f97316" : "6px solid #8b5cf6" } : {}}>
                     <div className="job-header">
                       <span className="job-id">#{o.id.substring(0,8).toUpperCase()}</span>
-                      <span className="job-badge" style={{ background: "rgba(236,72,153,0.15)", color: "#f472b6" }}>Pickup</span>
+                      <span className="job-badge" style={{ 
+                        background: isReturn ? "rgba(249,115,22,0.15)" : isExchange ? "rgba(139,92,246,0.15)" : "rgba(236,72,153,0.15)", 
+                        color: isReturn ? "#ea580c" : isExchange ? "#7c3aed" : "#f472b6" 
+                      }}>
+                        {isReturn ? "Return Pickup" : isExchange ? "Exchange Swap" : "Pickup"}
+                      </span>
                     </div>
+                    {isReverse && (
+                      <div style={{ padding: "10px 12px", borderRadius: 10, background: "#f8fafc", border: "1px solid #e2e8f0", marginBottom: 14 }}>
+                        <p style={{ fontSize: 12, color: "#64748b", margin: 0 }}>
+                          Reason: <strong style={{ color: "#334155" }}>{o.returnReason || "No reason"}</strong>
+                          {o.returnRemarks && <span> · Remarks: <em>{o.returnRemarks}</em></span>}
+                        </p>
+                      </div>
+                    )}
                     <div className="job-store">
                       <div className="store-img">🏪</div>
                       <div className="store-info">
@@ -1092,7 +1525,7 @@ export default function DeliveryPage() {
 
                     {/* ── Customer Delivery Address Panel ── */}
                     <div style={{ background: "linear-gradient(135deg, #fff7ed, #fef2f2)", border: "1px solid #fde68a", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
-                      <p style={{ fontSize: 10, fontWeight: 800, color: "#d97706", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8 }}>📍 Deliver To</p>
+                      <p style={{ fontSize: 10, fontWeight: 800, color: "#d97706", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8 }}>📍 {isReverse ? "Customer Pickup" : "Deliver To"}</p>
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         <div style={{ display: "flex", alignItems: "flex-start", gap: 7 }}>
                           <i className="fas fa-user" style={{ fontSize: 11, color: "#d97706", marginTop: 2, flexShrink: 0 }} />
@@ -1112,7 +1545,7 @@ export default function DeliveryPage() {
                             target="_blank" rel="noopener noreferrer"
                             style={{ display: "inline-flex", alignItems: "center", gap: 7, marginTop: 6, padding: "9px 14px", borderRadius: 10, background: "linear-gradient(135deg, #f97316, #ea580c)", color: "white", fontSize: 12, fontWeight: 700, textDecoration: "none", boxShadow: "0 3px 10px rgba(249,115,22,0.3)", width: "fit-content" }}
                           >
-                            <i className="fas fa-route" style={{ fontSize: 13 }} /> Navigate to Customer
+                            <i className="fas fa-route" style={{ fontSize: 13 }} /> Navigate
                           </a>
                         ) : o.userCoordinates ? (
                           <a
@@ -1126,8 +1559,8 @@ export default function DeliveryPage() {
                       </div>
                     </div>
 
-                    <button className="accept-btn" onClick={() => acceptOrder(o.id)}>
-                      Accept Order <span className="btn-timer">14s</span>
+                    <button className="accept-btn" onClick={() => acceptOrder(o.id)} style={isReverse ? { background: isReturn ? "#f97316" : "#8b5cf6", boxShadow: isReturn ? "0 4px 12px rgba(249,115,22,0.2)" : "0 4px 12px rgba(139,92,246,0.2)" } : {}}>
+                      {isReturn ? "Accept Return Pickup" : isExchange ? "Accept Exchange Swap" : "Accept Order"} <span className="btn-timer">14s</span>
                     </button>
                   </div>
                 );
@@ -1181,65 +1614,560 @@ export default function DeliveryPage() {
           </>
         ) : tab === "orders" ? (
           <>
-            <div className="section-title" style={{ marginTop: 20 }}>All Active Orders</div>
+            <div className="section-title" style={{ marginTop: 20 }}>All Orders & Deliveries</div>
             {!isOnline ? (
               <div className="empty-state">
                 <i className="fas fa-satellite-dish" />
                 <h3>You are offline</h3>
                 <p>Go online to see delivery requests.</p>
               </div>
-            ) : activeDeliveries.length === 0 && availableOrders.length === 0 ? (
-              <div className="empty-state">
-                <i className="fas fa-check-circle" style={{ color: "#22c55e" }} />
-                <h3>All caught up</h3>
-                <p>You have no active or available orders.</p>
-              </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                {activeDeliveries.map((o) => {
-                  const seller = sellersData[o.sellerId];
-                  return (
-                    <div key={o.id} className="job-card">
-                      <div className="job-header">
-                        <span className="job-id">Order #{o.id.substring(0,8).toUpperCase()}</span>
+              <>
+                {/* Segment Selector Bar */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, margin: "16px 20px 20px", padding: 4, background: "#e2e8f0", borderRadius: 14 }}>
+                  {[
+                    { id: "new", label: "Available", icon: "fa-rss", count: availableOrders.length },
+                    { id: "accepted", label: "Accepted", icon: "fa-check-circle", count: activeDeliveries.filter(o => ["Rider Accepted", "Preparing", "Ready For Pickup", "Pickup Assigned", "Pickup Scheduled"].includes(o.status) || (o.status === "Return Approved" && !o.pickedUpFromCustomer) || (o.status === "Exchange Approved" && !o.pickedUpFromSeller)).length },
+                    { id: "picked_up", label: "Picked Up", icon: "fa-truck", count: activeDeliveries.filter(o => ["Picked Up", "Out For Delivery", "Replacement Processing", "Return Picked Up"].includes(o.status) || (o.status === "Return Approved" && o.pickedUpFromCustomer) || (o.status === "Exchange Approved" && o.pickedUpFromSeller)).length },
+                    { id: "delivered", label: "History", icon: "fa-history", count: activeDeliveries.filter(o => ["Delivered", "Returned", "Exchanged", "Return Completed", "Exchange Completed"].includes(o.status)).length }
+                  ].map(sub => (
+                    <button
+                      key={sub.id}
+                      onClick={() => setOrderSegment(sub.id)}
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        gap: 4,
+                        padding: "8px 2px",
+                        borderRadius: 10,
+                        border: "none",
+                        background: orderSegment === sub.id ? "#ffffff" : "transparent",
+                        color: orderSegment === sub.id ? "var(--navy)" : "#64748b",
+                        cursor: "pointer",
+                        transition: "all 0.2s ease",
+                        boxShadow: orderSegment === sub.id ? "0 2px 8px rgba(0,0,0,0.08)" : "none",
+                        fontWeight: 700,
+                        fontSize: 10,
+                        position: "relative"
+                      }}
+                    >
+                      <i className={`fas ${sub.icon}`} style={{ fontSize: 13 }} />
+                      <span>{sub.label}</span>
+                      {sub.count > 0 && (
+                        <span style={{
+                          position: "absolute",
+                          top: 2,
+                          right: 2,
+                          background: sub.id === "new" ? "#ef4444" : "#4f46e5",
+                          color: "white",
+                          fontSize: 8,
+                          fontWeight: 800,
+                          height: 14,
+                          minWidth: 14,
+                          borderRadius: 7,
+                          padding: "0 4px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center"
+                        }}>
+                          {sub.count}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                  {orderSegment === "new" && (
+                    availableOrders.length === 0 ? (
+                      <div className="empty-state">
+                        <i className="fas fa-rss" />
+                        <h3>No new deliveries available</h3>
+                        <p>We&apos;ll notify you when a seller accepts a new order near you.</p>
                       </div>
-                      <div className="timeline">
-                        <div className="tl-item">
-                          <div className="tl-icon done"><i className="fas fa-check" /></div>
-                          <div className="tl-text">
-                            <h5>Accepted</h5>
-                            <p>Order accepted</p>
+                    ) : (
+                      availableOrders.map((o) => {
+                        const seller = sellersData[o.sellerId];
+                        let distance = 0;
+                        let calculatedEarning = 40;
+                        if (seller?.coordinates && o.userCoordinates) {
+                          const [sellLat, sellLon] = seller.coordinates.split(",").map(Number);
+                          const [custLat, custLon] = o.userCoordinates.split(",").map(Number);
+                          distance = calculateDistance(sellLat, sellLon, custLat, custLon);
+                          calculatedEarning = calculateDeliveryEarning(distance);
+                        }
+                        const isReturn = o.status === "Return Approved";
+                        const isExchange = o.status === "Exchange Approved";
+                        const isReverse = isReturn || isExchange;
+
+                        return (
+                          <div key={o.id} className="job-card" style={isReverse ? { borderLeft: isReturn ? "6px solid #f97316" : "6px solid #8b5cf6" } : {}}>
+                            <div className="job-header">
+                              <span className="job-id">#{o.id.substring(0,8).toUpperCase()}</span>
+                              <span className="job-badge" style={{ 
+                                background: isReturn ? "rgba(249,115,22,0.15)" : isExchange ? "rgba(139,92,246,0.15)" : "rgba(236,72,153,0.15)", 
+                                color: isReturn ? "#ea580c" : isExchange ? "#7c3aed" : "#f472b6" 
+                              }}>
+                                {isReturn ? "Return Pickup" : isExchange ? "Exchange Swap" : "Pickup"}
+                              </span>
+                            </div>
+                            {isReverse && (
+                              <div style={{ padding: "10px 12px", borderRadius: 10, background: "#f8fafc", border: "1px solid #e2e8f0", marginBottom: 14 }}>
+                                <p style={{ fontSize: 12, color: "#64748b", margin: 0 }}>
+                                  Reason: <strong style={{ color: "#334155" }}>{o.returnReason || "No reason"}</strong>
+                                  {o.returnRemarks && <span> · Remarks: <em>{o.returnRemarks}</em></span>}
+                                </p>
+                              </div>
+                            )}
+                            <div className="job-store">
+                              <div className="store-img">🏪</div>
+                              <div className="store-info">
+                                <h4>{seller?.storeName || seller?.name || "Store"}</h4>
+                                <p><i className="fas fa-map-marker-alt" /> {seller?.shopAddress?.substring(0, 30) || seller?.address?.substring(0, 30)}... ({distance > 0 ? `${distance.toFixed(1)} km away` : ""})</p>
+                              </div>
+                            </div>
+                            <div className="job-details">
+                              <div className="jd-item">
+                                <h5>Earnings</h5>
+                                <p>₹{calculatedEarning}</p>
+                              </div>
+                              <div className="jd-item" style={{ textAlign: "right" }}>
+                                <h5>Items</h5>
+                                <p>{o.items?.length || 1}</p>
+                              </div>
+                            </div>
+
+                            {/* Customer Delivery Details */}
+                            <div style={{ background: "linear-gradient(135deg, #fff7ed, #fef2f2)", border: "1px solid #fde68a", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+                              <p style={{ fontSize: 10, fontWeight: 800, color: "#d97706", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8 }}>📍 {isReverse ? "Customer Pickup" : "Deliver To"}</p>
+                              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                <div style={{ display: "flex", alignItems: "flex-start", gap: 7 }}>
+                                  <i className="fas fa-user" style={{ fontSize: 11, color: "#d97706", marginTop: 2, flexShrink: 0 }} />
+                                  <span style={{ fontSize: 13, fontWeight: 700, color: "#1e1b4b" }}>{o.userName || "—"}</span>
+                                </div>
+                                <div style={{ display: "flex", alignItems: "flex-start", gap: 7 }}>
+                                  <i className="fas fa-phone" style={{ fontSize: 11, color: "#10b981", marginTop: 2, flexShrink: 0 }} />
+                                  <a href={`tel:${o.userPhone}`} style={{ fontSize: 13, fontWeight: 700, color: "#065f46", textDecoration: "none" }}>{o.userPhone || "—"}</a>
+                                </div>
+                                <div style={{ display: "flex", alignItems: "flex-start", gap: 7 }}>
+                                  <i className="fas fa-map-marker-alt" style={{ fontSize: 11, color: "#ef4444", marginTop: 2, flexShrink: 0 }} />
+                                  <span style={{ fontSize: 12, fontWeight: 600, color: "#374151", lineHeight: 1.5 }}>{o.userAddress || "No address provided"}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <button className="accept-btn" onClick={() => acceptOrder(o.id)} style={isReverse ? { background: isReturn ? "#f97316" : "#8b5cf6", boxShadow: isReturn ? "0 4px 12px rgba(249,115,22,0.2)" : "0 4px 12px rgba(139,92,246,0.2)" } : {}}>
+                              {isReturn ? "Accept Return Pickup" : isExchange ? "Accept Exchange Swap" : "Accept Order"} <span className="btn-timer">14s</span>
+                            </button>
                           </div>
-                        </div>
-                        <div className="tl-item">
-                          <div className="tl-icon current"><i className="fas fa-store" /></div>
-                          <div className="tl-text">
-                            <h5>Pickup from</h5>
-                            <p>{seller?.storeName || seller?.name || "Store"}</p>
-                            <span><i className="fas fa-map-marker-alt" /> {seller?.address}</span>
+                        );
+                      })
+                    )
+                  )}
+
+                  {orderSegment === "accepted" && (
+                    (() => {
+                      const list = activeDeliveries.filter(o => ["Rider Accepted", "Preparing", "Ready For Pickup", "Pickup Assigned", "Pickup Scheduled"].includes(o.status) || (o.status === "Return Approved" && !o.pickedUpFromCustomer) || (o.status === "Exchange Approved" && !o.pickedUpFromSeller));
+                      if (list.length === 0) {
+                        return (
+                          <div className="empty-state">
+                            <i className="fas fa-check-circle" style={{ color: "#22c55e" }} />
+                            <h3>No accepted orders</h3>
+                            <p>Accept an order from the available tab to start your trip.</p>
                           </div>
-                        </div>
-                        <div className="tl-item">
-                          <div className="tl-icon"><i className="fas fa-home" /></div>
-                          <div className="tl-text">
-                            <h5>Deliver to</h5>
-                            <p>{o.userName}</p>
-                            <span><i className="fas fa-map-marker-alt" /> {o.userAddress}</span>
+                        );
+                      }
+                      return list.map((o) => {
+                        const seller = sellersData[o.sellerId];
+                        const isReturn = o.status === "Return Approved";
+                        const isExchange = o.status === "Exchange Approved";
+                        const isReverse = isReturn || isExchange;
+
+                        if (isReverse) {
+                          return (
+                            <div key={o.id} className="job-card" style={{ borderLeft: isReturn ? "6px solid #f97316" : "6px solid #8b5cf6" }}>
+                              <div className="job-header">
+                                <span className="job-id">Order #{o.id.substring(0,8).toUpperCase()}</span>
+                                <span className="job-badge" style={{ background: isReturn ? "rgba(249,115,22,0.15)" : "rgba(139,92,246,0.15)", color: isReturn ? "#ea580c" : "#7c3aed" }}>
+                                  {isReturn ? "Return Pickup" : "Exchange Swap"}
+                                </span>
+                              </div>
+                              
+                              <div className="timeline">
+                                <div className="tl-item">
+                                  <div className="tl-icon done"><i className="fas fa-check" /></div>
+                                  <div className="tl-text">
+                                    <h5>Accepted</h5>
+                                    <p>Job Accepted</p>
+                                  </div>
+                                </div>
+                                {isReturn ? (
+                                  <>
+                                    <div className="tl-item">
+                                      <div className={`tl-icon ${o.pickedUpFromCustomer ? "done" : "current"}`}><i className="fas fa-user" /></div>
+                                      <div className="tl-text">
+                                        <h5>Customer Pickup</h5>
+                                        <p>{o.userName}</p>
+                                        <span><i className="fas fa-map-marker-alt" /> {o.userAddress}</span>
+                                      </div>
+                                    </div>
+                                    <div className="tl-item">
+                                      <div className={`tl-icon ${o.pickedUpFromCustomer ? "current" : ""}`}><i className="fas fa-store" /></div>
+                                      <div className="tl-text">
+                                        <h5>Seller Handover</h5>
+                                        <p>{seller?.storeName || "Store"}</p>
+                                        <span><i className="fas fa-map-marker-alt" /> {seller?.shopAddress || seller?.address}</span>
+                                      </div>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <>
+                                    <div className="tl-item">
+                                      <div className={`tl-icon ${o.pickedUpFromSeller ? "done" : "current"}`}><i className="fas fa-store" /></div>
+                                      <div className="tl-text">
+                                        <h5>Seller Pickup</h5>
+                                        <p>{seller?.storeName || "Store"}</p>
+                                        <span><i className="fas fa-map-marker-alt" /> {seller?.shopAddress || seller?.address}</span>
+                                      </div>
+                                    </div>
+                                    <div className="tl-item">
+                                      <div className={`tl-icon ${o.pickedUpFromSeller ? "current" : ""}`}><i className="fas fa-user" /></div>
+                                      <div className="tl-text">
+                                        <h5>Customer Swap</h5>
+                                        <p>{o.userName}</p>
+                                        <span><i className="fas fa-map-marker-alt" /> {o.userAddress}</span>
+                                      </div>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+
+                              <div className="action-btns" style={{ marginBottom: 12 }}>
+                                <a href={`tel:${o.userPhone}`} className="btn-call" style={{ flex: 1, background: "rgba(34,197,94,0.1)", color: "#22c55e" }}><i className="fas fa-phone" style={{ marginRight: 6 }} /> Call Customer</a>
+                              </div>
+
+                              <div className="action-btns">
+                                {isReturn ? (
+                                  !o.pickedUpFromCustomer ? (
+                                    <button className="active-btn" style={{ flex: 1, background: "#f97316", boxShadow: "0 4px 12px rgba(249,115,22,0.2)" }} onClick={() => handleConfirmCustomerPickup(o)}>
+                                      Confirm Customer Pickup <i className="fas fa-box" style={{ marginLeft: 8 }} />
+                                    </button>
+                                  ) : (
+                                    <button className="active-btn" style={{ flex: 1, background: "#22c55e", boxShadow: "0 4px 12px rgba(34,197,94,0.2)" }} onClick={() => handleConfirmReturnHandover(o)}>
+                                      Confirm Return Handover to Seller <i className="fas fa-store" style={{ marginLeft: 8 }} />
+                                    </button>
+                                  )
+                                ) : (
+                                  !o.pickedUpFromSeller ? (
+                                    <button className="active-btn" style={{ flex: 1, background: "#8b5cf6", boxShadow: "0 4px 12px rgba(139,92,246,0.2)" }} onClick={() => handleConfirmSellerPickup(o)}>
+                                      Confirm Pickup from Seller <i className="fas fa-store" style={{ marginLeft: 8 }} />
+                                    </button>
+                                  ) : (
+                                    <button className="active-btn" style={{ flex: 1, background: "#22c55e", boxShadow: "0 4px 12px rgba(34,197,94,0.2)" }} onClick={() => handlePerformExchangeSwap(o)}>
+                                      Perform Exchange Swap <i className="fas fa-sync" style={{ marginLeft: 8 }} />
+                                    </button>
+                                  )
+                                )}
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        const isPreparing = o.status === "Rider Accepted" || o.status === "Preparing";
+                        const isReady = o.status === "Ready For Pickup";
+
+                        return (
+                          <div key={o.id} className="job-card">
+                            <div className="job-header">
+                              <span className="job-id">Order #{o.id.substring(0,8).toUpperCase()}</span>
+                            </div>
+                            
+                            <div className="timeline">
+                              <div className="tl-item">
+                                <div className="tl-icon done"><i className="fas fa-check" /></div>
+                                <div className="tl-text">
+                                  <h5>Accepted</h5>
+                                  <p>Order accepted</p>
+                                </div>
+                              </div>
+                              <div className="tl-item">
+                                <div className={`tl-icon ${isPreparing || isReady ? "current" : "done"}`}>
+                                  <i className="fas fa-store" />
+                                </div>
+                                <div className="tl-text">
+                                  <h5>{isReady ? "Ready for Pickup" : "Pickup from"}</h5>
+                                  <p>{seller?.storeName || seller?.name || "Store"}</p>
+                                  <span><i className="fas fa-map-marker-alt" /> {seller?.address}</span>
+                                </div>
+                              </div>
+                              <div className="tl-item">
+                                <div className="tl-icon">
+                                  <i className="fas fa-home" />
+                                </div>
+                                <div className="tl-text">
+                                  <h5>Deliver to</h5>
+                                  <p>{o.userName}</p>
+                                  <span><i className="fas fa-map-marker-alt" /> {o.userAddress}</span>
+                                </div>
+                              </div>
+                            </div>
+                            
+                            <div className="action-btns" style={{ marginBottom: 12 }}>
+                              <a href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(o.userCoordinates || o.userAddress)}`} target="_blank" className="btn-call" style={{ background: "rgba(139,92,246,0.1)", color: "#8b5cf6", flex: 1 }}>
+                                <i className="fas fa-location-arrow" style={{ marginRight: 6 }} /> Navigation
+                              </a>
+                              
+                              <a href={`tel:${o.userPhone}`} className="btn-call" style={{ background: "rgba(34,197,94,0.1)", color: "#22c55e", flex: 1 }}>
+                                <i className="fas fa-phone" style={{ marginRight: 6 }} /> Call Customer
+                              </a>
+                            </div>
+
+                            <div className="action-btns">
+                              {(isPreparing || isReady) && !o.riderArrivedAtStore && (
+                                <button className="active-btn" style={{ flex: 1, background: "#3b82f6", boxShadow: "0 4px 12px rgba(59,130,246,0.2)" }} onClick={() => handleMarkArrivedAtStore(o)}>
+                                  Arrived at Store 🏪
+                                </button>
+                              )}
+
+                              {isPreparing && o.riderArrivedAtStore && (
+                                <button className="active-btn" style={{ flex: 1, background: "#64748b", boxShadow: "none", cursor: "not-allowed" }} disabled>
+                                  Store preparing order... <i className="fas fa-spinner fa-spin" style={{ marginLeft: 8 }} />
+                                </button>
+                              )}
+                              
+                              {isReady && o.riderArrivedAtStore && (
+                                <button className="active-btn" style={{ flex: 1, background: "#8b5cf6", boxShadow: "0 4px 12px rgba(139,92,246,0.2)" }} onClick={() => handleConfirmPickup(o)}>
+                                  Confirm Pickup <i className="fas fa-box" style={{ marginLeft: 8 }} />
+                                </button>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      </div>
-                      <div className="action-btns">
-                        <a href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(o.userCoordinates || o.userAddress)}`} target="_blank" className="btn-call" style={{ background: "rgba(139,92,246,0.1)", color: "#8b5cf6" }}>
-                          <i className="fas fa-location-arrow" />
-                        </a>
-                        <button className="active-btn" style={{ flex: 1 }} onClick={() => openPaymentModal(o)}>
-                          Mark Delivered <i className="fas fa-check" />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                        );
+                      });
+                    })()
+                  )}
+
+                  {orderSegment === "picked_up" && (
+                    (() => {
+                      const list = activeDeliveries.filter(o => ["Picked Up", "Out For Delivery", "Replacement Processing", "Return Picked Up"].includes(o.status) || (o.status === "Return Approved" && o.pickedUpFromCustomer) || (o.status === "Exchange Approved" && o.pickedUpFromSeller));
+                      if (list.length === 0) {
+                        return (
+                          <div className="empty-state">
+                            <i className="fas fa-truck" style={{ color: "#cbd5e1" }} />
+                            <h3>No orders picked up</h3>
+                            <p>Confirm pickup at store to start the transit stage.</p>
+                          </div>
+                        );
+                      }
+                      return list.map((o) => {
+                        const seller = sellersData[o.sellerId];
+                        const isReturn = o.status === "Return Approved";
+                        const isExchange = o.status === "Exchange Approved";
+                        const isReverse = isReturn || isExchange;
+
+                        if (isReverse) {
+                          return (
+                            <div key={o.id} className="job-card" style={{ borderLeft: isReturn ? "6px solid #f97316" : "6px solid #8b5cf6" }}>
+                              <div className="job-header">
+                                <span className="job-id">Order #{o.id.substring(0,8).toUpperCase()}</span>
+                                <span className="job-badge" style={{ background: isReturn ? "rgba(249,115,22,0.15)" : "rgba(139,92,246,0.15)", color: isReturn ? "#ea580c" : "#7c3aed" }}>
+                                  {isReturn ? "Return Pickup" : "Exchange Swap"}
+                                </span>
+                              </div>
+                              
+                              <div className="timeline">
+                                <div className="tl-item">
+                                  <div className="tl-icon done"><i className="fas fa-check" /></div>
+                                  <div className="tl-text">
+                                    <h5>Accepted</h5>
+                                    <p>Job Accepted</p>
+                                  </div>
+                                </div>
+                                {isReturn ? (
+                                  <>
+                                    <div className="tl-item">
+                                      <div className="tl-icon done"><i className="fas fa-check" /></div>
+                                      <div className="tl-text">
+                                        <h5>Customer Pickup</h5>
+                                        <p>{o.userName}</p>
+                                        <span><i className="fas fa-map-marker-alt" /> {o.userAddress}</span>
+                                      </div>
+                                    </div>
+                                    <div className="tl-item">
+                                      <div className="tl-icon current"><i className="fas fa-store" /></div>
+                                      <div className="tl-text">
+                                        <h5>Seller Handover</h5>
+                                        <p>{seller?.storeName || "Store"}</p>
+                                        <span><i className="fas fa-map-marker-alt" /> {seller?.shopAddress || seller?.address}</span>
+                                      </div>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <>
+                                    <div className="tl-item">
+                                      <div className="tl-icon done"><i className="fas fa-check" /></div>
+                                      <div className="tl-text">
+                                        <h5>Seller Pickup</h5>
+                                        <p>{seller?.storeName || "Store"}</p>
+                                        <span><i className="fas fa-map-marker-alt" /> {seller?.shopAddress || seller?.address}</span>
+                                      </div>
+                                    </div>
+                                    <div className="tl-item">
+                                      <div className="tl-icon current"><i className="fas fa-user" /></div>
+                                      <div className="tl-text">
+                                        <h5>Customer Swap</h5>
+                                        <p>{o.userName}</p>
+                                        <span><i className="fas fa-map-marker-alt" /> {o.userAddress}</span>
+                                      </div>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+
+                              <div className="action-btns" style={{ marginBottom: 12 }}>
+                                <a href={`tel:${o.userPhone}`} className="btn-call" style={{ flex: 1, background: "rgba(34,197,94,0.1)", color: "#22c55e" }}><i className="fas fa-phone" style={{ marginRight: 6 }} /> Call Customer</a>
+                              </div>
+
+                              <div className="action-btns">
+                                {isReturn ? (
+                                  <button className="active-btn" style={{ flex: 1, background: "#22c55e", boxShadow: "0 4px 12px rgba(34,197,94,0.2)" }} onClick={() => handleConfirmReturnHandover(o)}>
+                                    Confirm Return Handover to Seller <i className="fas fa-store" style={{ marginLeft: 8 }} />
+                                  </button>
+                                ) : (
+                                  <button className="active-btn" style={{ flex: 1, background: "#22c55e", boxShadow: "0 4px 12px rgba(34,197,94,0.2)" }} onClick={() => handlePerformExchangeSwap(o)}>
+                                    Perform Exchange Swap <i className="fas fa-sync" style={{ marginLeft: 8 }} />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        const isPickedUp = o.status === "Picked Up";
+                        const isOutForDelivery = o.status === "Out For Delivery";
+
+                        return (
+                          <div key={o.id} className="job-card">
+                            <div className="job-header">
+                              <span className="job-id">Order #{o.id.substring(0,8).toUpperCase()}</span>
+                            </div>
+                            
+                            <div className="timeline">
+                              <div className="tl-item">
+                                <div className="tl-icon done"><i className="fas fa-check" /></div>
+                                <div className="tl-text">
+                                  <h5>Accepted</h5>
+                                  <p>Order accepted</p>
+                                </div>
+                              </div>
+                              <div className="tl-item">
+                                <div className="tl-icon done">
+                                  <i className="fas fa-check" />
+                                </div>
+                                <div className="tl-text">
+                                  <h5>Picked up from</h5>
+                                  <p>{seller?.storeName || seller?.name || "Store"}</p>
+                                  <span><i className="fas fa-map-marker-alt" /> {seller?.address}</span>
+                                </div>
+                              </div>
+                              <div className="tl-item">
+                                <div className="tl-icon current">
+                                  <i className="fas fa-home" />
+                                </div>
+                                <div className="tl-text">
+                                  <h5>Deliver to</h5>
+                                  <p>{o.userName}</p>
+                                  <span><i className="fas fa-map-marker-alt" /> {o.userAddress}</span>
+                                </div>
+                              </div>
+                            </div>
+                            
+                            <div className="action-btns" style={{ marginBottom: 12 }}>
+                              <a href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(o.userCoordinates || o.userAddress)}`} target="_blank" className="btn-call" style={{ background: "rgba(139,92,246,0.1)", color: "#8b5cf6", flex: 1 }}>
+                                <i className="fas fa-location-arrow" style={{ marginRight: 6 }} /> Navigation
+                              </a>
+                              
+                              <a href={`tel:${o.userPhone}`} className="btn-call" style={{ background: "rgba(34,197,94,0.1)", color: "#22c55e", flex: 1 }}>
+                                <i className="fas fa-phone" style={{ marginRight: 6 }} /> Call Customer
+                              </a>
+                            </div>
+
+                            <div className="action-btns">
+                              {isPickedUp && (
+                                <button className="active-btn" style={{ flex: 1, background: "#ea580c", boxShadow: "0 4px 12px rgba(234,88,12,0.2)" }} onClick={() => handleStartDelivery(o)}>
+                                  Start Delivery / Out for Delivery <i className="fas fa-truck" style={{ marginLeft: 8 }} />
+                                </button>
+                              )}
+
+                              {isOutForDelivery && !o.riderArrivedAtCustomer && (
+                                <button className="active-btn" style={{ flex: 1, background: "#f59e0b", boxShadow: "0 4px 12px rgba(245,158,11,0.2)" }} onClick={() => handleMarkArrivedAtCustomer(o)}>
+                                  Arrived at Customer Location 📍
+                                </button>
+                              )}
+
+                              {isOutForDelivery && o.riderArrivedAtCustomer && (
+                                <button className="active-btn" style={{ flex: 1 }} onClick={() => openPaymentModal(o)}>
+                                  Mark Delivered <i className="fas fa-check" style={{ marginLeft: 8 }} />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()
+                  )}
+
+                  {orderSegment === "delivered" && (
+                    (() => {
+                      const list = activeDeliveries.filter(o => ["Delivered", "Returned", "Exchanged", "Return Completed", "Exchange Completed"].includes(o.status));
+                      if (list.length === 0) {
+                        return (
+                          <div className="empty-state">
+                            <i className="fas fa-history" style={{ color: "#cbd5e1" }} />
+                            <h3>No delivery history</h3>
+                            <p>Completed orders will show up here for your records.</p>
+                          </div>
+                        );
+                      }
+                      return list.map((o) => {
+                        const seller = sellersData[o.sellerId];
+                        return (
+                          <div key={o.id} className="job-card" style={{ borderLeft: "6px solid #22c55e" }}>
+                            <div className="job-header">
+                              <span className="job-id">Order #{o.id.substring(0,8).toUpperCase()}</span>
+                              <span className="job-badge" style={{ background: "rgba(34,197,94,0.15)", color: "#16a34a" }}>
+                                Completed
+                              </span>
+                            </div>
+                            <div className="job-store">
+                              <div className="store-img">🏪</div>
+                              <div className="store-info">
+                                <h4>{seller?.storeName || seller?.name || "Store"}</h4>
+                                <p><i className="fas fa-map-marker-alt" /> {seller?.address}</p>
+                              </div>
+                            </div>
+                            <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 14px", background: "#f8fafc", borderRadius: 12, border: "1px solid #e2e8f0" }}>
+                              <div>
+                                <span style={{ fontSize: 11, color: "#64748b", display: "block" }}>Customer</span>
+                                <span style={{ fontSize: 13, fontWeight: 700, color: "#0f172a" }}>{o.userName}</span>
+                              </div>
+                              <div style={{ textAlign: "right" }}>
+                                <span style={{ fontSize: 11, color: "#64748b", display: "block" }}>Amount Collected</span>
+                                <span style={{ fontSize: 13, fontWeight: 700, color: "#10b981" }}>₹{o.total}</span>
+                              </div>
+                            </div>
+                            <div style={{ marginTop: 12, padding: "8px 12px", background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 10, display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, fontWeight: 700, color: "#065f46" }}>
+                              <span>Status: {o.status}</span>
+                              <span>Earned: ₹{o.actualDeliveryFee || 40}</span>
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()
+                  )}
+                </div>
+              </>
             )}
           </>
         ) : tab === "profile" ? (

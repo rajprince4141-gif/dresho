@@ -5,7 +5,7 @@ import Link from "next/link";
 import { auth, db, IMGBB_API_KEY } from "@/lib/firebase";
 import {
   GoogleAuthProvider, signInWithPopup,
-  onAuthStateChanged, signOut,
+  signOut,
 } from "firebase/auth";
 import {
   doc, setDoc, getDoc, collection, query, where,
@@ -14,13 +14,17 @@ import {
 import NotificationBell from "@/components/NotificationBell";
 import { requestNotificationPermission } from "@/lib/firebase";
 
-export default function SellerPage() {
-  const [user, setUser] = useState(null);
-  const [sellerData, setSellerData] = useState(null);
-  const [isPending, setIsPending] = useState(false);
+// Custom Hooks
+import { useAuth } from "@/hooks/useAuth";
+import { useProducts } from "@/hooks/useProducts";
+import { useOrders } from "@/hooks/useOrders";
 
-  // Auth flow states
-  const [authStep, setAuthStep] = useState("welcome"); // welcome, google, phone, store
+// Modular Utilities
+import { isValidPhone, isValidEmail } from "@/utils/validators";
+import { compressImage } from "@/utils/imageCompressor";
+
+export default function SellerPage() {
+  const { user, userData: sellerData, loading: authLoadingState, isPending, setIsPending, authStep, setAuthStep, logout, setUserData: setSellerData } = useAuth("seller");
   const [authPhone, setAuthPhone] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [agreedTerms, setAgreedTerms] = useState(false);
@@ -50,10 +54,9 @@ export default function SellerPage() {
   const [upiId, setUpiId] = useState("");
 
   const [tab, setTab] = useState("inventory");
-  const [products, setProducts] = useState([]);
-  const [orders, setOrders] = useState([]);
-  const [salesTotal, setSalesTotal] = useState(0);
-  const [pendingCount, setPendingCount] = useState(0);
+  const { products } = useProducts({ sellerId: user?.uid });
+  const { orders, salesTotal, pendingCount } = useOrders({ sellerId: user?.uid });
+  const [orderSegment, setOrderSegment] = useState("New order");
 
   // Advertise state
   const [myBannerRequests, setMyBannerRequests] = useState([]);
@@ -79,91 +82,10 @@ export default function SellerPage() {
   const [pImagePreviews, setPImagePreviews] = useState([]);
   const [uploading, setUploading] = useState(false);
 
-  // Auth listener
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (u) => {
-      if (u) {
-        let snap = await getDoc(doc(db, "sellers_profile", u.uid));
-
-        // Race condition fix
-        if (!snap.exists()) {
-          await new Promise(r => setTimeout(r, 2000));
-          snap = await getDoc(doc(db, "sellers_profile", u.uid));
-        }
-
-        if (snap.exists() && snap.data().role === "seller") {
-          const lastActive = localStorage.getItem("dreshoLastActive");
-          const now = Date.now();
-          if (lastActive && now - parseInt(lastActive) > 10 * 60 * 1000) {
-            localStorage.setItem("dreshoSavedEmail", u.email || "");
-            await signOut(auth);
-            localStorage.removeItem("dreshoLastActive");
-            setUser(null);
-            setSellerData(null);
-            setAuthStep("welcome");
-            alert("Session expired. Please login again.");
-            return;
-          }
-          localStorage.setItem("dreshoLastActive", now.toString());
-
-          setUser(u);
-          setSellerData(snap.data());
-          if (snap.data().approved) {
-            setIsPending(false);
-          } else {
-            setIsPending(true);
-          }
-
-          // Request Push Notification Permission & Save Token
-          requestNotificationPermission().then(token => {
-            if (token && snap.data().fcmToken !== token) {
-              updateDoc(doc(db, "sellers_profile", u.uid), { fcmToken: token });
-            }
-          });
-        } else {
-          // Not a seller yet! Show registration form
-          setUser(u);
-          setSellerData(null);
-          setIsPending(false);
-          setAuthStep((prev) => prev === "welcome" || prev === "google" ? "phone" : prev);
-        }
-      } else {
-        setUser(null);
-        setSellerData(null);
-        setIsPending(false);
-        setAuthStep("welcome");
-      }
-    });
-    return () => unsub();
-  }, []);
-
-  // Keep session active
-  useEffect(() => {
-    if (user && sellerData?.role === "seller") {
-      const interval = setInterval(() => {
-        localStorage.setItem("dreshoLastActive", Date.now().toString());
-      }, 60000);
-      return () => clearInterval(interval);
-    }
-  }, [user, sellerData]);
-
   // Data listeners
   useEffect(() => {
     if (!user) return;
-    const pq = query(collection(db, "products"), where("sellerId", "==", user.uid));
-    const unsub1 = onSnapshot(pq, (snap) => {
-      const p = []; snap.forEach((d) => p.push({ id: d.id, ...d.data() })); setProducts(p);
-    });
-    const oq = query(collection(db, "orders"), where("sellerId", "==", user.uid));
-    const unsub2 = onSnapshot(oq, (snap) => {
-      const o = []; let sales = 0; let pending = 0;
-      snap.forEach((d) => {
-        const order = { id: d.id, ...d.data() }; o.push(order);
-        if (order.status === "Delivered") sales += order.total;
-        if (order.status === "Pending") pending++;
-      });
-      setOrders(o); setSalesTotal(sales); setPendingCount(pending);
-    });
+    
     // My banner requests
     const bq = query(collection(db, "banner_requests"), where("sellerId", "==", user.uid));
     const unsub3 = onSnapshot(bq, (snap) => {
@@ -171,8 +93,71 @@ export default function SellerPage() {
       r.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       setMyBannerRequests(r);
     });
-    return () => { unsub1(); unsub2(); unsub3(); };
+    return () => { unsub3(); };
   }, [user]);
+
+  const handleApproveReturn = async (o) => {
+    try {
+      const isReturn = o.status === "Return Requested";
+      const newStatus = isReturn ? "Return Approved" : "Exchange Approved";
+      await updateDoc(doc(db, "orders", o.id), { 
+        status: newStatus,
+        returnApprovedAt: new Date()
+      });
+      alert(`Request approved! Reverse logistics rider will be assigned to pick up the item.`);
+      
+      // Notify customer
+      if (o.userId) {
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "single",
+            userId: o.userId,
+            role: "customer",
+            title: `Request Approved! 🚀`,
+            body: `Your request for order #${o.trackingId} has been approved by the seller.`,
+            link: "/shop?tab=orders"
+          })
+        }).catch(err => console.error("Notification failed", err));
+      }
+    } catch(e) {
+      alert("Error approving request: " + e.message);
+    }
+  };
+
+  const handleRejectReturn = async (o) => {
+    const reason = prompt("Please provide a reason for rejecting this request:");
+    if (!reason) return;
+    try {
+      const isReturn = o.status === "Return Requested";
+      const newStatus = isReturn ? "Return Rejected" : "Exchange Rejected";
+      await updateDoc(doc(db, "orders", o.id), { 
+        status: newStatus,
+        returnRejectionReason: reason,
+        returnRejectedAt: new Date()
+      });
+      alert(`Request rejected.`);
+      
+      // Notify customer
+      if (o.userId) {
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "single",
+            userId: o.userId,
+            role: "customer",
+            title: `Request Rejected ❌`,
+            body: `Your request for order #${o.trackingId} was rejected. Reason: ${reason}`,
+            link: "/shop?tab=orders"
+          })
+        }).catch(err => console.error("Notification failed", err));
+      }
+    } catch(e) {
+      alert("Error rejecting request: " + e.message);
+    }
+  };
 
   const submitBannerRequest = async () => {
     if (!advImage.trim()) return alert("Please provide your banner image URL.");
@@ -224,66 +209,46 @@ export default function SellerPage() {
     );
   };
 
-  const compressImage = (file) => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = (event) => {
-        const img = new Image();
-        img.src = event.target.result;
-        img.onload = () => {
-          const canvas = document.createElement("canvas");
-          let width = img.width;
-          let height = img.height;
-          const MAX_WIDTH = 1200;
-          const MAX_HEIGHT = 1200;
-          if (width > height) {
-            if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
-          } else {
-            if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; }
-          }
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0, width, height);
-          canvas.toBlob((blob) => {
-            if (blob) {
-              const ext = file.name.split('.').pop() || 'jpg';
-              const compressedFile = new File([blob], file.name || `image.${ext}`, { type: "image/jpeg", lastModified: Date.now() });
-              resolve(compressedFile);
-            } else {
-              reject(new Error("Canvas to Blob failed"));
-            }
-          }, "image/jpeg", 0.7);
-        };
-        img.onerror = (error) => reject(error);
-      };
-      reader.onerror = (error) => reject(error);
-    });
-  };
+
 
   const uploadToImgBB = async (file) => {
+    const attemptUpload = async (fileToUpload) => {
+      const formData = new FormData();
+      formData.append("image", fileToUpload);
+
+      const res = await fetch("/api/upload", { method: "POST", body: formData });
+
+      // Guard: check if we got HTML back (means API crashed / returned 404 / 500 HTML page)
+      const contentType = res.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        const text = await res.text();
+        console.error("[Upload] Server returned non-JSON response:", text.slice(0, 200));
+        throw new Error(`Server error (${res.status}). Please try again.`);
+      }
+
+      const data = await res.json();
+      if (!res.ok || !data.url) throw new Error(data.error || "Image upload failed.");
+      return data.url;
+    };
+
     try {
+      // Try with compressed file first
       const compressedFile = await compressImage(file);
-      const formData = new FormData();
-      formData.append("image", compressedFile);
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
-      const data = await res.json();
-      if (!res.ok || !data.url) throw new Error(data.error || "Image upload failed.");
-      return data.url;
-    } catch (e) {
-      // Fallback
-      const formData = new FormData();
-      formData.append("image", file);
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
-      const data = await res.json();
-      if (!res.ok || !data.url) throw new Error(data.error || "Image upload failed.");
-      return data.url;
+      return await attemptUpload(compressedFile);
+    } catch (firstErr) {
+      console.warn("[Upload] Compressed upload failed, retrying with original:", firstErr.message);
+      try {
+        // Retry with original uncompressed file
+        return await attemptUpload(file);
+      } catch (secondErr) {
+        throw new Error(secondErr.message);
+      }
     }
   };
 
   const submitRegistration = async () => {
     if (!storeName || !ownerName || !shopAddress || !locality) return alert("Please fill all required store details.");
+    if (email && !isValidEmail(email)) return alert("Please enter a valid email address.");
     setAuthLoading(true);
     try {
       await setDoc(doc(db, "sellers_profile", auth.currentUser.uid), {
@@ -503,7 +468,7 @@ export default function SellerPage() {
 
                 <button className="auth-btn-primary" onClick={() => {
                   if (!agreedTerms) return alert("Please go back and agree to the Terms & Policy first.");
-                  if (authPhone.length !== 10) return alert("Enter a valid 10-digit phone number");
+                  if (!isValidPhone(authPhone)) return alert("Enter a valid 10-digit phone number");
                   setAuthStep("store");
                 }} style={{ height: 60, fontSize: 16, borderRadius: 16, background: authPhone.length === 10 ? "var(--navy)" : "#cbd5e1", boxShadow: authPhone.length === 10 ? "0 8px 24px rgba(15,23,42,0.25)" : "none", marginTop: 8 }}>
                   Continue
@@ -695,7 +660,7 @@ export default function SellerPage() {
           </div>
 
           {/* Quick Access */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 32 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 32 }}>
             <button onClick={() => setShowModal(true)} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer" }}>
               <div style={{ width: 64, height: 64, borderRadius: 18, background: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, color: "#10b981", boxShadow: "0 4px 12px rgba(0,0,0,0.04)", border: "1px solid #f1f5f9" }}>
                 <i className="fas fa-plus-circle" />
@@ -713,6 +678,12 @@ export default function SellerPage() {
                 <i className="fas fa-shopping-bag" />
               </div>
               <span style={{ fontSize: 11, fontWeight: 700, color: "#0f172a" }}>Orders</span>
+            </button>
+            <button onClick={() => setTab("returns")} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer" }}>
+              <div style={{ width: 64, height: 64, borderRadius: 18, background: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, color: "#ef4444", boxShadow: "0 4px 12px rgba(0,0,0,0.04)", border: "1px solid #f1f5f9", ...(tab === "returns" ? {border: "2px solid #ef4444", background: "#fee2e2"} : {}) }}>
+                <i className="fas fa-undo" />
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#0f172a" }}>Returns</span>
             </button>
             <button onClick={() => setTab("documents")} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer" }}>
               <div style={{ width: 64, height: 64, borderRadius: 18, background: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, color: "#ec4899", boxShadow: "0 4px 12px rgba(0,0,0,0.04)", border: "1px solid #f1f5f9", ...(tab === "documents" ? {border: "2px solid #ec4899", background: "#fdf2f8"} : {}) }}>
@@ -958,80 +929,109 @@ export default function SellerPage() {
                 Manage your new and processing orders. First accept them, then pack them!
               </p>
 
-              {orders.filter((o) => o.status === "PLACED" || o.status === "CONFIRMED").length === 0 ? (
+            </div>
+          )}
+
+          {/* RETURNS TAB */}
+          {tab === "returns" && (
+            <div className="animate-fade-in">
+              <h3 style={{ fontSize: 18, fontWeight: 900, marginBottom: 4, color: "var(--navy)" }}>Return & Exchange Requests</h3>
+              <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 20, lineHeight: 1.6 }}>
+                Review customer requests for returns or exchanges. As per Dresho policy, we support replacements only (no refunds).
+              </p>
+
+              {orders.filter((o) => 
+                o.status === "Return Requested" || 
+                o.status === "Exchange Requested" || 
+                o.status === "Return Approved" || 
+                o.status === "Exchange Approved" ||
+                o.status === "Return Rejected" ||
+                o.status === "Exchange Rejected"
+              ).length === 0 ? (
                 <div style={{ textAlign: "center", padding: "40px 20px", background: "white", borderRadius: 24, border: "1px solid rgba(0,0,0,0.05)" }}>
-                  <i className="fas fa-check-circle" style={{ fontSize: 40, marginBottom: 12, color: "#10b981", opacity: 0.8 }} />
-                  <p style={{ fontSize: 14, fontWeight: 800, color: "var(--navy)" }}>All Caught Up!</p>
-                  <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 6 }}>No active orders at the moment.</p>
+                  <i className="fas fa-smile" style={{ fontSize: 40, marginBottom: 12, color: "#10b981", opacity: 0.8 }} />
+                  <p style={{ fontSize: 14, fontWeight: 800, color: "var(--navy)" }}>No Return Requests!</p>
+                  <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 6 }}>All your customers are happy with their orders! 😊</p>
                 </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                  {orders.filter((o) => o.status === "PLACED" || o.status === "CONFIRMED").map((o) => (
-                    <div key={o.id} className="premium-card" style={{ padding: "20px", borderRadius: 20, cursor: "default", background: "white", border: o.status === "PLACED" ? "2px solid #3b82f6" : "1px solid #e2e8f0", boxShadow: "0 4px 12px rgba(0,0,0,0.03)" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", paddingBottom: 14, borderBottom: "1px solid #f1f5f9", marginBottom: 12 }}>
-                        <span style={{ fontSize: 12, fontWeight: 800, color: o.status === "PLACED" ? "#3b82f6" : "var(--text-muted)", letterSpacing: 1 }}>
-                          ORDER #{o.trackingId} <span style={{ background: o.status === "PLACED" ? "#dbeafe" : "#fef3c7", padding: "2px 6px", borderRadius: 4, marginLeft: 6 }}>{o.status}</span>
-                        </span>
-                        <span style={{ fontWeight: 900, color: "#10b981", fontSize: 15 }}>₹{o.total}</span>
-                      </div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
-                        {o.items?.map((item, i) => (
-                          <p key={i} style={{ fontSize: 14, fontWeight: 600, color: "var(--navy)" }}>
-                            <span style={{ color: "var(--text-muted)" }}>{item.qty}x</span> {item.name} {item.size ? <span style={{ color: "var(--gold)" }}>({item.size})</span> : ""}
-                          </p>
-                        ))}
-                      </div>
-
-                      {/* 👤 Customer Delivery Info 👤 */}
-                      <div style={{ background: "linear-gradient(135deg, #eef2ff, #f0fdf4)", border: "1px solid #c7d2fe", borderRadius: 14, padding: "14px 16px", marginBottom: 14 }}>
-                        <p style={{ fontSize: 10, fontWeight: 800, color: "#6366f1", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 10 }}>📍 Customer Delivery Info</p>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-                          <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                            <i className="fas fa-user" style={{ fontSize: 12, color: "#6366f1", marginTop: 2, flexShrink: 0 }} />
-                            <span style={{ fontSize: 13, fontWeight: 700, color: "#1e1b4b" }}>{o.userName || "—"}</span>
-                          </div>
-                          <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                            <i className="fas fa-phone" style={{ fontSize: 12, color: "#10b981", marginTop: 2, flexShrink: 0 }} />
-                            <a href={`tel:${o.userPhone}`} style={{ fontSize: 13, fontWeight: 700, color: "#065f46", textDecoration: "none" }}>{o.userPhone || "—"}</a>
-                          </div>
-                          <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                            <i className="fas fa-map-marker-alt" style={{ fontSize: 12, color: "#ef4444", marginTop: 2, flexShrink: 0 }} />
-                            <span style={{ fontSize: 12, fontWeight: 600, color: "#374151", lineHeight: 1.5 }}>{o.userAddress || "No address provided"}</span>
-                          </div>
+                  {orders.filter((o) => 
+                    o.status === "Return Requested" || 
+                    o.status === "Exchange Requested" || 
+                    o.status === "Return Approved" || 
+                    o.status === "Exchange Approved" ||
+                    o.status === "Return Rejected" ||
+                    o.status === "Exchange Rejected"
+                  ).map((o) => {
+                    const isPending = o.status === "Return Requested" || o.status === "Exchange Requested";
+                    const isApproved = o.status === "Return Approved" || o.status === "Exchange Approved";
+                    const isRejected = o.status === "Return Rejected" || o.status === "Exchange Rejected";
+                    
+                    return (
+                      <div key={o.id} className="premium-card" style={{ padding: "20px", borderRadius: 20, background: "white", border: isPending ? "2px solid #f59e0b" : "1px solid #e2e8f0", boxShadow: "0 4px 12px rgba(0,0,0,0.03)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", paddingBottom: 14, borderBottom: "1px solid #f1f5f9", marginBottom: 12 }}>
+                          <span style={{ fontSize: 12, fontWeight: 800, color: "var(--text-muted)", letterSpacing: 1 }}>
+                            ORDER #{o.trackingId} 
+                            <span style={{ 
+                              background: isPending ? "#fef3c7" : isApproved ? "#d1fae5" : "#fee2e2", 
+                              color: isPending ? "#d97706" : isApproved ? "#065f46" : "#991b1b",
+                              padding: "2px 8px", 
+                              borderRadius: 6, 
+                              marginLeft: 8,
+                              fontWeight: 800
+                            }}>
+                              {o.status}
+                            </span>
+                          </span>
+                          <span style={{ fontWeight: 900, color: "var(--navy)", fontSize: 15 }}>₹{o.total}</span>
                         </div>
-                      </div>
 
-                      {o.status === "PLACED" ? (
-                        <button className="auth-btn-primary" style={{ width: "100%", borderRadius: 14, fontSize: 14, background: "#3b82f6", border: "none", height: 48 }} 
-                          onClick={() => { 
-                            updateDoc(doc(db, "orders", o.id), { status: "CONFIRMED" }); 
-                          }}
-                        >
-                          ACCEPT ORDER
-                        </button>
-                      ) : (
-                        <button className="auth-btn-primary" style={{ width: "100%", borderRadius: 14, fontSize: 14, background: "var(--navy)", border: "none", height: 48 }} 
-                          onClick={() => { 
-                            updateDoc(doc(db, "orders", o.id), { status: "PACKED" }); 
-                            // Broadcast to riders!
-                            fetch("/api/notify", { 
-                              method: "POST", 
-                              headers: { "Content-Type": "application/json" }, 
-                              body: JSON.stringify({ 
-                                type: "broadcast_riders", 
-                                title: "New Delivery Available! 🛵", 
-                                body: `Pickup from ${sellerData?.storeName}. Distance: ~2km. Earn approx ₹40.`,
-                                link: "/delivery",
-                                data: { orderId: o.id }
-                              }) 
-                            });
-                          }}
-                        >
-                          MARK AS PACKED
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                        {/* Customer & Request Details */}
+                        <div style={{ fontSize: 13, color: "var(--navy)", marginBottom: 14, display: "flex", flexDirection: "column", gap: 4 }}>
+                          <p><strong>Customer:</strong> {o.userName || "Dresho Buyer"} ({o.userPhone || "N/A"})</p>
+                          <p><strong>Address:</strong> {o.userAddress || "N/A"}</p>
+                          <p><strong>Reason:</strong> <span style={{ color: "#d97706", fontWeight: 600 }}>{o.returnReason || o.exchangeReason || "No reason specified"}</span></p>
+                          {(o.returnRemarks || o.exchangeRemarks) && (
+                            <p><strong>Remarks:</strong> <em>"{o.returnRemarks || o.exchangeRemarks}"</em></p>
+                          )}
+                          {isRejected && o.returnRejectionReason && (
+                            <p style={{ color: "#991b1b", margin: 0 }}><strong>Rejection Reason:</strong> {o.returnRejectionReason}</p>
+                          )}
+                        </div>
+
+                        {/* Items to Return/Exchange */}
+                        <div style={{ background: "#f8fafc", borderRadius: 12, padding: 12, marginBottom: 16 }}>
+                          <p style={{ fontSize: 11, fontWeight: 800, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Items</p>
+                          {o.items?.map((item, i) => (
+                            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, marginBottom: i !== o.items.length - 1 ? 6 : 0 }}>
+                              <span style={{ fontWeight: 600 }}>{item.name} (Size: {item.selectedSize})</span>
+                              <span style={{ color: "var(--text-muted)" }}>Qty: {item.qty}</span>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Action buttons */}
+                        {isPending && (
+                          <div style={{ display: "flex", gap: 10 }}>
+                            <button 
+                              className="auth-btn-primary" 
+                              style={{ flex: 1, borderRadius: 14, fontSize: 13, background: "#10b981", border: "none", height: 44, boxShadow: "none" }}
+                              onClick={() => handleApproveReturn(o)}
+                            >
+                              APPROVE
+                            </button>
+                            <button 
+                              className="auth-btn-primary" 
+                              style={{ flex: 1, borderRadius: 14, fontSize: 13, background: "#ef4444", border: "none", height: 44, boxShadow: "none" }}
+                              onClick={() => handleRejectReturn(o)}
+                            >
+                              REJECT
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

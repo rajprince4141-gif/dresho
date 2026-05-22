@@ -8,7 +8,6 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
   signInWithEmailAndPassword,
-  onAuthStateChanged,
   signOut,
 } from "firebase/auth";
 import {
@@ -18,8 +17,122 @@ import {
 import { requestNotificationPermission } from "@/lib/firebase";
 import dynamicImport from "next/dynamic";
 import NotificationBell from "@/components/NotificationBell";
+import ReturnModal from "@/components/shop/ReturnModal";
+
+// Custom Hooks
+import { useAuth } from "@/hooks/useAuth";
+import { useCart } from "@/hooks/useCart";
+import { useProducts } from "@/hooks/useProducts";
+import { useOrders } from "@/hooks/useOrders";
 
 const LiveMap = dynamicImport(() => import("@/components/LiveMap"), { ssr: false });
+
+// Modern Modular Utilities
+import { formatAddress } from "@/utils/formatters";
+import { getRoadDistance } from "@/utils/distanceCalculator";
+import { generateInvoicePDF } from "@/utils/invoiceGenerator";
+import { isValidPincode, isValidPhone } from "@/utils/validators";
+import { APP_CONFIG, ADMIN_EMAILS } from "@/utils/constants";
+
+// Fail-safe premium Product Image Thumbnail with dynamic search & smart HSL fallbacks
+function ProductImageThumbnail({ item, products, size = 64 }) {
+  const [hasError, setHasError] = useState(false);
+
+  // Normalize string for robust, fuzzier comparison
+  const cleanName = (str) => {
+    if (!str) return "";
+    return str
+      .toLowerCase()
+      .split(",")[0]
+      .split("-")[0]
+      .split("|")[0]
+      .trim()
+      .replace(/[^a-z0-9\s]/g, "")
+      .replace(/\s+/g, " ");
+  };
+
+  const resolvedUrl = (() => {
+    if (item.image) return item.image;
+    
+    const iClean = cleanName(item.name);
+    if (iClean && products && products.length > 0) {
+      const match = products.find(p => {
+        const pClean = cleanName(p.name);
+        return pClean === iClean || pClean.includes(iClean) || iClean.includes(pClean);
+      });
+      if (match) {
+        return match.image || match.imageUrl || match.images?.[0] || match.imageUrls?.[0] || "";
+      }
+    }
+    return "";
+  })();
+
+  const getElegantBg = (name) => {
+    if (!name) return { bg: "hsl(210, 20%, 96%)", text: "hsl(210, 10%, 40%)" };
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const h = Math.abs(hash % 360);
+    return {
+      bg: `hsl(${h}, 50%, 95%)`,
+      text: `hsl(${h}, 65%, 25%)`
+    };
+  };
+
+  const nameInitial = item.name ? item.name.charAt(0).toUpperCase() : "P";
+  const colors = getElegantBg(item.name);
+
+  if (resolvedUrl && !hasError) {
+    return (
+      <img
+        src={resolvedUrl}
+        alt={item.name || "Product"}
+        onError={() => setHasError(true)}
+        style={{
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          transition: "transform 0.4s ease",
+        }}
+      />
+    );
+  }
+
+  return (
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        background: colors.bg,
+        color: colors.text,
+        fontSize: size === 64 ? 16 : 20,
+        fontWeight: 800,
+        fontFamily: "var(--font-d), Georgia, serif",
+        position: "relative",
+        userSelect: "none",
+        boxSizing: "border-box",
+        padding: 4
+      }}
+    >
+      <span style={{ transform: "translateY(1px)" }}>{nameInitial}</span>
+      <i 
+        className="fas fa-tag" 
+        style={{ 
+          position: "absolute", 
+          bottom: 4, 
+          right: 4, 
+          fontSize: size === 64 ? 8 : 10, 
+          opacity: 0.5 
+        }} 
+      />
+    </div>
+  );
+}
 
 /* ═══════════════════════════════════════
    Dresho — Customer Shopping Experience
@@ -35,8 +148,7 @@ export default function ShopPage() {
   const [showContactModal, setShowContactModal] = useState(false);
   const [showReturnModal, setShowReturnModal] = useState(false);
   const [showTCModal, setShowTCModal] = useState(false);
-  const [user, setUser] = useState(null);
-  const [userData, setUserData] = useState(null);
+  const { user, userData, loading: authLoadingState, logout, setUserData } = useAuth("user");
   const [authLoading, setAuthLoading] = useState(false);
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPass, setAdminPass] = useState("");
@@ -51,10 +163,10 @@ export default function ShopPage() {
 
   // ── App State ──
   const [currentSection, setCurrentSection] = useState("home");
-  const [products, setProducts] = useState([]);
+  const { products } = useProducts();
   const [currentCategory, setCurrentCategory] = useState("All");
-  const [cart, setCart] = useState([]);
-  const [orders, setOrders] = useState([]);
+  const { cart, setCart, addToCart, changeQty, clearCart, cartTotal, cartCount } = useCart(user, setShowAuth);
+  const { orders } = useOrders({ userId: user?.uid });
   const [riderLocations, setRiderLocations] = useState({});
   const [viewProduct, setViewProduct] = useState(null);
   const [selectedSize, setSelectedSize] = useState("");
@@ -88,6 +200,46 @@ export default function ShopPage() {
   const [newAddrLandmark, setNewAddrLandmark] = useState("");
   const [newAddrCity, setNewAddrCity] = useState("");
   const [newAddrPincode, setNewAddrPincode] = useState("");
+
+  // ── Returns/Availability States ──
+  const [showReturnRequestModal, setShowReturnRequestModal] = useState(false);
+  const [returnOrderId, setReturnOrderId] = useState(null);
+  const [returnType, setReturnType] = useState("RETURN"); // RETURN or EXCHANGE
+  const [returnReason, setReturnReason] = useState("");
+  const [returnRemarks, setReturnRemarks] = useState("");
+
+  const [sellers, setSellers] = useState({});
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "sellers_profile"), (snap) => {
+      const s = {};
+      snap.forEach((doc) => {
+        s[doc.id] = doc.data();
+      });
+      setSellers(s);
+    });
+    return () => unsub();
+  }, []);
+
+  const isEligibleForReturnOrExchange = (o) => {
+    if (!o) return false;
+    const status = o.status?.toUpperCase();
+    if (status !== "DELIVERED") return false;
+    if (o.deliveredAt) {
+      const deliveredTime = o.deliveredAt.seconds 
+        ? o.deliveredAt.seconds * 1000 
+        : new Date(o.deliveredAt).getTime();
+      return (Date.now() - deliveredTime) <= 24 * 60 * 60 * 1000;
+    }
+    return false;
+  };
+
+  const isProductOutOfOrder = (p) => {
+    if (!p) return false;
+    const seller = sellers[p.sellerId];
+    return seller ? seller.isShopOpen === false : false;
+  };
+
+  const hasOutOfOrderItems = cart.some(item => isProductOutOfOrder(item));
 
   const [loaded, setLoaded] = useState(false);
   const [timeLeft, setTimeLeft] = useState({ h: "04", m: "32", s: "17" });
@@ -278,91 +430,12 @@ export default function ShopPage() {
     }
   };
 
-  // ── Auth Listener ──
+  // Sync loaded state with hook authentication loading
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (u) => {
-      if (u) {
-        let snap = await getDoc(doc(db, "users", u.uid));
-
-        // If document doesn't exist immediately, wait and retry (fixes signup race condition)
-        if (!snap.exists()) {
-          await new Promise(r => setTimeout(r, 2000));
-          snap = await getDoc(doc(db, "users", u.uid));
-        }
-
-        const lastActive = localStorage.getItem("dreshoLastActive");
-        const now = Date.now();
-        if (lastActive && now - parseInt(lastActive) > 10 * 60 * 1000) {
-          localStorage.setItem("dreshoSavedEmail", u.email || "");
-          await signOut(auth);
-          localStorage.removeItem("dreshoLastActive");
-          setUser(null);
-          setUserData(null);
-          alert("Session expired. Please login again.");
-          return;
-        }
-        localStorage.setItem("dreshoLastActive", now.toString());
-
-        let currentRole = "user";
-        let finalData = null;
-
-        if (snap.exists() && snap.data().role === "user") {
-          finalData = snap.data();
-        } else {
-          // Check other roles to allow them to be logged in but restricted to their panels
-          const sellerSnap = await getDoc(doc(db, "sellers_profile", u.uid));
-          if (sellerSnap.exists() && sellerSnap.data().role === "seller") {
-            currentRole = "seller";
-            finalData = sellerSnap.data();
-          } else {
-            const riderSnap = await getDoc(doc(db, "delivery_profile", u.uid));
-            if (riderSnap.exists() && riderSnap.data().role === "delivery") {
-              currentRole = "delivery";
-              finalData = riderSnap.data();
-            } else {
-               // Admin fallback if not in users
-               const ADMIN_EMAILS = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "prinxadmin29@gmail.com,krishnaprakash0016@gmail.com").split(",").map(e => e.trim().toLowerCase());
-               if (u.email && ADMIN_EMAILS.includes(u.email.toLowerCase())) {
-                 currentRole = "admin";
-                 finalData = { name: "Admin" };
-               } else if (snap.exists()) {
-                 await signOut(auth);
-                 alert("Unauthorized role for this panel.");
-                 return;
-               }
-            }
-          }
-        }
-
-        setUser(u);
-        setUserData({ ...finalData, role: currentRole });
-
-        // Request Push Notification Permission & Save Token
-        if (currentRole === "user" && snap.exists()) {
-          requestNotificationPermission().then(token => {
-            if (token && finalData.fcmToken !== token) {
-              updateDoc(doc(db, "users", u.uid), { fcmToken: token });
-            }
-          });
-        }
-      } else {
-        setUser(null);
-        setUserData(null);
-      }
-    });
-    setLoaded(true);
-    return () => unsub();
-  }, []);
-
-  // Keep session active for all users
-  useEffect(() => {
-    if (user) {
-      const interval = setInterval(() => {
-        localStorage.setItem("dreshoLastActive", Date.now().toString());
-      }, 60000);
-      return () => clearInterval(interval);
+    if (!authLoadingState) {
+      setLoaded(true);
     }
-  }, [user]);
+  }, [authLoadingState]);
 
   // Pre-fill admin email if available
   useEffect(() => {
@@ -389,50 +462,6 @@ export default function ShopPage() {
     }, 100);
     return () => { clearTimeout(timer); observer.disconnect(); };
   }, [currentSection, loaded, products]);
-
-  // ── Products Listener ──
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, "products"), (snap) => {
-      let p = [];
-      snap.forEach((d) => p.push({ id: d.id, ...d.data() }));
-      // Sort newest first so New Arrivals shows latest uploads
-      p.sort((a, b) => {
-        const aTime = a.createdAt?.seconds || a.createdAt?.toMillis?.() || 0;
-        const bTime = b.createdAt?.seconds || b.createdAt?.toMillis?.() || 0;
-        return bTime - aTime;
-      });
-      
-      if (p.length === 0) {
-        p = [
-          { id: "mock1", name: "Royal Blue Embroidered Kurta", price: 2499, category: "Ethnic", image: "https://images.unsplash.com/photo-1583391733958-d25e07fac04f?w=600&q=80", sizes: ["S", "M", "L"] },
-          { id: "mock2", name: "Banarasi Silk Saree", price: 4999, category: "Ethnic", image: "https://images.unsplash.com/photo-1610189013230-6db19c4d92a1?w=600&q=80", sizes: ["Free Size"] },
-          { id: "mock3", name: "Premium Leather Jacket", price: 3999, category: "Men's Wear", image: "https://images.unsplash.com/photo-1551028719-00167b16eac5?w=600&q=80", sizes: ["M", "L", "XL"] },
-          { id: "mock4", name: "Linen Formal Shirt", price: 1299, category: "Men's Wear", image: "https://images.unsplash.com/photo-1596755094514-f87e32f85e2c?w=600&q=80", sizes: ["38", "40", "42"] },
-          { id: "mock5", name: "Designer Party Gown", price: 5499, category: "Women's Wear", image: "https://images.unsplash.com/photo-1566150905458-1bf1fc113f0d?w=600&q=80", sizes: ["S", "M"] },
-          { id: "mock6", name: "Classic White Sneakers", price: 1999, category: "Casual", image: "https://images.unsplash.com/photo-1600185365483-26d7a4cc7519?w=600&q=80", sizes: ["7", "8", "9", "10"] },
-          { id: "mock7", name: "Velvet Lehenga Choli", price: 8999, category: "Women's Wear", image: "https://images.unsplash.com/photo-1621786032742-0199e52575be?w=600&q=80", sizes: ["S", "M", "L"] },
-          { id: "mock8", name: "Kids Party Wear Suit", price: 1499, category: "Kids Wear", image: "https://images.unsplash.com/photo-1519241047957-be31d7379a5d?w=600&q=80", sizes: ["4-5Y", "6-7Y"] }
-        ];
-      }
-      
-      setProducts(p);
-    });
-    return () => unsub();
-  }, []);
-
-  // ── Orders Listener ──
-  useEffect(() => {
-    if (!user) return;
-    const q = query(collection(db, "orders"), where("userId", "==", user.uid));
-    const unsub = onSnapshot(q, (snap) => {
-      const o = [];
-      snap.forEach((d) => o.push({ id: d.id, ...d.data() }));
-      // Sort orders by newest first
-      o.sort((a, b) => b.createdAt?.toMillis?.() - a.createdAt?.toMillis?.());
-      setOrders(o);
-    });
-    return () => unsub();
-  }, [user]);
 
   // ── Rider Location Tracking ──
   useEffect(() => {
@@ -494,11 +523,12 @@ export default function ShopPage() {
     setAuthLoading(false);
   };
 
-  // ── Admin Email + Password login ──
   const handleAdminLogin = async () => {
-    const ADMIN_EMAILS = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "prinxadmin29@gmail.com,krishnaprakash0016@gmail.com")
-      .split(",").map(e => e.trim().toLowerCase());
-    if (!ADMIN_EMAILS.includes(adminEmail.trim().toLowerCase())) {
+    const configAdminEmails = process.env.NEXT_PUBLIC_ADMIN_EMAILS
+      ? process.env.NEXT_PUBLIC_ADMIN_EMAILS.split(",").map(e => e.trim().toLowerCase())
+      : ADMIN_EMAILS.map(e => e.toLowerCase());
+
+    if (!configAdminEmails.includes(adminEmail.trim().toLowerCase())) {
       return alert("Unauthorized: this email is not on the admin list.");
     }
     setAuthLoading(true);
@@ -518,6 +548,9 @@ export default function ShopPage() {
   const handleAddAddress = async () => {
     if (!newAddrLine.trim() || !newAddrCity.trim() || !newAddrPincode.trim()) {
       return alert("Please fill required address fields.");
+    }
+    if (!isValidPincode(newAddrPincode)) {
+      return alert("Please enter a valid 6-digit PIN code.");
     }
     try {
       const newAddr = {
@@ -556,57 +589,10 @@ export default function ShopPage() {
     }
   };
 
-  // ── Cart helpers ──
-  const addToCart = useCallback((product, size) => {
-    if (!user) {
-      setShowAuth(true);
-      return;
-    }
-    setCart((prev) => {
-      const key = product.id + (size || "");
-      const existing = prev.find((item) => item.id + (item.selectedSize || "") === key);
-      if (existing) {
-        return prev.map((item) =>
-          item.id + (item.selectedSize || "") === key
-            ? { ...item, qty: item.qty + 1 }
-            : item
-        );
-      }
-      return [...prev, { ...product, qty: 1, selectedSize: size || "M" }];
-    });
-    setViewProduct(null);
-  }, [user]);
 
-  const changeQty = (index, delta) => {
-    setCart((prev) => {
-      const updated = [...prev];
-      updated[index].qty += delta;
-      if (updated[index].qty <= 0) updated.splice(index, 1);
-      return updated;
-    });
-  };
-
-  const cartTotal = cart.reduce((sum, i) => sum + (Number(String(i.price).replace(/,/g, '')) * i.qty), 0);
-  const cartCount = cart.reduce((sum, i) => sum + i.qty, 0);
 
   // ── Place Order ──
-  // ── Format address object to string for orders ──
-  const formatAddress = (addr) => {
-    if (!addr) return "";
-    if (typeof addr === "string") return addr;
-    return [addr.line, addr.landmark, addr.city, addr.pincode].filter(Boolean).join(", ");
-  };
-
-  const getDistanceFromLatLonInKm = (lat1, lon1, lat2, lon2) => {
-    const R = 6371; // Radius of the earth in km
-    const dLat = (lat2 - lat1) * (Math.PI / 180);
-    const dLon = (lon2 - lon1) * (Math.PI / 180);
-    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
-      Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c * 1.3; // 1.3 road multiplier
-  };
+  const getDistanceFromLatLonInKm = (lat1, lon1, lat2, lon2) => getRoadDistance(lat1, lon1, lat2, lon2);
 
   const fetchCustomerLocation = () => {
     if (!navigator.geolocation) return alert("Geolocation not supported by your browser.");
@@ -643,6 +629,7 @@ export default function ShopPage() {
 
   const placeOrder = async () => {
     if (!checkoutAddress || !checkoutPhone) return alert("Fill all delivery details.");
+    if (!isValidPhone(checkoutPhone)) return alert("Please enter a valid 10-digit mobile number.");
     if (!checkoutCoordinates) return alert("Please Pin Your Delivery Location first!");
     setPlacing(true);
     try {
@@ -652,8 +639,8 @@ export default function ShopPage() {
 
       // Financial Engine Calculations
       const grandTotal = cartTotal + deliveryFee;
-      const adminCommission = cartTotal * 0.15; // 15% of product value
-      const sellerEarnings = cartTotal * 0.85; // 85% of product value
+      const adminCommission = cartTotal * APP_CONFIG.COMMISSION_RATE;
+      const sellerEarnings = cartTotal * (1 - APP_CONFIG.COMMISSION_RATE);
 
       if (paymentMethod === "UPI") {
         // ── Razorpay UPI / Card flow ──
@@ -693,13 +680,14 @@ export default function ShopPage() {
                   sellerId,
                   items: cart.map((i) => ({
                     name: i.name, qty: i.qty, price: i.price, size: i.selectedSize,
+                    image: i.image || i.images?.[0] || "",
                   })),
                   cartTotal,
                   deliveryFee,
                   total: grandTotal,
                   adminCommission,
                   sellerEarnings,
-                  status: "PLACED",
+                  status: "Pending",
                   paymentMethod: "UPI",
                   paymentStatus: "Paid",
                   paymentId: response.razorpay_payment_id,
@@ -790,13 +778,14 @@ export default function ShopPage() {
         sellerId,
         items: cart.map((i) => ({
           name: i.name, qty: i.qty, price: i.price, size: i.selectedSize,
+          image: i.image || i.images?.[0] || "",
         })),
         cartTotal,
         deliveryFee,
         total: grandTotal,
         adminCommission,
         sellerEarnings,
-        status: "PLACED",
+        status: "Pending",
         paymentMethod: "COD",
         paymentStatus: "Pending",
         trackingId,
@@ -867,22 +856,76 @@ export default function ShopPage() {
     setPlacing(false);
   };
 
-  const handleReturnOrder = async (orderId) => {
-    const reason = prompt("Please provide a reason for the return:");
-    if (!reason) return;
-    try {
-      await setDoc(doc(db, "orders", orderId), { status: "Return Requested", returnReason: reason, returnedAt: new Date() }, { merge: true });
-      alert("Return request submitted successfully. Our team will contact you shortly.");
-    } catch (e) { alert("Failed to submit return request: " + e.message); }
+  const RETURN_REASONS = [
+    "Size fits too tight / too loose",
+    "Quality of fabric/material is not as expected",
+    "Received a completely different item/wrong style",
+    "Product is defective/damaged",
+    "Changed my mind/No longer needed"
+  ];
+
+  const EXCHANGE_REASONS = [
+    "Need a different size (smaller/larger)",
+    "Need a different color/pattern",
+    "Item was damaged, send a fresh replacement",
+    "Received a wrong size/color, replace with correct one"
+  ];
+
+  const handleReturnOrder = (orderId) => {
+    setReturnOrderId(orderId);
+    setReturnType("RETURN");
+    setReturnReason("");
+    setReturnRemarks("");
+    setShowReturnRequestModal(true);
   };
 
-  const handleExchangeOrder = async (orderId) => {
-    const details = prompt("Please provide exchange details (e.g., needed size L instead of M):");
-    if (!details) return;
+  const handleExchangeOrder = (orderId) => {
+    setReturnOrderId(orderId);
+    setReturnType("EXCHANGE");
+    setReturnReason("");
+    setReturnRemarks("");
+    setShowReturnRequestModal(true);
+  };
+
+  const submitReturnOrExchangeRequest = async () => {
+    if (!returnReason) {
+      alert("Please select a reason.");
+      return;
+    }
+    const order = orders.find(o => o.id === returnOrderId);
+    if (!order) return;
+
     try {
-      await setDoc(doc(db, "orders", orderId), { status: "Exchange Requested", exchangeDetails: details, exchangedAt: new Date() }, { merge: true });
-      alert("Exchange request submitted successfully.");
-    } catch (e) { alert("Failed to submit exchange request: " + e.message); }
+      const updateData = {
+        status: returnType === "RETURN" ? "Return Requested" : "Exchange Requested",
+        [returnType === "RETURN" ? "returnReason" : "exchangeReason"]: returnReason,
+        [returnType === "RETURN" ? "returnRemarks" : "exchangeRemarks"]: returnRemarks,
+        [returnType === "RETURN" ? "returnedAt" : "exchangedAt"]: new Date()
+      };
+      
+      await setDoc(doc(db, "orders", returnOrderId), updateData, { merge: true });
+      
+      // Notify the seller in real-time
+      if (order.sellerId) {
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "single",
+            userId: order.sellerId,
+            role: "seller",
+            title: `New ${returnType === "RETURN" ? "Return" : "Exchange"} Request ⚠️`,
+            body: `A customer has requested a ${returnType.toLowerCase()} for order #${order.trackingId}. Reason: ${returnReason}`,
+            link: "/seller?tab=returns"
+          })
+        }).catch(err => console.error("Notification failed", err));
+      }
+
+      alert(`${returnType === "RETURN" ? "Return" : "Exchange"} request submitted successfully!`);
+      setShowReturnRequestModal(false);
+    } catch (e) {
+      alert("Failed to submit request: " + e.message);
+    }
   };
 
   const handleRateProduct = async (orderId) => {
@@ -896,149 +939,22 @@ export default function ShopPage() {
   };
 
   const downloadInvoice = async (o) => {
-    try {
-      const { jsPDF } = await import("jspdf");
-      const html2canvas = (await import("html2canvas")).default;
-      
-      const invoiceDiv = document.createElement("div");
-      invoiceDiv.style.width = "800px";
-      invoiceDiv.style.padding = "40px";
-      invoiceDiv.style.background = "#fff";
-      invoiceDiv.style.color = "#000";
-      invoiceDiv.style.fontFamily = "sans-serif";
-      invoiceDiv.style.position = "absolute";
-      invoiceDiv.style.left = "-9999px"; 
-      
-      const orderDate = o.createdAt?.toDate ? o.createdAt.toDate().toLocaleString() : "N/A";
-      
-      let sellerName = "Dresho Official";
-      let sellerContact = "Fulfilled by Dresho Logistics";
-      if (o.sellerId) {
+    let sellerName = "Dresho Official";
+    let sellerContact = "Fulfilled by Dresho Logistics";
+    
+    if (o.sellerId) {
+      try {
         const snap = await getDoc(doc(db, "sellers_profile", o.sellerId));
         if (snap.exists()) {
-           sellerName = snap.data().shopName || "Dresho Verified Seller";
-           sellerContact = snap.data().phone || snap.data().email || "";
+          sellerName = snap.data().shopName || "Dresho Verified Seller";
+          sellerContact = snap.data().phone || snap.data().email || "";
         }
+      } catch (err) {
+        console.error("Error fetching seller details for invoice:", err);
       }
-
-      let itemsHtml = o.items?.map(item => `
-        <tr>
-          <td style="padding:16px; font-size: 13px; color: #333;">${item.name} ${item.size ? `(${item.size})` : ""}</td>
-          <td style="padding:16px; text-align:center; font-size: 13px; color: #333;">${item.qty}</td>
-          <td style="padding:16px; text-align:center; font-size: 13px; color: #333;">₹${Number(item.price).toFixed(2)}</td>
-          <td style="padding:16px; text-align:right; font-size: 13px; color: #333;">₹${(Number(item.price) * Number(item.qty)).toFixed(2)}</td>
-        </tr>
-      `).join("") || "";
-
-      const orderDateStr = o.createdAt?.toDate ? o.createdAt.toDate().toLocaleDateString('en-GB') : "N/A";
-      const subtotal = o.items?.reduce((acc, i) => acc + (i.price*i.qty), 0) || 0;
-
-      invoiceDiv.innerHTML = `
-        <div style="font-family: Arial, sans-serif; color: #000; background: white; position: relative; padding-bottom: 60px;">
-          
-          <!-- Header Section -->
-          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 60px;">
-            <h1 style="color: #1a0f91; font-size: 64px; font-weight: 500; margin: 0; letter-spacing: 2px;">Invoice</h1>
-            <div style="background: #1a0f91; color: white; width: 140px; height: 140px; border-radius: 24px; display: flex; align-items: center; justify-content: center;">
-              <span style="font-size: 32px; font-weight: 800; font-family: 'Georgia', serif; letter-spacing: 1px;">Dresho</span>
-            </div>
-          </div>
-
-          <!-- Bill To & Details -->
-          <div style="display: flex; justify-content: space-between; margin-bottom: 40px; font-size: 14px;">
-            <div>
-              <h3 style="margin: 0 0 10px 0; font-size: 14px; font-weight: 800;">Bill To:</h3>
-              <p style="margin: 4px 0;">${userData?.name || "Customer"}</p>
-              <p style="margin: 4px 0;">${userData?.address?.line || o.address?.line || ""} ${userData?.address?.city || ""}</p>
-              <p style="margin: 4px 0;">${userData?.email || o.email || userData?.phone || o.phone || "No contact info"}</p>
-            </div>
-            <div style="text-align: right; margin-top: 24px;">
-              <p style="margin: 4px 0;">Date: ${orderDateStr}</p>
-              <p style="margin: 4px 0;">Invoice Number : ${o.trackingId}</p>
-            </div>
-          </div>
-
-          <!-- Table -->
-          <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
-            <thead>
-              <tr style="background: #1a0f91; color: white; text-align: left; font-size: 12px; letter-spacing: 1px;">
-                <th style="padding: 16px; font-weight: 600;">ITEM DESCRIPTION</th>
-                <th style="padding: 16px; text-align: center; font-weight: 600;">QUANTITY</th>
-                <th style="padding: 16px; text-align: center; font-weight: 600;">PRICE</th>
-                <th style="padding: 16px; text-align: right; font-weight: 600;">TOTAL</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${itemsHtml}
-            </tbody>
-          </table>
-          
-          <div style="border-bottom: 2px solid #333; margin-bottom: 20px;"></div>
-
-          <!-- Totals Section -->
-          <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-            <div style="margin-top: 40px;">
-              <p style="margin: 0; font-weight: 700; font-size: 12px;">Payment Method:</p>
-              <p style="margin: 4px 0; font-size: 12px; color: #555;">${o.paymentMethod || "Cash on Delivery"}</p>
-            </div>
-            
-            <div style="width: 320px;">
-              <div style="display: flex; justify-content: space-between; padding: 4px 16px; font-size: 13px;">
-                <span>Sub-Total :</span>
-                <span>₹ ${subtotal.toFixed(2)}</span>
-              </div>
-              <div style="display: flex; justify-content: space-between; padding: 4px 16px; font-size: 13px; margin-bottom: 12px;">
-                <span>Delivery Fee :</span>
-                <span>₹ ${(o.deliveryFee || 0).toFixed(2)}</span>
-              </div>
-              
-              <div style="background: #1a0f91; color: white; display: flex; justify-content: space-between; padding: 12px 16px; font-size: 15px; font-weight: 600;">
-                <span>Total Amount :</span>
-                <span>₹ ${Number(o.total).toFixed(2)}</span>
-              </div>
-
-              <!-- Total Due block inside right column to match layout -->
-              <div style="text-align: right; margin-top: 40px;">
-                <p style="margin: 0; font-size: 14px; font-weight: 600;">Total Due</p>
-                <p style="margin: 0; font-size: 56px; font-weight: 600; letter-spacing: -1px; color: #111;">${Number(o.total).toFixed(2)}</p>
-              </div>
-            </div>
-          </div>
-
-          <div style="border-bottom: 2px solid #333; margin-top: 20px; margin-bottom: 30px;"></div>
-
-          <!-- Footer -->
-          <div style="display: flex; justify-content: space-between; align-items: flex-end;">
-            <h2 style="font-family: 'Georgia', serif; font-size: 36px; font-weight: 400; margin: 0; letter-spacing: 2px; color: #333;">THANK YOU</h2>
-            <div style="text-align: right;">
-              <p style="margin: 0; font-size: 12px; font-weight: 800; color: #555;">Terms and Conditions</p>
-              <p style="margin: 4px 0 0 0; font-size: 11px; color: #888;">Return and exchange within 24 hours</p>
-              <p style="margin: 4px 0 0 0; font-size: 11px; color: #888;">Support: dresho.business@gmail.com</p>
-            </div>
-          </div>
-
-          <!-- Corner decorations -->
-          <div style="position: absolute; bottom: -40px; left: -40px; width: 80px; height: 80px; background: #1a0f91;"></div>
-          <div style="position: absolute; bottom: -40px; right: -40px; width: 80px; height: 80px; background: #1a0f91;"></div>
-        </div>
-      `;
-      
-      document.body.appendChild(invoiceDiv);
-      
-      const canvas = await html2canvas(invoiceDiv, { scale: 2 });
-      const imgData = canvas.toDataURL("image/png");
-      const pdf = new jsPDF("p", "mm", "a4");
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-      
-      pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`Dresho_Invoice_${o.trackingId}.pdf`);
-      
-      document.body.removeChild(invoiceDiv);
-    } catch (e) {
-      console.error(e);
-      alert("Failed to generate invoice.");
     }
+    
+    await generateInvoicePDF(o, userData, { shopName: sellerName, contact: sellerContact });
   };
 
   const filteredProducts = currentCategory === "All" ? products : products.filter((p) => p.category === currentCategory);
@@ -1368,14 +1284,18 @@ export default function ShopPage() {
                   filteredProducts.slice(0, 10).map((p, i) => (
                     <div key={p.id} className={`deal-card reveal in d${i}`} onClick={() => { setViewProduct(p); setSelectedSize(p.sizes?.[0] || "M"); }}>
                       <div className="deal-img-wrap">
-                        <img src={p.image} alt={p.name} style={{ opacity: (p.outOfStock || p.stock === 0) ? 0.4 : 1 }} onError={(e) => { e.target.style.display = "none"; }} />
-                        {(p.outOfStock || p.stock === 0) && (
+                        <img src={p.image} alt={p.name} style={{ opacity: (p.outOfStock || p.stock === 0 || isProductOutOfOrder(p)) ? 0.4 : 1 }} onError={(e) => { e.target.style.display = "none"; }} />
+                        {isProductOutOfOrder(p) ? (
+                          <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "rgba(239,68,68,0.85)", color: "white", padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 900, zIndex: 10, letterSpacing: 1, whiteSpace: "nowrap", backdropFilter: "blur(2px)" }}>
+                            OUT OF ORDER
+                          </div>
+                        ) : (p.outOfStock || p.stock === 0) ? (
                           <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "rgba(0,0,0,0.6)", color: "white", padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 900, zIndex: 10, letterSpacing: 1, whiteSpace: "nowrap", backdropFilter: "blur(2px)" }}>
                             OUT OF STOCK
                           </div>
-                        )}
+                        ) : null}
                         <div className="deal-badge-wrap">
-                          {p.stock > 0 && p.stock <= 5 && !p.outOfStock && (
+                          {p.stock > 0 && p.stock <= 5 && !p.outOfStock && !isProductOutOfOrder(p) && (
                             <span style={{ background: "#ef4444", color: "white", padding: "4px 8px", borderRadius: 4, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Only {p.stock} left</span>
                           )}
                           {i === 0 && <span className="badge-new">New</span>}
@@ -1383,7 +1303,7 @@ export default function ShopPage() {
                           <span className="badge-off">−38%</span>
                         </div>
                         <button className="wishlist-btn">♡</button>
-                        {!(p.outOfStock || p.stock === 0) && (
+                        {!(p.outOfStock || p.stock === 0 || isProductOutOfOrder(p)) && (
                           <div className="deal-quick" onClick={(e) => { e.stopPropagation(); addToCart(p, p.sizes?.[0] || "M"); }}>⚡ Quick Add</div>
                         )}
                       </div>
@@ -1629,24 +1549,35 @@ export default function ShopPage() {
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                {cart.map((item, idx) => (
-                  <div key={idx} style={{ display: "flex", gap: 16, background: "var(--card)", border: "1px solid var(--border)", padding: 12 }}>
-                    <div style={{ width: 80, height: 100, background: "var(--ivory2)", flexShrink: 0 }}>
-                      <img src={item.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
-                    </div>
-                    <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
-                      <h4 style={{ fontSize: 14, fontWeight: 600, color: "var(--navy)" }}>{item.name}</h4>
-                      <p style={{ fontSize: 12, color: "var(--sub)", marginTop: 4 }}>
-                        Size: {item.selectedSize} · ₹{item.price} × {item.qty}
-                      </p>
-                      <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12 }}>
-                        <button style={{ width: 32, height: 32, borderRadius: "50%", border: "1px solid var(--border)", background: "var(--ivory2)", color: "var(--navy)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }} onClick={() => changeQty(idx, -1)}>−</button>
-                        <span style={{ fontWeight: 600, fontSize: 14, color: "var(--navy)" }}>{item.qty}</span>
-                        <button style={{ width: 32, height: 32, borderRadius: "50%", border: "none", background: "var(--navy)", color: "var(--white)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }} onClick={() => changeQty(idx, 1)}>+</button>
+                {cart.map((item, idx) => {
+                  const outOfOrder = isProductOutOfOrder(item);
+                  return (
+                    <div key={idx} style={{ display: "flex", gap: 16, background: "var(--card)", border: "1px solid var(--border)", padding: 12, opacity: outOfOrder ? 0.7 : 1 }}>
+                      <div style={{ width: 80, height: 100, background: "var(--ivory2)", flexShrink: 0, overflow: "hidden", position: "relative" }}>
+                        <ProductImageThumbnail item={item} products={products} size={80} />
+                        {outOfOrder && (
+                          <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 9, fontWeight: 900, textAlign: "center", textTransform: "uppercase", padding: 4 }}>
+                            Shop Closed
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                        <h4 style={{ fontSize: 14, fontWeight: 600, color: "var(--navy)" }}>{item.name}</h4>
+                        {outOfOrder && (
+                          <span style={{ background: "#ef4444", color: "white", padding: "2px 6px", borderRadius: 4, fontSize: 9, fontWeight: 900, textTransform: "uppercase", alignSelf: "flex-start", marginTop: 4 }}>OUT OF ORDER</span>
+                        )}
+                        <p style={{ fontSize: 12, color: "var(--sub)", marginTop: 4 }}>
+                          Size: {item.selectedSize} · ₹{item.price} × {item.qty}
+                        </p>
+                        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12 }}>
+                          <button style={{ width: 32, height: 32, borderRadius: "50%", border: "1px solid var(--border)", background: "var(--ivory2)", color: "var(--navy)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }} onClick={() => changeQty(idx, -1)}>−</button>
+                          <span style={{ fontWeight: 600, fontSize: 14, color: "var(--navy)" }}>{item.qty}</span>
+                          <button style={{ width: 32, height: 32, borderRadius: "50%", border: "none", background: "var(--navy)", color: "var(--white)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }} onClick={() => changeQty(idx, 1)}>+</button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
                 <div style={{ background: "var(--card)", border: "1px solid var(--border)", padding: "24px", marginTop: 8, borderRadius: 12 }}>
                   <h4 style={{ fontSize: 15, fontWeight: 800, color: "var(--navy)", marginBottom: 16, borderBottom: "1px solid var(--border)", paddingBottom: 12 }}>Price Details ({cart.reduce((acc, item) => acc + item.qty, 0)} Items)</h4>
                   
@@ -1669,19 +1600,46 @@ export default function ShopPage() {
                     <span style={{ fontWeight: 800, color: "var(--navy)", fontSize: 16 }}>Final Amount</span>
                     <span style={{ fontSize: 24, fontWeight: 900, color: "var(--navy)" }}>₹{cartTotal}</span>
                   </div>
+                   {hasOutOfOrderItems && (
+                    <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 12, padding: 12, marginTop: 16, display: "flex", gap: 10, alignItems: "center" }}>
+                      <span style={{ fontSize: 18 }}>⚠️</span>
+                      <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: "#991b1b" }}>
+                        Seller Offline - Some items are Out of Order. Please remove them to proceed.
+                      </p>
+                    </div>
+                  )}
+
                   <p style={{ fontSize: 12, fontWeight: 600, color: "#16a34a", marginTop: 12, background: "#dcfce7", padding: "8px 12px", borderRadius: 8, textAlign: "center" }}>
                     You will save ₹{cart.reduce((acc, item) => acc + (Math.floor(item.price * 1.38) * item.qty), 0) - cartTotal} on this order
                   </p>
-                  <button style={{ background: "var(--navy)", color: "#fff", border: "none", padding: "16px", width: "100%", marginTop: 24, fontSize: 12, letterSpacing: 2, textTransform: "uppercase", fontWeight: 500, cursor: "pointer", transition: "background 0.3s" }} onClick={() => {
-                    const addr = userData?.address;
-                    setCheckoutAddress(typeof addr === "object" ? addr?.line || "" : addr || "");
-                    setCheckoutLandmark(typeof addr === "object" ? addr?.landmark || "" : "");
-                    setCheckoutCity(typeof addr === "object" ? addr?.city || "" : "");
-                    setCheckoutPincode(typeof addr === "object" ? addr?.pincode || "" : "");
-                    setCheckoutPhone(userData?.phone || "");
-                    setShowCheckout(true);
-                  }}>
-                    Proceed to Checkout
+                  <button 
+                    disabled={hasOutOfOrderItems}
+                    style={{ 
+                      background: hasOutOfOrderItems ? "#cbd5e1" : "var(--navy)", 
+                      color: hasOutOfOrderItems ? "#94a3b8" : "#fff", 
+                      border: "none", 
+                      padding: "16px", 
+                      width: "100%", 
+                      marginTop: 24, 
+                      fontSize: 12, 
+                      letterSpacing: 2, 
+                      textTransform: "uppercase", 
+                      fontWeight: 500, 
+                      cursor: hasOutOfOrderItems ? "not-allowed" : "pointer", 
+                      transition: "background 0.3s" 
+                    }} 
+                    onClick={() => {
+                      if (hasOutOfOrderItems) return;
+                      const addr = userData?.address;
+                      setCheckoutAddress(typeof addr === "object" ? addr?.line || "" : addr || "");
+                      setCheckoutLandmark(typeof addr === "object" ? addr?.landmark || "" : "");
+                      setCheckoutCity(typeof addr === "object" ? addr?.city || "" : "");
+                      setCheckoutPincode(typeof addr === "object" ? addr?.pincode || "" : "");
+                      setCheckoutPhone(userData?.phone || "");
+                      setShowCheckout(true);
+                    }}
+                  >
+                    {hasOutOfOrderItems ? "Seller Offline - Out of Order" : "Proceed to Checkout"}
                   </button>
                 </div>
               </div>
@@ -1722,19 +1680,25 @@ export default function ShopPage() {
                   <div key={o.id} className="animate-fade-in-up" style={{ background: "white", padding: "16px 20px" }}>
                     {o.items?.map((item, i) => (
                       <div key={i} style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: i !== o.items.length - 1 ? 16 : 0 }}>
-                        <div style={{ width: 64, height: 64, borderRadius: 8, background: "#f8fafc", flexShrink: 0, overflow: "hidden", border: "1px solid #e2e8f0" }}>
-                          <img src={item.image} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        <div style={{ width: 64, height: 64, borderRadius: 8, background: "#f8fafc", flexShrink: 0, overflow: "hidden", border: "1px solid #e2e8f0", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
+                          <ProductImageThumbnail item={item} products={products} size={64} />
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <h4 style={{ 
                             fontSize: 14, fontWeight: 600, marginBottom: 4,
-                            color: o.status === "Delivered" ? "#16a34a" : o.status === "Cancelled" ? "#0f172a" : "#16a34a"
+                            color: o.status === "Delivered" ? "#16a34a" : o.status === "Cancelled" || o.status === "Rejected" ? "#ef4444" : "#16a34a"
                           }}>
                             {o.status === "Delivered" 
                               ? `Delivered on ${o.createdAt?.toDate ? o.createdAt.toDate().toLocaleDateString("en-US", {month: "short", day: "2-digit"}) : ""}`
                               : o.status === "Cancelled" 
                               ? `Cancelled on ${o.createdAt?.toDate ? o.createdAt.toDate().toLocaleDateString("en-US", {month: "short", day: "2-digit"}) : ""}`
-                              : o.status}
+                              : o.status === "Rejected"
+                              ? "Rejected"
+                              : o.status === "Refunded"
+                              ? "Refunded"
+                              : ["Picked Up", "Out For Delivery"].includes(o.status)
+                              ? "Rider on the way"
+                              : "Order Confirmed"}
                           </h4>
                           <p style={{ fontSize: 12, color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                             {item.name}
@@ -1745,7 +1709,7 @@ export default function ShopPage() {
                     ))}
 
                     {/* Rate & Review Footer */}
-                    {o.status === "Delivered" && (
+                    {(o.status === "Delivered" || o.status === "DELIVERED") && (
                       <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #f1f5f9", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                         <span style={{ fontSize: 12, color: "#475569" }}>Rate & Review</span>
                         <div style={{ display: "flex", gap: 8 }} onClick={() => handleRateProduct(o.id)}>
@@ -1756,22 +1720,82 @@ export default function ShopPage() {
                       </div>
                     )}
 
-                    {/* Action Buttons for Delivered */}
-                    {o.status === "Delivered" && (
-                      <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
-                        <button onClick={() => handleExchangeOrder(o.id)} style={{ flex: 1, padding: "8px", fontSize: 12, fontWeight: 600, color: "#0f172a", background: "white", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer" }}>Exchange</button>
-                        <button onClick={() => handleReturnOrder(o.id)} style={{ flex: 1, padding: "8px", fontSize: 12, fontWeight: 600, color: "#0f172a", background: "white", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer" }}>Return</button>
+                    {/* Action Buttons for Delivered — 24-hour return/exchange window */}
+                    {(o.status === "Delivered" || o.status === "DELIVERED") && (() => {
+                      const eligible = isEligibleForReturnOrExchange(o);
+                      const deliveredTime = o.deliveredAt?.seconds ? o.deliveredAt.seconds * 1000 : null;
+                      const hoursLeft = deliveredTime ? Math.max(0, 24 - Math.floor((Date.now() - deliveredTime) / 3600000)) : 0;
+                      return (
+                        <div style={{ marginTop: 16 }}>
+                          <div style={{ display: "flex", gap: 10 }}>
+                            {eligible ? (
+                              <>
+                                <button onClick={() => handleExchangeOrder(o.id)} style={{ flex: 1, padding: "8px", fontSize: 12, fontWeight: 600, color: "#0f172a", background: "white", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer" }}>Exchange</button>
+                                <button onClick={() => handleReturnOrder(o.id)} style={{ flex: 1, padding: "8px", fontSize: 12, fontWeight: 600, color: "#0f172a", background: "white", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer" }}>Return</button>
+                              </>
+                            ) : (
+                              <div style={{ flex: 2, padding: "8px", fontSize: 11, fontWeight: 600, color: "#94a3b8", background: "#f8fafc", border: "1px dashed #cbd5e1", borderRadius: 8, textAlign: "center" }}>
+                                ⏱ Return/Exchange window expired
+                              </div>
+                            )}
+                            <button onClick={() => downloadInvoice(o)} style={{ flex: 1, padding: "8px", fontSize: 12, fontWeight: 600, color: "#16a34a", background: "#ecfdf5", border: "1px solid #16a34a", borderRadius: 8, cursor: "pointer" }}>E-Bill</button>
+                          </div>
+                          {eligible && deliveredTime && (
+                            <p style={{ fontSize: 10, color: "#f59e0b", marginTop: 6, textAlign: "center" }}>
+                              ⏰ Return/Exchange window closes in {hoursLeft}h
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Show E-Bill only (no return window) for requested statuses */}
+                    {(o.status === "Return Requested" || o.status === "Exchange Requested") && (
+                      <div style={{ marginTop: 16, display: "flex", gap: 10, alignItems: "center" }}>
+                        <div style={{ flex: 2, padding: "8px", fontSize: 11, fontWeight: 700, color: "#f59e0b", background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: 8, textAlign: "center" }}>
+                          ⏳ {o.status} — Seller will contact you
+                        </div>
                         <button onClick={() => downloadInvoice(o)} style={{ flex: 1, padding: "8px", fontSize: 12, fontWeight: 600, color: "#16a34a", background: "#ecfdf5", border: "1px solid #16a34a", borderRadius: 8, cursor: "pointer" }}>E-Bill</button>
                       </div>
                     )}
 
                     {/* Active Tracking timeline */}
-                    {o.status !== "Delivered" && o.status !== "Cancelled" && (
+                    {o.status !== "Delivered" && o.status !== "DELIVERED" && o.status !== "Cancelled" && o.status !== "Rejected" && o.status !== "Refunded" && (
                       <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #f1f5f9" }}>
                         {(() => {
-                          const steps = ["Pending", "Assigned", "Picked Up", "Out for Delivery", "Delivered"];
-                          let currentIdx = steps.indexOf(o.status);
-                          if (currentIdx === -1 && o.status !== "Cancelled") currentIdx = 0;
+                          let steps = [];
+                          let currentIdx = -1;
+                          
+                          if (o.status.includes("Return") || o.status === "Refund Processed" || o.status === "Pickup Assigned" || o.status === "Return Picked Up" || o.status === "Return Completed") {
+                            steps = ["Return Requested", "Return Approved", "Pickup Assigned", "Return Picked Up", "Refund Processed", "Return Completed"];
+                            currentIdx = steps.indexOf(o.status);
+                            if (currentIdx === -1) {
+                              if (o.status === "Returned") currentIdx = 3;
+                            }
+                          } else if (o.status.includes("Exchange") || o.status.includes("Replacement") || o.status === "Pickup Scheduled" || o.status === "Replacement Processing" || o.status === "Replacement Shipped" || o.status === "Exchange Completed") {
+                            steps = ["Exchange Requested", "Exchange Approved", "Pickup Scheduled", "Replacement Processing", "Replacement Shipped", "Exchange Completed"];
+                            currentIdx = steps.indexOf(o.status);
+                            if (currentIdx === -1) {
+                              if (o.status === "Exchanged") currentIdx = 5;
+                            }
+                          } else {
+                            steps = ["Order placed", "Seller accepted", "Rider assigned", "Rider accepted", "Picked up", "Delivered"];
+                            const statusMapping = {
+                              "Pending": 0,
+                              "Seller Accepted": 1,
+                              "Rider Searching": 2,
+                              "Rider Accepted": 3,
+                              "Preparing": 3,
+                              "Ready For Pickup": 3,
+                              "Picked Up": 4,
+                              "Out For Delivery": 4,
+                              "Delivered": 5
+                            };
+                            currentIdx = statusMapping[o.status] !== undefined ? statusMapping[o.status] : 0;
+                          }
+
+                          if (currentIdx === -1) return null;
+
                           return (
                             <div style={{ display: "flex", justifyContent: "space-between", position: "relative", padding: "0 10px" }}>
                               <div style={{ position: "absolute", top: 8, left: 20, right: 20, height: 2, background: "#e2e8f0", zIndex: 0 }} />
@@ -1787,7 +1811,7 @@ export default function ShopPage() {
                             </div>
                           );
                         })()}
-                        {o.status === "Out for Delivery" && (
+                        {(o.status === "Out For Delivery" || o.status === "Out for Delivery") && (
                           <div style={{ marginTop: 16, padding: "12px", background: "#f8fafc", border: "1px dashed #cbd5e1", textAlign: "center", borderRadius: 8 }}>
                             <p style={{ fontSize: 11, fontWeight: 600, color: "#475569", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Delivery OTP: <span style={{ fontSize: 16, color: "#16a34a", fontWeight: 800 }}>{o.deliveryOtp}</span></p>
                             {o.riderId && riderLocations[o.riderId] ? (
@@ -2002,6 +2026,82 @@ export default function ShopPage() {
               <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>5. Liability</p>
               <p>Dresho acts as a platform connecting buyers and sellers.</p>
             </div>
+          </div>
+        </FooterModal>
+
+        {/* ── RETURN/EXCHANGE REQUEST FORM MODAL ── */}
+        <FooterModal open={showReturnRequestModal} onClose={() => setShowReturnRequestModal(false)} title={returnType === "RETURN" ? "Request Return" : "Request Exchange"}>
+          <div style={{ padding: "10px 0" }}>
+            <div style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 12, padding: 12, marginBottom: 20 }}>
+              <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: "#d97706" }}>
+                {returnType === "RETURN" ? "⚠️ Returns are eligible for replacement only (no refunds)." : "🔄 Exchange with another size or fresh piece."}
+              </p>
+            </div>
+
+            <p style={{ fontSize: 14, fontWeight: 700, marginBottom: 12, color: "var(--navy)" }}>Choose Reason</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+              {(returnType === "RETURN" ? RETURN_REASONS : EXCHANGE_REASONS).map((reason) => (
+                <label key={reason} style={{ 
+                  display: "flex", 
+                  alignItems: "center", 
+                  gap: 12, 
+                  padding: "12px 16px", 
+                  borderRadius: 12, 
+                  border: returnReason === reason ? "1px solid var(--navy)" : "1px solid var(--border)", 
+                  background: returnReason === reason ? "rgba(15,23,42,0.03)" : "transparent",
+                  cursor: "pointer",
+                  transition: "all 0.2s"
+                }}>
+                  <input 
+                    type="radio" 
+                    name="return_reason" 
+                    value={reason} 
+                    checked={returnReason === reason} 
+                    onChange={() => setReturnReason(reason)}
+                    style={{ accentColor: "var(--navy)", width: 18, height: 18 }}
+                  />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: "var(--navy)" }}>{reason}</span>
+                </label>
+              ))}
+            </div>
+
+            <p style={{ fontSize: 14, fontWeight: 700, marginBottom: 8, color: "var(--navy)" }}>Additional Remarks (Optional)</p>
+            <textarea 
+              value={returnRemarks} 
+              onChange={(e) => setReturnRemarks(e.target.value)} 
+              placeholder="Provide any extra details or size specifications..." 
+              style={{ 
+                width: "100%", 
+                minHeight: 80, 
+                borderRadius: 12, 
+                border: "1px solid var(--border)", 
+                padding: 12, 
+                fontSize: 13, 
+                fontFamily: "inherit",
+                resize: "vertical", 
+                removeAttribute: "true",
+                marginBottom: 20,
+                outline: "none"
+              }}
+            />
+
+            <button 
+              onClick={submitReturnOrExchangeRequest}
+              style={{ 
+                width: "100%", 
+                padding: "14px", 
+                borderRadius: 12, 
+                background: "var(--navy)", 
+                color: "white", 
+                border: "none", 
+                fontSize: 14, 
+                fontWeight: 700, 
+                cursor: "pointer",
+                boxShadow: "0 4px 12px rgba(15,23,42,0.15)"
+              }}
+            >
+              Submit Request
+            </button>
           </div>
         </FooterModal>
 
@@ -2601,7 +2701,19 @@ export default function ShopPage() {
 
             {/* Sticky Bottom Bar */}
             <div style={{ flexShrink: 0, background: "var(--white)", padding: "16px 20px", borderTop: "1px solid var(--border)", zIndex: 20 }}>
-              {(viewProduct.outOfStock || viewProduct.stock === 0) ? (
+              {isProductOutOfOrder(viewProduct) ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: "#ef4444", textAlign: "center" }}>
+                    ⚠️ This shop is currently closed. You can't order right now.
+                  </p>
+                  <button 
+                    disabled
+                    style={{ width: "100%", height: 50, borderRadius: 16, background: "#cbd5e1", color: "#94a3b8", border: "none", fontSize: 13, fontWeight: 800, textTransform: "uppercase", letterSpacing: 1, cursor: "not-allowed" }}
+                  >
+                    Seller Offline - Out of Order
+                  </button>
+                </div>
+              ) : (viewProduct.outOfStock || viewProduct.stock === 0) ? (
                 <button 
                   style={{ width: "100%", height: 50, borderRadius: 16, background: "var(--navy)", color: "white", border: "none", fontSize: 13, fontWeight: 800, textTransform: "uppercase", letterSpacing: 1, cursor: "pointer", boxShadow: "0 4px 14px rgba(20,33,61,0.2)" }} 
                   onClick={async () => { 

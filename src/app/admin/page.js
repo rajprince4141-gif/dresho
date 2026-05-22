@@ -12,6 +12,8 @@ import {
 } from "firebase/firestore";
 import dynamicImport from "next/dynamic";
 
+import { ADMIN_EMAILS } from "@/utils/constants";
+
 const LiveMap = dynamicImport(() => import("@/components/LiveMap"), { ssr: false });
 
 // ── Revenue Formula Helpers ──────────────────────────────────────────────
@@ -49,6 +51,7 @@ export default function AdminPage() {
   const [selectedRider, setSelectedRider] = useState(null);
   const [showMessages, setShowMessages] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState(null);
+  const [expandedOrders, setExpandedOrders] = useState({});
 
   // Banner Management State
   const [banners, setBanners] = useState({});
@@ -59,9 +62,9 @@ export default function AdminPage() {
   const [bannerUploadErr, setBannerUploadErr] = useState("");
 
   useEffect(() => {
-    const AUTHORIZED = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "")
-      .split(",")
-      .map((e) => e.trim().toLowerCase());
+    const AUTHORIZED = process.env.NEXT_PUBLIC_ADMIN_EMAILS
+      ? process.env.NEXT_PUBLIC_ADMIN_EMAILS.split(",").map((e) => e.trim().toLowerCase())
+      : ADMIN_EMAILS.map((e) => e.toLowerCase());
 
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (user) {
@@ -113,9 +116,11 @@ export default function AdminPage() {
         const order = { id: d.id, ...d.data() }; o.push(order);
         if (order.status === "Delivered") {
           revenue += order.total; delivered++;
-          const commission = calcCommission(order.total);
-          const deliveryFee = calcDeliveryFee(order.distanceKm);
-          const riderPayout = calcRiderPayout(order.distanceKm);
+          const commission = order.platformCommission !== undefined ? order.platformCommission : calcCommission(order.total);
+          const deliveryFee = order.deliveryCharges !== undefined ? order.deliveryCharges : calcDeliveryFee(order.distanceKm);
+          const riderPayout = order.actualDeliveryFee !== undefined ? order.actualDeliveryFee : calcRiderPayout(order.distanceKm);
+          const earnings = order.sellerPayout !== undefined ? order.sellerPayout : (order.total - commission);
+
           totalCommission += commission;
           totalDeliveryFees += deliveryFee;
           totalRiderPayouts += riderPayout;
@@ -125,7 +130,7 @@ export default function AdminPage() {
           sellerMap[sid].orderCount++;
           sellerMap[sid].gmv += order.total;
           sellerMap[sid].commission += commission;
-          sellerMap[sid].sellerEarnings += (order.total - commission);
+          sellerMap[sid].sellerEarnings += earnings;
         } else {
           active++;
           if (order.status === "Pending") { pending++; pendingSettlements += order.total; }
@@ -252,6 +257,117 @@ export default function AdminPage() {
   const suspendRider = async (id, current) => {
     await updateDoc(doc(db, "delivery_profile", id), { approved: !current });
     alert(current ? "Rider suspended." : "Rider reactivated! ✅");
+  };
+
+  const cancelOrder = async (orderId, order) => {
+    if (!confirm(`Are you sure you want to cancel Order #${order.trackingId}?`)) return;
+    const isPrepaid = order.paymentMethod !== "COD" && order.paymentStatus === "Paid";
+    const updates = {
+      status: "Cancelled",
+    };
+    if (isPrepaid) {
+      updates.paymentStatus = "Refunded";
+    }
+    try {
+      await updateDoc(doc(db, "orders", orderId), updates);
+      alert("Order cancelled successfully.");
+      
+      // Dispatch notification to buyer
+      fetch("/api/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: order.userId,
+          role: "customer",
+          title: "Order Cancelled 🚫",
+          body: `Your order #${order.trackingId} has been cancelled. ${isPrepaid ? "Refund has been initiated." : ""}`,
+          link: "/shop?section=orders"
+        })
+      });
+      // Notify seller
+      if (order.sellerId) {
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: order.sellerId,
+            role: "seller",
+            title: "Order Cancelled",
+            body: `Order #${order.trackingId} was cancelled by Admin.`,
+            link: "/seller"
+          })
+        });
+      }
+      // Notify rider if assigned
+      if (order.riderId) {
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: order.riderId,
+            role: "rider",
+            title: "Order Cancelled",
+            body: `Order #${order.trackingId} has been cancelled by Admin.`,
+            link: "/delivery"
+          })
+        });
+      }
+    } catch (e) {
+      alert("Failed to cancel order: " + e.message);
+    }
+  };
+
+  const refundPayment = async (orderId, order) => {
+    if (!confirm(`Process manual refund for Order #${order.trackingId}?`)) return;
+    try {
+      await updateDoc(doc(db, "orders", orderId), {
+        paymentStatus: "Refunded"
+      });
+      alert("Payment refunded successfully.");
+
+      fetch("/api/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: order.userId,
+          role: "customer",
+          title: "Refund Processed 💰",
+          body: `Refund for your order #${order.trackingId} has been processed successfully.`,
+          link: "/shop?section=orders"
+        })
+      });
+    } catch (e) {
+      alert("Failed to refund payment: " + e.message);
+    }
+  };
+
+  const reassignRider = async (orderId, order) => {
+    if (!confirm(`Reassign rider for Order #${order.trackingId}? This resets status back to 'Rider Searching'.`)) return;
+    try {
+      await updateDoc(doc(db, "orders", orderId), {
+        riderId: null,
+        riderName: null,
+        riderPhone: null,
+        status: "Rider Searching"
+      });
+      alert("Rider reassigned successfully. Status reset to Rider Searching.");
+
+      if (order.riderId) {
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: order.riderId,
+            role: "rider",
+            title: "Order Unassigned",
+            body: `Order #${order.trackingId} has been unassigned.`,
+            link: "/delivery"
+          })
+        });
+      }
+    } catch (e) {
+      alert("Failed to reassign rider: " + e.message);
+    }
   };
 
   // Banner Management Functions
@@ -1056,17 +1172,257 @@ export default function AdminPage() {
                 ) : (
                   orders.map((o) => {
                     const pillCls = o.status==="Delivered"?"pill-delivered":o.status==="Pending"?"pill-pending":o.status==="Shipped"?"pill-shipped":"pill-pending";
+                    const isExpanded = !!expandedOrders[o.id];
+                    
+                    // Financial variables calculation
+                    const cartTotalVal = o.cartTotal || (o.total - (o.deliveryFee || 0));
+                    const comm = o.platformCommission !== undefined ? o.platformCommission : Math.round(cartTotalVal * 0.10);
+                    const delChg = o.deliveryCharges !== undefined ? o.deliveryCharges : (o.deliveryFee || calcDeliveryFee(o.distanceKm));
+                    const gateChg = o.gatewayCharges !== undefined ? o.gatewayCharges : (o.paymentMethod === "UPI" ? Math.round(o.total * 0.02) : 20);
+                    const payout = o.sellerPayout !== undefined ? o.sellerPayout : (cartTotalVal - comm - delChg - gateChg);
+
+                    const sellerProfile = sellers.find(s => s.id === o.sellerId);
+                    const riderProfile = deliveryAgents.find(d => d.id === o.riderId);
+                    const userProfile = users.find(u => u.id === o.userId);
+
                     return (
-                      <div key={o.id} className="adm-data-card">
+                      <div key={o.id} className="adm-data-card" style={{ cursor: "pointer", transition: "all 0.3s ease" }} onClick={() => setExpandedOrders(prev => ({ ...prev, [o.id]: !prev[o.id] }))}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                           <span style={{fontSize:10.5,fontWeight:700,color:"var(--adm-t4)",letterSpacing:"0.1em"}}>ORDER #{o.trackingId}</span>
-                          <span className={`adm-pill ${pillCls}`}>{o.status}</span>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span className={`adm-pill ${pillCls}`}>{o.status}</span>
+                            <i className={`fas fa-chevron-${isExpanded ? "up" : "down"}`} style={{ fontSize: 11, color: "var(--adm-t4)" }} />
+                          </div>
                         </div>
                         <div style={{fontWeight:600,fontSize:14,color:"var(--adm-t1)",marginBottom:4}}>{o.userName}</div>
                         <div style={{fontSize:12,color:"var(--adm-t4)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginBottom:12}}>
                           <i className="fas fa-location-dot" style={{marginRight:6,color:"var(--adm-t5)"}}/>{o.userAddress}
                         </div>
-                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:11,borderTop:"1px solid var(--adm-line)"}}>
+                        
+                        {/* Expanded details container */}
+                        {isExpanded && (
+                          <div onClick={(e) => e.stopPropagation()} style={{ cursor: "default", display: "flex", flexDirection: "column", gap: 12 }}>
+                            {/* Items List */}
+                            <div style={{ borderTop: "1px solid var(--adm-line)", paddingTop: 12 }}>
+                              <h4 style={{ fontSize: 11, fontWeight: 800, color: "var(--adm-t3)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Purchased Items ({o.items?.length || 0})</h4>
+                              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                {o.items?.map((item, idx) => (
+                                  <div key={idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, color: "var(--adm-t2)" }}>
+                                    <div style={{ display: "flex", flexDirection: "column" }}>
+                                      <span style={{ fontWeight: 600 }}>{item.name}</span>
+                                      <span style={{ fontSize: 10, color: "var(--adm-t4)" }}>
+                                        {[item.size && `Size: ${item.size}`, item.color && `Color: ${item.color}`].filter(Boolean).join(" · ")}
+                                      </span>
+                                    </div>
+                                    <div style={{ fontSize: 11, color: "var(--adm-t3)", fontWeight: 600 }}>{item.qty || item.quantity || 1} x ₹{item.price}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Actors Grid: Buyer, Seller, Rider */}
+                            <div style={{ borderTop: "1px solid var(--adm-line)", paddingTop: 12, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+                              {/* Buyer Section */}
+                              <div style={{ background: "rgba(140, 98, 10, 0.03)", padding: 10, borderRadius: 10, border: "1px solid rgba(140, 98, 10, 0.08)" }}>
+                                <h4 style={{ fontSize: 10, fontWeight: 800, color: "var(--adm-gold-hi)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em", display: "flex", alignItems: "center", gap: 4 }}>
+                                  <i className="fas fa-user-tag" /> Buyer
+                                </h4>
+                                <div style={{ fontSize: 12, color: "var(--adm-t2)", fontWeight: 700 }}>{o.userName || userProfile?.name || "Unknown Buyer"}</div>
+                                {(o.userPhone || userProfile?.phone) && (
+                                  <div style={{ fontSize: 11, color: "var(--adm-t3)", marginTop: 4 }}>
+                                    <i className="fas fa-phone" style={{ marginRight: 6, color: "var(--adm-t4)" }}/>
+                                    {o.userPhone || userProfile?.phone}
+                                  </div>
+                                )}
+                                {(o.userEmail || userProfile?.email) && (
+                                  <div style={{ fontSize: 10, color: "var(--adm-t4)", marginTop: 3, wordBreak: "break-all" }}>
+                                    <i className="fas fa-envelope" style={{ marginRight: 6, color: "var(--adm-t4)" }}/>
+                                    {o.userEmail || userProfile?.email}
+                                  </div>
+                                )}
+                                <div style={{ fontSize: 10, color: "var(--adm-t3)", marginTop: 6, borderTop: "1px dashed var(--adm-line)", paddingTop: 4 }}>
+                                  <i className="fas fa-map-marker-alt" style={{ marginRight: 4 }} />
+                                  {o.userAddress || "No address"}
+                                </div>
+                              </div>
+
+                              {/* Seller Section */}
+                              <div style={{ background: "rgba(10, 140, 134, 0.03)", padding: 10, borderRadius: 10, border: "1px solid rgba(10, 140, 134, 0.08)" }}>
+                                <h4 style={{ fontSize: 10, fontWeight: 800, color: "var(--adm-jade)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em", display: "flex", alignItems: "center", gap: 4 }}>
+                                  <i className="fas fa-store" /> Seller
+                                </h4>
+                                <div style={{ fontSize: 12, color: "var(--adm-t2)", fontWeight: 700 }}>{sellerProfile?.storeName || o.sellerName || "Unknown Seller"}</div>
+                                {(sellerProfile?.phone || sellerProfile?.ownerName) && (
+                                  <div style={{ fontSize: 11, color: "var(--adm-t3)", marginTop: 4 }}>
+                                    <i className="fas fa-user" style={{ marginRight: 6, color: "var(--adm-t4)" }}/>
+                                    {sellerProfile?.ownerName || "Owner"}
+                                  </div>
+                                )}
+                                {sellerProfile?.phone && (
+                                  <div style={{ fontSize: 11, color: "var(--adm-t3)", marginTop: 3 }}>
+                                    <i className="fas fa-phone" style={{ marginRight: 6, color: "var(--adm-t4)" }}/>
+                                    {sellerProfile.phone}
+                                  </div>
+                                )}
+                                <div style={{ fontSize: 10, color: "var(--adm-t3)", marginTop: 6, borderTop: "1px dashed var(--adm-line)", paddingTop: 4 }}>
+                                  <i className="fas fa-location-arrow" style={{ marginRight: 4 }} />
+                                  {sellerProfile?.locality || sellerProfile?.shopAddress || "No locality info"}
+                                </div>
+                              </div>
+
+                              {/* Rider Section */}
+                              <div style={{ background: "rgba(30, 64, 175, 0.03)", padding: 10, borderRadius: 10, border: "1px solid rgba(30, 64, 175, 0.08)" }}>
+                                <h4 style={{ fontSize: 10, fontWeight: 800, color: "var(--adm-saph)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em", display: "flex", alignItems: "center", gap: 4 }}>
+                                  <i className="fas fa-motorcycle" /> Rider
+                                </h4>
+                                {o.riderName || riderProfile?.name ? (
+                                  <>
+                                    <div style={{ fontSize: 12, color: "var(--adm-t2)", fontWeight: 700 }}>{o.riderName || riderProfile?.name}</div>
+                                    {(o.riderPhone || riderProfile?.phone) && (
+                                      <div style={{ fontSize: 11, color: "var(--adm-t3)", marginTop: 4 }}>
+                                        <i className="fas fa-phone" style={{ marginRight: 6, color: "var(--adm-t4)" }}/>
+                                        {o.riderPhone || riderProfile?.phone}
+                                      </div>
+                                    )}
+                                    {riderProfile?.vehicleType && (
+                                      <div style={{ fontSize: 11, color: "var(--adm-t4)", marginTop: 3 }}>
+                                        <i className="fas fa-truck-pickup" style={{ marginRight: 6 }}/>
+                                        {riderProfile.vehicleType}
+                                      </div>
+                                    )}
+                                    <div style={{ fontSize: 10, marginTop: 6, borderTop: "1px dashed var(--adm-line)", paddingTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: riderProfile?.online ? "#10b981" : "#94a3b8" }}></span>
+                                      <span style={{ color: riderProfile?.online ? "#10b981" : "#64748b", fontWeight: 600 }}>{riderProfile?.online ? "Online" : "Offline"}</span>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                    <div style={{ fontSize: 11, color: "var(--adm-t4)", fontStyle: "italic" }}>
+                                      {o.status === "Rider Searching" ? "🔍 Finding nearby riders..." : "No rider assigned"}
+                                    </div>
+                                    {o.status === "Rider Searching" && (
+                                      <div style={{ fontSize: 10, color: "var(--adm-saff)", fontWeight: 600 }}>
+                                        ⚡ Broadcast sent to fleet
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Live Status Timeline & Map Section */}
+                            <div style={{ borderTop: "1px solid var(--adm-line)", paddingTop: 12 }}>
+                              <h4 style={{ fontSize: 11, fontWeight: 800, color: "var(--adm-t3)", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em", display: "flex", alignItems: "center", gap: 5 }}>
+                                <i className="fas fa-circle-notch fa-spin" style={{ color: "var(--adm-em)" }} /> Live Status & Progress
+                              </h4>
+                              
+                              {/* Timeline visualization */}
+                              {(() => {
+                                const statuses = ["Pending", "Seller Accepted", "Rider Accepted", "Preparing", "Ready For Pickup", "Picked Up", "Out For Delivery", "Delivered"];
+                                const currentIdx = statuses.indexOf(o.status);
+                                return (
+                                  <div style={{ padding: "8px 12px", background: "var(--adm-parch)", borderRadius: 12, border: "1px solid var(--adm-line)" }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", position: "relative", marginBottom: 6 }}>
+                                      {/* Horizontal connecting line */}
+                                      <div style={{ position: "absolute", top: 10, left: 15, right: 15, height: 2, background: "var(--adm-line2)", zIndex: 1 }} />
+                                      <div style={{ position: "absolute", top: 10, left: 15, width: `${(Math.max(0, currentIdx) / (statuses.length - 1)) * 100}%`, height: 2, background: "var(--adm-jade)", zIndex: 2, transition: "width 0.4s ease" }} />
+
+                                      {statuses.map((s, idx) => {
+                                        const isCompleted = idx < currentIdx;
+                                        const isCurrent = idx === currentIdx;
+                                        const isUpcoming = idx > currentIdx;
+                                        
+                                        let nodeColor = "var(--adm-t4)";
+                                        let nodeBg = "var(--white)";
+                                        let nodeBorder = "2px solid var(--adm-line2)";
+                                        let icon = "fa-circle";
+
+                                        if (isCompleted) {
+                                          nodeColor = "var(--adm-jade)";
+                                          nodeBg = "var(--white)";
+                                          nodeBorder = "2px solid var(--adm-jade)";
+                                          icon = "fa-check";
+                                        } else if (isCurrent) {
+                                          nodeColor = "var(--adm-em)";
+                                          nodeBg = "var(--adm-em)";
+                                          nodeBorder = "2px solid var(--adm-em)";
+                                          icon = "fa-location-dot animate-bounce";
+                                        }
+
+                                        return (
+                                          <div key={s} style={{ display: "flex", flexDirection: "column", alignItems: "center", zIndex: 3, position: "relative", width: 50 }}>
+                                            <div style={{
+                                              width: 22, height: 22, borderRadius: "50%", background: nodeBg, border: nodeBorder,
+                                              display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: isCurrent ? "#fff" : nodeColor
+                                            }}>
+                                              <i className={`fas ${icon}`} />
+                                            </div>
+                                            <span style={{ fontSize: 8.5, fontWeight: isCurrent ? 800 : 500, color: isCurrent ? "var(--adm-t1)" : "var(--adm-t4)", marginTop: 6, textAlign: "center", lineHeight: 1.1, whiteSpace: "normal", wordBreak: "break-word", width: 60 }}>
+                                              {s === "Pending" ? "Placed" : s === "Seller Accepted" ? "Accepted" : s}
+                                            </span>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+
+                              {/* Live Tracking Map if rider is online & has liveLocation */}
+                              {riderProfile?.liveLocation && (
+                                <div style={{ marginTop: 12 }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                                    <span style={{ fontSize: 11, fontWeight: 700, color: "var(--adm-saph)" }}>
+                                      <i className="fas fa-location-arrow animate-pulse" style={{ marginRight: 6 }} /> Active Route Tracking
+                                    </span>
+                                    <span style={{ fontSize: 10, background: "#ecfdf5", color: "#10b981", padding: "2px 6px", borderRadius: 4, fontWeight: 700 }}>
+                                      Rider Connected
+                                    </span>
+                                  </div>
+                                  <div style={{ border: "1px solid var(--adm-line)", borderRadius: 14, overflow: "hidden", height: 180, position: "relative" }}>
+                                    <LiveMap lat={riderProfile.liveLocation.lat} lng={riderProfile.liveLocation.lng} label={`Rider: ${riderProfile.name}`} />
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Financial Receipt Grid */}
+                            <div style={{ borderTop: "1px solid var(--adm-line)", paddingTop: 12, background: "rgba(15,23,42,0.02)", borderRadius: 12, padding: 12, border: "1px solid var(--adm-line)" }}>
+                              <h4 style={{ fontSize: 10, fontWeight: 800, color: "var(--adm-t3)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Financial Details</h4>
+                              <div style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 11, color: "var(--adm-t2)" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between" }}><span>Cart Total:</span> <span style={{ fontWeight: 600 }}>₹{cartTotalVal}</span></div>
+                                <div style={{ display: "flex", justifyContent: "space-between" }}><span>Commission (10%):</span> <span style={{ fontWeight: 600, color: "var(--adm-rouge)" }}>-₹{comm}</span></div>
+                                <div style={{ display: "flex", justifyContent: "space-between" }}><span>Delivery Charges:</span> <span style={{ fontWeight: 600, color: "var(--adm-rouge)" }}>-₹{delChg}</span></div>
+                                <div style={{ display: "flex", justifyContent: "space-between" }}><span>Gateway Charges:</span> <span style={{ fontWeight: 600, color: "var(--adm-rouge)" }}>-₹{gateChg}</span></div>
+                                <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px dashed var(--adm-line2)", paddingTop: 5, marginTop: 3, fontSize: 12, fontWeight: 700, color: "var(--adm-jade)" }}>
+                                  <span>Seller Payout:</span>
+                                  <span>₹{payout}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Dynamic Action Buttons */}
+                            <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+                              {o.status !== "Delivered" && o.status !== "Cancelled" && o.status !== "Refunded" && o.status !== "Return Completed" && o.status !== "Exchange Completed" && (
+                                <button onClick={(e) => { e.stopPropagation(); cancelOrder(o.id, o); }} style={{ flex: 1, padding: "8px 10px", background: "#fee2e2", color: "#ef4444", border: "1px solid #fecdd3", borderRadius: 10, fontSize: 11, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 4, transition: "background 0.2s" }} onMouseEnter={e => e.currentTarget.style.background = "#fecdd3"} onMouseLeave={e => e.currentTarget.style.background = "#fee2e2"}>
+                                  <i className="fas fa-ban" /> Cancel Order
+                                </button>
+                              )}
+                              {o.riderId && ["Rider Accepted", "Preparing", "Ready For Pickup"].includes(o.status) && (
+                                <button onClick={(e) => { e.stopPropagation(); reassignRider(o.id, o); }} style={{ flex: 1, padding: "8px 10px", background: "#fef3c7", color: "#d97706", border: "1px solid #fde68a", borderRadius: 10, fontSize: 11, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 4, transition: "background 0.2s" }} onMouseEnter={e => e.currentTarget.style.background = "#fde68a"} onMouseLeave={e => e.currentTarget.style.background = "#fef3c7"}>
+                                  <i className="fas fa-rotate" /> Reassign Rider
+                                </button>
+                              )}
+                              {(o.status === "Cancelled" || o.status.includes("Return") || o.status.includes("Refund") || o.status === "Rejected") && o.paymentMethod !== "COD" && o.paymentStatus !== "Refunded" && (
+                                <button onClick={(e) => { e.stopPropagation(); refundPayment(o.id, o); }} style={{ flex: 1, padding: "8px 10px", background: "#e0f2fe", color: "#0284c7", border: "1px solid #bae6fd", borderRadius: 10, fontSize: 11, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 4, transition: "background 0.2s" }} onMouseEnter={e => e.currentTarget.style.background = "#bae6fd"} onMouseLeave={e => e.currentTarget.style.background = "#e0f2fe"}>
+                                  <i className="fas fa-indian-rupee-sign" /> Refund Payment
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:11,borderTop:"1px solid var(--adm-line)",marginTop: isExpanded ? 12 : 0}}>
                           <span style={{fontSize:12,color:"var(--adm-t4)"}}>{o.items?.length||0} items</span>
                           <span style={{fontFamily:"var(--font-d)",fontSize:20,fontWeight:700,color:"var(--adm-jade)"}}>₹{o.total}</span>
                         </div>
@@ -1489,6 +1845,8 @@ export default function AdminPage() {
                                 const fd = new FormData();
                                 fd.append("image", fileToUpload);
                                 const res = await fetch("/api/upload", { method: "POST", body: fd });
+                                const ct = res.headers.get("content-type") || "";
+                                if (!ct.includes("application/json")) throw new Error(`Server error (${res.status}). Please try again.`);
                                 const json = await res.json();
                                 if (res.ok && json.url) {
                                   setBannerForm(prev => ({ ...prev, imageUrl: json.url }));

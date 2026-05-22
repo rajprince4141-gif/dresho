@@ -31,7 +31,7 @@ export async function POST(req) {
       await adminDb.collection('broadcast_notifications').add(notificationPayload);
 
       // Get all online riders (filter approved in JS)
-      const ridersSnap = await adminDb.collection('riders').where('online', '==', true).get();
+      const ridersSnap = await adminDb.collection('delivery_profile').where('online', '==', true).get();
       ridersSnap.forEach((doc) => {
         const rData = doc.data();
         if (rData.approved && rData.fcmToken) pushTokens.push(rData.fcmToken);
@@ -68,7 +68,7 @@ export async function POST(req) {
       notificationPayload.type = "announcement";
       await adminDb.collection('broadcast_notifications').add(notificationPayload);
 
-      const sellersSnap = await adminDb.collection('sellers').get();
+      const sellersSnap = await adminDb.collection('sellers_profile').get();
       sellersSnap.forEach((doc) => {
         if (doc.data().fcmToken) pushTokens.push(doc.data().fcmToken);
       });
@@ -81,8 +81,8 @@ export async function POST(req) {
 
       const [uSnap, sSnap, rSnap] = await Promise.all([
         adminDb.collection('users').get(),
-        adminDb.collection('sellers').get(),
-        adminDb.collection('riders').get()
+        adminDb.collection('sellers_profile').get(),
+        adminDb.collection('delivery_profile').get()
       ]);
       uSnap.forEach(d => { if (d.data().fcmToken) pushTokens.push(d.data().fcmToken); });
       sSnap.forEach(d => { if (d.data().fcmToken) pushTokens.push(d.data().fcmToken); });
@@ -127,8 +127,8 @@ export async function POST(req) {
 
       // Lookup FCM Token based on role
       let collectionName = "users";
-      if (role === "seller") collectionName = "sellers";
-      if (role === "rider") collectionName = "riders";
+      if (role === "seller") collectionName = "sellers_profile";
+      if (role === "rider" || role === "delivery") collectionName = "delivery_profile";
 
       const userDoc = await adminDb.collection(collectionName).doc(userId).get();
       if (userDoc.exists) {
