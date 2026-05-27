@@ -4,7 +4,13 @@ export const maxDuration = 30; // 30 seconds limit
 
 export async function POST(req) {
   try {
-    const { userId, role, title, body, link, data, type = "single", segment } = await req.json();
+    if (!adminDb || !adminMessaging) {
+      return Response.json({ 
+        error: 'Firebase Admin is not initialized. Please check your environment variables.' 
+      }, { status: 500 });
+    }
+
+    const { userId, role, title, body, link, data, type, segment, token } = await req.json();
 
     if (!title || !body) {
       return Response.json({ error: 'Title and body are required' }, { status: 400 });
@@ -22,8 +28,18 @@ export async function POST(req) {
 
     let pushTokens = [];
 
+    // --- DIRECT TOKEN PUSH ---
+    if (token) {
+      pushTokens.push(token);
+      if (userId) {
+        notificationPayload.userId = userId;
+        notificationPayload.role = role || "customer";
+        // Save to Database for In-App Notification Center
+        await adminDb.collection('notifications').add(notificationPayload);
+      }
+    }
     // --- BROADCAST TO ALL RIDERS (e.g., "New Delivery Available") ---
-    if (type === "broadcast_riders") {
+    else if (type === "broadcast_riders") {
       notificationPayload.role = "rider";
       notificationPayload.type = "delivery_available";
       
@@ -51,14 +67,9 @@ export async function POST(req) {
         if (!uData.fcmToken) return;
         
         // Basic Segmentation Logic
-        // If segment is "all" or "customers", send to everyone.
-        // If segment is "segment_men", only send if they have a preference or we default to true for demo.
-        // In a production app, we would check uData.preferences.includes("menswear"). 
-        // For this demo, we will simulate the segment check:
-        if (segment === "segment_men" && uData.gender !== "Male") return; // example
-        if (segment === "segment_women" && uData.gender !== "Female") return; // example
+        if (segment === "segment_men" && uData.gender !== "Male") return;
+        if (segment === "segment_women" && uData.gender !== "Female") return;
         
-        // If it passes or no segment matches exactly, we push it:
         pushTokens.push(uData.fcmToken);
       });
     }
@@ -107,7 +118,6 @@ export async function POST(req) {
       });
 
       if (pushTokens.length > 0) {
-        // Only save to DB if there are people to notify
         await adminDb.collection('broadcast_notifications').add(notificationPayload);
         
         const batch = adminDb.batch();
@@ -118,7 +128,7 @@ export async function POST(req) {
       }
     }
     // --- SINGLE TARGET ---
-    else if (type === "single" && userId) {
+    else if ((type === "single" || !type) && userId) {
       notificationPayload.userId = userId;
       notificationPayload.role = role || "customer";
       
@@ -141,15 +151,31 @@ export async function POST(req) {
       return Response.json({ error: 'Invalid parameters for single/broadcast push' }, { status: 400 });
     }
 
+    // Deduplicate push tokens to avoid duplicate sends to the same device
+    pushTokens = [...new Set(pushTokens)];
+
     // SEND PUSH NOTIFICATIONS IF TOKENS EXIST
     let pushResult = { successCount: 0, failureCount: 0 };
     if (pushTokens.length > 0) {
+      // FCM data values MUST be strings
+      const sanitizedData = {};
+      if (data && typeof data === 'object') {
+        Object.entries(data).forEach(([key, val]) => {
+          if (val !== undefined && val !== null) {
+            sanitizedData[key] = String(val);
+          }
+        });
+      }
+      if (link) {
+        sanitizedData.link = String(link);
+      }
+
       const message = {
         notification: {
           title: title,
           body: body,
         },
-        data: data || {},
+        data: sanitizedData,
       };
 
       if (pushTokens.length === 1) {
@@ -176,7 +202,7 @@ export async function POST(req) {
 
     return Response.json({ 
       success: true, 
-      savedToDb: type === "single",
+      savedToDb: (type === "single" || !type) && !!userId,
       pushSent: pushTokens.length > 0,
       pushResult 
     });

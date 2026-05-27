@@ -85,14 +85,14 @@ export default function SellerPage() {
   // Data listeners
   useEffect(() => {
     if (!user) return;
-    
+
     // My banner requests
     const bq = query(collection(db, "banner_requests"), where("sellerId", "==", user.uid));
     const unsub3 = onSnapshot(bq, (snap) => {
       const r = []; snap.forEach((d) => r.push({ id: d.id, ...d.data() }));
       r.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       setMyBannerRequests(r);
-    });
+    }, (err) => { console.error("Seller: Error listening to banner_requests:", err); });
     return () => { unsub3(); };
   }, [user]);
 
@@ -100,12 +100,12 @@ export default function SellerPage() {
     try {
       const isReturn = o.status === "Return Requested";
       const newStatus = isReturn ? "Return Approved" : "Exchange Approved";
-      await updateDoc(doc(db, "orders", o.id), { 
+      await updateDoc(doc(db, "orders", o.id), {
         status: newStatus,
         returnApprovedAt: new Date()
       });
       alert(`Request approved! Reverse logistics rider will be assigned to pick up the item.`);
-      
+
       // Notify customer
       if (o.userId) {
         fetch("/api/notify", {
@@ -121,7 +121,7 @@ export default function SellerPage() {
           })
         }).catch(err => console.error("Notification failed", err));
       }
-    } catch(e) {
+    } catch (e) {
       alert("Error approving request: " + e.message);
     }
   };
@@ -132,13 +132,13 @@ export default function SellerPage() {
     try {
       const isReturn = o.status === "Return Requested";
       const newStatus = isReturn ? "Return Rejected" : "Exchange Rejected";
-      await updateDoc(doc(db, "orders", o.id), { 
+      await updateDoc(doc(db, "orders", o.id), {
         status: newStatus,
         returnRejectionReason: reason,
         returnRejectedAt: new Date()
       });
       alert(`Request rejected.`);
-      
+
       // Notify customer
       if (o.userId) {
         fetch("/api/notify", {
@@ -147,15 +147,111 @@ export default function SellerPage() {
           body: JSON.stringify({
             type: "single",
             userId: o.userId,
-            role: "customer",
-            title: `Request Rejected ❌`,
             body: `Your request for order #${o.trackingId} was rejected. Reason: ${reason}`,
             link: "/shop?tab=orders"
           })
         }).catch(err => console.error("Notification failed", err));
       }
-    } catch(e) {
+    } catch (e) {
       alert("Error rejecting request: " + e.message);
+    }
+  };
+
+  const handleAcceptOrder = async (orderId) => {
+    try {
+      await updateDoc(doc(db, "orders", orderId), {
+        status: "Rider Searching",
+        acceptedAt: new Date()
+      });
+      alert("Order accepted! 🚀 Finding nearby riders...");
+      const order = orders.find(o => o.id === orderId);
+      if (order?.userId) {
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "single",
+            userId: order.userId,
+            role: "customer",
+            title: "Order Accepted! 🎉",
+            body: `Your order #${order.trackingId} has been accepted by the store. Finding rider...`,
+            link: "/shop?tab=orders"
+          })
+        }).catch(err => console.error("Notification failed", err));
+      }
+    } catch (e) {
+      alert("Failed to accept order: " + e.message);
+    }
+  };
+
+  const handleRejectOrder = async (orderId) => {
+    const reason = prompt("Enter reason for rejecting this order:");
+    if (!reason) return;
+    try {
+      await updateDoc(doc(db, "orders", orderId), {
+        status: "Cancelled",
+        rejectionReason: reason,
+        rejectedAt: new Date()
+      });
+      alert("Order rejected.");
+      const order = orders.find(o => o.id === orderId);
+      if (order?.userId) {
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "single",
+            userId: order.userId,
+            role: "customer",
+            title: "Order Rejected ❌",
+            body: `Your order #${order.trackingId} was rejected. Reason: ${reason}`,
+            link: "/shop?tab=orders"
+          })
+        }).catch(err => console.error("Notification failed", err));
+      }
+    } catch (e) {
+      alert("Failed to reject order: " + e.message);
+    }
+  };
+
+  const handleMarkReady = async (orderId) => {
+    try {
+      await updateDoc(doc(db, "orders", orderId), {
+        status: "Ready For Pickup",
+        readyAt: new Date()
+      });
+      alert("Order marked as ready! 📦 Rider will pick it up shortly.");
+      const order = orders.find(o => o.id === orderId);
+      if (order?.userId) {
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "single",
+            userId: order.userId,
+            role: "customer",
+            title: "Order Packed! 📦",
+            body: `Your order #${order.trackingId} has been packed and is ready for pickup.`,
+            link: "/shop?tab=orders"
+          })
+        }).catch(err => console.error("Notification failed", err));
+      }
+      if (order?.riderId) {
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "single",
+            userId: order.riderId,
+            role: "rider",
+            title: "Order Ready! 📦",
+            body: `Order #${order.trackingId} is packed and ready for pickup at ${sellerData?.storeName}.`,
+            link: "/delivery"
+          })
+        }).catch(err => console.error("Notification failed", err));
+      }
+    } catch (e) {
+      alert("Failed to update status: " + e.message);
     }
   };
 
@@ -269,13 +365,13 @@ export default function SellerPage() {
   const handleImageSelect = (e) => {
     const files = Array.from(e.target.files);
     if (!files.length) return;
-    
+
     if (pImageFiles.length + files.length > 5) {
       return alert("You can only upload up to 5 images per product.");
     }
 
     setPImageFiles(prev => [...prev, ...files]);
-    
+
     files.forEach(file => {
       const reader = new FileReader();
       reader.onload = (ev) => {
@@ -283,7 +379,7 @@ export default function SellerPage() {
       };
       reader.readAsDataURL(file);
     });
-    
+
     // Reset input so the same files can be selected again if needed
     e.target.value = null;
   };
@@ -325,7 +421,7 @@ export default function SellerPage() {
         const url = await uploadToImgBB(file);
         imageUrls.push(url);
       }
-      
+
       await addDoc(collection(db, "products"), {
         sellerId: user.uid, storeName: sellerData.storeName, name: pName,
         price: parseFloat(pPrice), stock: parseInt(pStock) || 0, category: pCategory,
@@ -359,9 +455,9 @@ export default function SellerPage() {
             {/* Back Button */}
             {authStep !== "welcome" && (
               <div style={{ position: "absolute", top: 16, left: 20, cursor: "pointer", color: "var(--navy)", zIndex: 10 }} onClick={() => {
-                if(authStep === "google") setAuthStep("welcome");
-                else if(authStep === "phone") setAuthStep("google");
-                else if(authStep === "store") setAuthStep("phone");
+                if (authStep === "google") setAuthStep("welcome");
+                else if (authStep === "phone") setAuthStep("google");
+                else if (authStep === "store") setAuthStep("phone");
               }}>
                 <i className="fas fa-arrow-left" style={{ fontSize: 18 }} />
               </div>
@@ -385,7 +481,7 @@ export default function SellerPage() {
                   </h1>
                   <h2 style={{ fontSize: 32, fontWeight: 900, marginBottom: 12, lineHeight: 1.2 }}>Start Selling on Dresho</h2>
                   <p style={{ fontSize: 14, color: "rgba(255,255,255,0.8)", marginBottom: 32, lineHeight: 1.5 }}>Grow your fashion business with fast deliveries and more customers nearby.</p>
-                  
+
                   <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
                       <div style={{ width: 40, height: 40, borderRadius: 12, background: "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}><i className="fas fa-bolt" style={{ color: "#facc15", fontSize: 18 }} /></div>
@@ -410,7 +506,7 @@ export default function SellerPage() {
                     </div>
                   </div>
                 </div>
-                
+
                 {typeof window !== "undefined" && localStorage.getItem("dreshoSavedEmail") && (
                   <button className="auth-btn-primary" onClick={() => handleGoogleSignIn(localStorage.getItem("dreshoSavedEmail"))} style={{ height: 60, fontSize: 16, borderRadius: 16, background: "var(--navy)", boxShadow: "0 8px 24px rgba(15,23,42,0.25)" }}>
                     Continue as {localStorage.getItem("dreshoSavedEmail")}
@@ -431,7 +527,7 @@ export default function SellerPage() {
                   <h2 style={{ fontSize: 24, fontWeight: 900, color: "var(--navy)", marginBottom: 8, lineHeight: 1.3 }}>Join thousands of sellers on Dresho</h2>
                   <p style={{ fontSize: 14, color: "var(--text-muted)", padding: "0 20px" }}>Sign in with your Google account to create your store.</p>
                 </div>
-                
+
                 <button onClick={handleGoogleSignIn} disabled={authLoading}
                   style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, width: "100%", padding: "16px", borderRadius: 16, border: "2px solid #e2e8f0", background: "var(--white)", cursor: authLoading ? "not-allowed" : "pointer", fontSize: 16, fontWeight: 700, color: "var(--navy)", transition: "all 0.2s" }}
                 >
@@ -459,7 +555,7 @@ export default function SellerPage() {
                   <h2 style={{ fontSize: 26, fontWeight: 900, color: "var(--navy)", marginBottom: 10 }}>Enter Mobile Number</h2>
                   <p style={{ fontSize: 14, color: "var(--text-muted)", lineHeight: 1.5 }}>We will use this number to contact you about your store and orders.</p>
                 </div>
-                
+
                 <div style={{ position: "relative" }}>
                   <span style={{ position: "absolute", left: 20, top: "50%", transform: "translateY(-50%)", color: "var(--navy)", fontWeight: 700, fontSize: 16 }}>+91</span>
                   <input type="tel" maxLength={10} placeholder="98765 43210" value={authPhone} onChange={(e) => setAuthPhone(e.target.value.replace(/\D/g, ""))} style={{ width: "100%", padding: "20px 20px 20px 60px", borderRadius: 16, border: "2px solid " + (authPhone.length === 10 ? "#10b981" : "#e2e8f0"), fontSize: 18, fontWeight: 700, letterSpacing: 1, outline: "none", transition: "all 0.2s" }} />
@@ -570,7 +666,7 @@ export default function SellerPage() {
             </div>
             <h2 style={{ fontSize: 24, fontWeight: 900, color: "var(--navy)", marginBottom: 12 }}>Registration Successful!</h2>
             <p style={{ fontSize: 14, color: "var(--text-muted)", lineHeight: 1.6, marginBottom: 32 }}>Your store has been registered successfully.</p>
-            
+
             <div style={{ background: "rgba(16,185,129,0.08)", padding: "16px 20px", borderRadius: 16, border: "1px solid rgba(16,185,129,0.2)", marginBottom: 32, textAlign: "left" }}>
               <div style={{ display: "flex", gap: 12 }}>
                 <i className="fas fa-file-invoice" style={{ color: "#10b981", marginTop: 2, fontSize: 18 }} />
@@ -580,7 +676,7 @@ export default function SellerPage() {
                 </div>
               </div>
             </div>
-            
+
             <button className="auth-btn-primary" onClick={() => setAuthStep("dashboard")} style={{ width: "100%", height: 56, borderRadius: 16, fontSize: 16, background: "var(--navy)", boxShadow: "0 8px 24px rgba(15,23,42,0.2)" }}>
               Go to Dashboard
             </button>
@@ -660,38 +756,60 @@ export default function SellerPage() {
           </div>
 
           {/* Quick Access */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 32 }}>
-            <button onClick={() => setShowModal(true)} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer" }}>
-              <div style={{ width: 64, height: 64, borderRadius: 18, background: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, color: "#10b981", boxShadow: "0 4px 12px rgba(0,0,0,0.04)", border: "1px solid #f1f5f9" }}>
+          <div style={{
+            display: "flex",
+            gap: 12,
+            overflowX: "auto",
+            paddingBottom: 10,
+            marginBottom: 32,
+            scrollbarWidth: "none",
+            msOverflowStyle: "none",
+            WebkitOverflowScrolling: "touch"
+          }} className="no-scrollbar">
+            <style>{`
+              .no-scrollbar::-webkit-scrollbar {
+                display: none;
+              }
+            `}</style>
+
+            <button onClick={() => setShowModal(true)} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", flex: "0 0 auto", width: 72 }}>
+              <div style={{ width: 60, height: 60, borderRadius: 16, background: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, color: "#10b981", boxShadow: "0 4px 12px rgba(0,0,0,0.04)", border: "1px solid #f1f5f9" }}>
                 <i className="fas fa-plus-circle" />
               </div>
               <span style={{ fontSize: 11, fontWeight: 700, color: "#0f172a" }}>Add Item</span>
             </button>
-            <button onClick={() => setTab("inventory")} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer" }}>
-              <div style={{ width: 64, height: 64, borderRadius: 18, background: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, color: "#f97316", boxShadow: "0 4px 12px rgba(0,0,0,0.04)", border: "1px solid #f1f5f9", ...(tab === "inventory" ? {border: "2px solid #f97316", background: "#fff7ed"} : {}) }}>
+            <button onClick={() => setTab("inventory")} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", flex: "0 0 auto", width: 72 }}>
+              <div style={{ width: 60, height: 60, borderRadius: 16, background: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, color: "#f97316", boxShadow: "0 4px 12px rgba(0,0,0,0.04)", border: "1px solid #f1f5f9", ...(tab === "inventory" ? { border: "2px solid #f97316", background: "#fff7ed" } : {}) }}>
                 <i className="fas fa-box-open" />
               </div>
               <span style={{ fontSize: 11, fontWeight: 700, color: "#0f172a" }}>Products</span>
             </button>
-            <button onClick={() => setTab("orders")} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer" }}>
-              <div style={{ width: 64, height: 64, borderRadius: 18, background: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, color: "#6366f1", boxShadow: "0 4px 12px rgba(0,0,0,0.04)", border: "1px solid #f1f5f9", ...(tab === "orders" ? {border: "2px solid #6366f1", background: "#eef2ff"} : {}) }}>
+            <button onClick={() => setTab("orders")} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", flex: "0 0 auto", width: 72 }}>
+              <div style={{ width: 60, height: 60, borderRadius: 16, background: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, color: "#6366f1", boxShadow: "0 4px 12px rgba(0,0,0,0.04)", border: "1px solid #f1f5f9", ...(tab === "orders" ? { border: "2px solid #6366f1", background: "#eef2ff" } : {}) }}>
                 <i className="fas fa-shopping-bag" />
               </div>
               <span style={{ fontSize: 11, fontWeight: 700, color: "#0f172a" }}>Orders</span>
             </button>
-            <button onClick={() => setTab("returns")} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer" }}>
-              <div style={{ width: 64, height: 64, borderRadius: 18, background: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, color: "#ef4444", boxShadow: "0 4px 12px rgba(0,0,0,0.04)", border: "1px solid #f1f5f9", ...(tab === "returns" ? {border: "2px solid #ef4444", background: "#fee2e2"} : {}) }}>
+            <button onClick={() => setTab("returns")} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", flex: "0 0 auto", width: 72 }}>
+              <div style={{ width: 60, height: 60, borderRadius: 16, background: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, color: "#ef4444", boxShadow: "0 4px 12px rgba(0,0,0,0.04)", border: "1px solid #f1f5f9", ...(tab === "returns" ? { border: "2px solid #ef4444", background: "#fee2e2" } : {}) }}>
                 <i className="fas fa-undo" />
               </div>
               <span style={{ fontSize: 11, fontWeight: 700, color: "#0f172a" }}>Returns</span>
             </button>
-            <button onClick={() => setTab("documents")} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer" }}>
-              <div style={{ width: 64, height: 64, borderRadius: 18, background: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, color: "#ec4899", boxShadow: "0 4px 12px rgba(0,0,0,0.04)", border: "1px solid #f1f5f9", ...(tab === "documents" ? {border: "2px solid #ec4899", background: "#fdf2f8"} : {}) }}>
+            <button onClick={() => setTab("documents")} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", flex: "0 0 auto", width: 72 }}>
+              <div style={{ width: 60, height: 60, borderRadius: 16, background: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, color: "#ec4899", boxShadow: "0 4px 12px rgba(0,0,0,0.04)", border: "1px solid #f1f5f9", ...(tab === "documents" ? { border: "2px solid #ec4899", background: "#fdf2f8" } : {}) }}>
                 <i className="fas fa-file-invoice" />
               </div>
               <span style={{ fontSize: 11, fontWeight: 700, color: "#0f172a" }}>Documents</span>
             </button>
+            <button onClick={() => setTab("advertise")} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", flex: "0 0 auto", width: 72 }}>
+              <div style={{ width: 60, height: 60, borderRadius: 16, background: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, color: "#0ea5e9", boxShadow: "0 4px 12px rgba(0,0,0,0.04)", border: "1px solid #f1f5f9", ...(tab === "advertise" ? { border: "2px solid #0ea5e9", background: "#e0f2fe" } : {}) }}>
+                <i className="fas fa-ad" />
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#0f172a" }}>Advertise</span>
+            </button>
           </div>
+
 
           {/* DOCUMENTS */}
           {tab === "documents" && (
@@ -701,7 +819,7 @@ export default function SellerPage() {
                 <h3 style={{ fontSize: 18, fontWeight: 900 }}>Upload Documents</h3>
               </div>
               <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 20 }}>These documents are required to verify your store.</p>
-              
+
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 <div className="premium-card" style={{ padding: 16, borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "space-between", border: idProofPreview || sellerData?.idProofUrl ? "1px solid #10b981" : "1px solid rgba(0,0,0,0.08)" }}>
                   <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
@@ -719,9 +837,9 @@ export default function SellerPage() {
                         const url = await uploadToImgBB(f);
                         await updateDoc(doc(db, "sellers_profile", user.uid), { idProofUrl: url });
                         setIdProofPreview(url);
-                        setSellerData({...sellerData, idProofUrl: url});
+                        setSellerData({ ...sellerData, idProofUrl: url });
                         alert("Uploaded successfully!");
-                      } catch(err) { alert("Failed: " + err.message); }
+                      } catch (err) { alert("Failed: " + err.message); }
                     }
                   }} />
                   {idProofPreview || sellerData?.idProofUrl ? (
@@ -730,7 +848,7 @@ export default function SellerPage() {
                     <button onClick={() => document.getElementById("idUploadDoc").click()} style={{ background: "transparent", color: "var(--navy)", fontSize: 13, fontWeight: 700, border: "none", cursor: "pointer" }}>Upload</button>
                   )}
                 </div>
-                
+
                 <div className="premium-card" style={{ padding: 16, borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "space-between", border: shopPhotoPreview || sellerData?.shopPhotoUrl ? "1px solid #10b981" : "1px solid rgba(0,0,0,0.08)" }}>
                   <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                     <div style={{ width: 40, height: 40, borderRadius: 10, background: "rgba(16,185,129,0.1)", display: "flex", alignItems: "center", justifyContent: "center", color: "#10b981" }}><i className="fas fa-store" /></div>
@@ -747,9 +865,9 @@ export default function SellerPage() {
                         const url = await uploadToImgBB(f);
                         await updateDoc(doc(db, "sellers_profile", user.uid), { shopPhotoUrl: url });
                         setShopPhotoPreview(url);
-                        setSellerData({...sellerData, shopPhotoUrl: url});
+                        setSellerData({ ...sellerData, shopPhotoUrl: url });
                         alert("Uploaded successfully!");
-                      } catch(err) { alert("Failed: " + err.message); }
+                      } catch (err) { alert("Failed: " + err.message); }
                     }
                   }} />
                   {shopPhotoPreview || sellerData?.shopPhotoUrl ? (
@@ -777,7 +895,7 @@ export default function SellerPage() {
                       const upi = prompt("Enter your UPI ID (e.g. number@upi)");
                       if (upi) {
                         updateDoc(doc(db, "sellers_profile", user.uid), { upiId: upi });
-                        setSellerData({...sellerData, upiId: upi});
+                        setSellerData({ ...sellerData, upiId: upi });
                       }
                     }} style={{ background: "transparent", color: "var(--navy)", fontSize: 13, fontWeight: 700, border: "none", cursor: "pointer" }}>Add</button>
                   )}
@@ -888,9 +1006,9 @@ export default function SellerPage() {
                       <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
                         <p style={{ fontSize: 16, fontWeight: 900, color: "#10b981" }}>₹{p.price}</p>
                         <div style={{ display: "flex", gap: 6 }}>
-                          <button onClick={() => { 
+                          <button onClick={() => {
                             const ns = prompt("Enter new stock quantity:", p.stock);
-                            if(ns !== null) {
+                            if (ns !== null) {
                               const parsed = parseInt(ns) || 0;
                               updateDoc(doc(db, "products", p.id), { stock: parsed });
                               if (parsed > 0 && (p.stock === 0 || p.outOfStock)) {
@@ -900,7 +1018,7 @@ export default function SellerPage() {
                           }} style={{ background: "#f1f5f9", border: "none", color: "var(--navy)", padding: "6px 10px", borderRadius: 8, fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
                             Edit
                           </button>
-                          <button onClick={() => { 
+                          <button onClick={() => {
                             const newOos = !p.outOfStock;
                             updateDoc(doc(db, "products", p.id), { outOfStock: newOos });
                             if (!newOos) {
@@ -940,10 +1058,10 @@ export default function SellerPage() {
                 Review customer requests for returns or exchanges. As per Dresho policy, we support replacements only (no refunds).
               </p>
 
-              {orders.filter((o) => 
-                o.status === "Return Requested" || 
-                o.status === "Exchange Requested" || 
-                o.status === "Return Approved" || 
+              {orders.filter((o) =>
+                o.status === "Return Requested" ||
+                o.status === "Exchange Requested" ||
+                o.status === "Return Approved" ||
                 o.status === "Exchange Approved" ||
                 o.status === "Return Rejected" ||
                 o.status === "Exchange Rejected"
@@ -955,10 +1073,10 @@ export default function SellerPage() {
                 </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                  {orders.filter((o) => 
-                    o.status === "Return Requested" || 
-                    o.status === "Exchange Requested" || 
-                    o.status === "Return Approved" || 
+                  {orders.filter((o) =>
+                    o.status === "Return Requested" ||
+                    o.status === "Exchange Requested" ||
+                    o.status === "Return Approved" ||
                     o.status === "Exchange Approved" ||
                     o.status === "Return Rejected" ||
                     o.status === "Exchange Rejected"
@@ -966,17 +1084,17 @@ export default function SellerPage() {
                     const isPending = o.status === "Return Requested" || o.status === "Exchange Requested";
                     const isApproved = o.status === "Return Approved" || o.status === "Exchange Approved";
                     const isRejected = o.status === "Return Rejected" || o.status === "Exchange Rejected";
-                    
+
                     return (
                       <div key={o.id} className="premium-card" style={{ padding: "20px", borderRadius: 20, background: "white", border: isPending ? "2px solid #f59e0b" : "1px solid #e2e8f0", boxShadow: "0 4px 12px rgba(0,0,0,0.03)" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", paddingBottom: 14, borderBottom: "1px solid #f1f5f9", marginBottom: 12 }}>
                           <span style={{ fontSize: 12, fontWeight: 800, color: "var(--text-muted)", letterSpacing: 1 }}>
-                            ORDER #{o.trackingId} 
-                            <span style={{ 
-                              background: isPending ? "#fef3c7" : isApproved ? "#d1fae5" : "#fee2e2", 
+                            ORDER #{o.trackingId}
+                            <span style={{
+                              background: isPending ? "#fef3c7" : isApproved ? "#d1fae5" : "#fee2e2",
                               color: isPending ? "#d97706" : isApproved ? "#065f46" : "#991b1b",
-                              padding: "2px 8px", 
-                              borderRadius: 6, 
+                              padding: "2px 8px",
+                              borderRadius: 6,
                               marginLeft: 8,
                               fontWeight: 800
                             }}>
@@ -1013,15 +1131,15 @@ export default function SellerPage() {
                         {/* Action buttons */}
                         {isPending && (
                           <div style={{ display: "flex", gap: 10 }}>
-                            <button 
-                              className="auth-btn-primary" 
+                            <button
+                              className="auth-btn-primary"
                               style={{ flex: 1, borderRadius: 14, fontSize: 13, background: "#10b981", border: "none", height: 44, boxShadow: "none" }}
                               onClick={() => handleApproveReturn(o)}
                             >
                               APPROVE
                             </button>
-                            <button 
-                              className="auth-btn-primary" 
+                            <button
+                              className="auth-btn-primary"
                               style={{ flex: 1, borderRadius: 14, fontSize: 13, background: "#ef4444", border: "none", height: 44, boxShadow: "none" }}
                               onClick={() => handleRejectReturn(o)}
                             >

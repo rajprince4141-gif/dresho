@@ -141,39 +141,39 @@ export default function AdminPage() {
       setOrders(o);
       setStats((prev) => ({ ...prev, revenue, active, delivered, pending, shipped }));
       setRevenueStats({ totalCommission, totalDeliveryFees, totalRiderPayouts, netProfit: totalCommission + totalDeliveryFees - totalRiderPayouts, pendingSettlements, sellerBreakdown });
-    }));
+    }, (err) => { console.error("Admin: Error listening to orders:", err); }));
 
     // Sellers
     unsubs.push(onSnapshot(collection(db, "sellers_profile"), (snap) => {
       const s = []; snap.forEach((d) => s.push({ id: d.id, ...d.data() }));
       setSellers(s);
       setStats((prev) => ({ ...prev, sellers: s.length }));
-    }));
+    }, (err) => { console.error("Admin: Error listening to sellers_profile:", err); }));
 
     // Delivery fleet
     unsubs.push(onSnapshot(collection(db, "delivery_profile"), (snap) => {
       const d = []; snap.forEach((doc) => d.push({ id: doc.id, ...doc.data() }));
       setDeliveryAgents(d);
       setStats((prev) => ({ ...prev, fleet: d.length }));
-    }));
+    }, (err) => { console.error("Admin: Error listening to delivery_profile:", err); }));
     // Feedback collection
     unsubs.push(onSnapshot(collection(db, "feedback"), (snap) => {
       const f = [];
       snap.forEach((doc) => f.push({ id: doc.id, ...doc.data() }));
       setFeedbacks(f);
-    }));
+    }, (err) => { console.error("Admin: Error listening to feedback:", err); }));
 
     // Users
     unsubs.push(onSnapshot(collection(db, "users"), (snap) => {
       const u = []; snap.forEach((d) => u.push({ id: d.id, ...d.data() }));
       setUsers(u);
-    }));
+    }, (err) => { console.error("Admin: Error listening to users:", err); }));
 
     // Products
     unsubs.push(onSnapshot(collection(db, "products"), (snap) => {
       const p = []; snap.forEach((d) => p.push({ id: d.id, ...d.data() }));
       setProducts(p);
-    }));
+    }, (err) => { console.error("Admin: Error listening to products:", err); }));
 
     // Banners (docs: banner_1 through banner_5)
     ["banner_1", "banner_2", "banner_3", "banner_4", "banner_5"].forEach((id) => {
@@ -181,7 +181,7 @@ export default function AdminPage() {
         if (snap.exists()) {
           setBanners((prev) => ({ ...prev, [id]: { id, ...snap.data() } }));
         }
-      }));
+      }, (err) => { console.error(`Admin: Error listening to banner ${id}:`, err); }));
     });
 
     // Banner Requests from sellers
@@ -189,7 +189,7 @@ export default function AdminPage() {
       const r = []; snap.forEach((d) => r.push({ id: d.id, ...d.data() }));
       r.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       setBannerRequests(r);
-    }));
+    }, (err) => { console.error("Admin: Error listening to banner_requests:", err); }));
 
     return () => unsubs.forEach((u) => u());
   }, [authenticated]);

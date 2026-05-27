@@ -192,6 +192,7 @@ export default function ShopPage() {
   const [checkoutPhone, setCheckoutPhone] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("COD"); // COD | UPI
   const [placing, setPlacing] = useState(false);
+  const [isTrackingLocation, setIsTrackingLocation] = useState(false);
 
   // Address Management
   const [showAddressModal, setShowAddressModal] = useState(false);
@@ -210,15 +211,32 @@ export default function ShopPage() {
 
   const [sellers, setSellers] = useState({});
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, "sellers_profile"), (snap) => {
-      const s = {};
-      snap.forEach((doc) => {
-        s[doc.id] = doc.data();
+    if (!products || products.length === 0) return;
+
+    // Collect unique seller IDs from products and cart
+    const sellerIds = new Set();
+    products.forEach(p => { if (p.sellerId) sellerIds.add(p.sellerId); });
+    cart.forEach(item => { if (item.sellerId) sellerIds.add(item.sellerId); });
+
+    if (sellerIds.size === 0) return;
+
+    const unsubs = [];
+    sellerIds.forEach(sellerId => {
+      const unsub = onSnapshot(doc(db, "sellers_profile", sellerId), (snap) => {
+        if (snap.exists()) {
+          setSellers(prev => ({
+            ...prev,
+            [sellerId]: snap.data()
+          }));
+        }
+      }, (err) => {
+        console.error(`Error listening to seller profile for ${sellerId}:`, err);
       });
-      setSellers(s);
+      unsubs.push(unsub);
     });
-    return () => unsub();
-  }, []);
+
+    return () => unsubs.forEach(unsub => unsub());
+  }, [products, cart]);
 
   const isEligibleForReturnOrExchange = (o) => {
     if (!o) return false;
@@ -265,6 +283,8 @@ export default function ShopPage() {
         } else {
           setHeroBanners((prev) => prev.filter((b) => b.id !== id));
         }
+      }, (err) => {
+        console.error(`Error listening to banner ${id}:`, err);
       })
     );
     return () => unsubs.forEach((u) => u());
@@ -484,6 +504,8 @@ export default function ShopPage() {
             [riderId]: docSnap.data().liveLocation || null
           }));
         }
+      }, (err) => {
+        console.error(`Error listening to rider ${riderId} location:`, err);
       });
       unsubs.push(unsub);
     });
@@ -624,6 +646,89 @@ export default function ShopPage() {
         }
       },
       () => alert("Unable to retrieve location. Please allow location access.")
+    );
+  };
+
+  const trackLiveLocation = () => {
+    if (!navigator.geolocation) return alert("Geolocation not supported by your browser.");
+    setIsTrackingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const custLat = pos.coords.latitude;
+        const custLon = pos.coords.longitude;
+        setCheckoutCoordinates(`${custLat}, ${custLon}`);
+        
+        // Dynamic Delivery Fee Calculation
+        const sellerId = cart[0]?.sellerId;
+        if (sellerId) {
+          try {
+            const sellerDoc = await getDoc(doc(db, "sellers_profile", sellerId));
+            if (sellerDoc.exists() && sellerDoc.data().coordinates) {
+              const [sellLat, sellLon] = sellerDoc.data().coordinates.split(",").map(Number);
+              const distanceKm = getDistanceFromLatLonInKm(custLat, custLon, sellLat, sellLon);
+              
+              let fee = 20; // 0.5 to 1km = 20
+              if (distanceKm > 1 && distanceKm <= 2) fee = 30; // 1 to 2km = 30
+              else if (distanceKm > 2) fee = 40; // > 2km = 40
+
+              const totalItems = cart.reduce((sum, i) => sum + i.qty, 0);
+              if (totalItems > 3) fee = fee / 2; // 50% discount
+
+              setDeliveryFee(fee);
+            } else { setDeliveryFee(40); }
+          } catch(e) { console.error(e); setDeliveryFee(40); }
+        }
+
+        // Reverse Geocoding via OSM Nominatim API to fill fields automatically
+        try {
+          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${custLat}&lon=${custLon}`, {
+            headers: {
+              'User-Agent': 'DreshoApp/1.0 (contact: support@dresho.in)'
+            }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const address = data.address || {};
+            
+            // Construct a meaningful street address: House Number/Name + Road
+            const house = address.house_number || address.building || address.office || "";
+            const road = address.road || address.pedestrian || address.suburb || "";
+            const streetAddress = [house, road].filter(Boolean).join(", ");
+            
+            const neighbourhood = address.neighbourhood || address.suburb || address.village || "";
+            const city = address.city || address.town || address.village || address.county || "";
+            const pincode = address.postcode || "";
+
+            if (streetAddress) {
+              setCheckoutAddress(streetAddress);
+            } else if (data.display_name) {
+              setCheckoutAddress(data.display_name.split(",").slice(0, 2).join(", "));
+            }
+            
+            if (neighbourhood) {
+              setCheckoutLandmark(neighbourhood);
+            } else if (address.amenity) {
+              setCheckoutLandmark(address.amenity);
+            }
+            
+            if (city) {
+              setCheckoutCity(city);
+            }
+            
+            if (pincode) {
+              setCheckoutPincode(pincode.replace(/\s/g, '').slice(0, 6));
+            }
+          }
+        } catch (err) {
+          console.error("Reverse geocoding failed:", err);
+        } finally {
+          setIsTrackingLocation(false);
+        }
+      },
+      () => {
+        alert("Unable to retrieve location. Please allow location access.");
+        setIsTrackingLocation(false);
+      }
     );
   };
 
@@ -2763,6 +2868,43 @@ export default function ShopPage() {
               <h3 style={{ fontFamily: "var(--font-d)", fontSize: 26, color: "var(--navy)", marginBottom: 24 }}>Checkout</h3>
               
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                <button
+                  type="button"
+                  onClick={trackLiveLocation}
+                  disabled={isTrackingLocation}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "8px",
+                    padding: "14px",
+                    background: isTrackingLocation ? "#e2e8f0" : "linear-gradient(135deg, var(--navy) 0%, #1e293b 100%)",
+                    color: isTrackingLocation ? "#94a3b8" : "white",
+                    border: "none",
+                    borderRadius: "12px",
+                    fontSize: "12px",
+                    fontWeight: "800",
+                    textTransform: "uppercase",
+                    letterSpacing: "1.5px",
+                    cursor: isTrackingLocation ? "not-allowed" : "pointer",
+                    transition: "all 0.3s ease",
+                    boxShadow: isTrackingLocation ? "none" : "0 4px 12px rgba(20, 33, 61, 0.2)",
+                    marginBottom: "8px"
+                  }}
+                >
+                  {isTrackingLocation ? (
+                    <>
+                      <i className="fas fa-spinner fa-spin" style={{ fontSize: "14px" }} />
+                      <span>Tracking Location...</span>
+                    </>
+                  ) : (
+                    <>
+                      <i className="fas fa-location-crosshairs" style={{ fontSize: "14px" }} />
+                      <span>Track Live Location</span>
+                    </>
+                  )}
+                </button>
+
                 <input style={{ padding: "12px 0", border: "none", borderBottom: "1px solid var(--border2)", outline: "none", background: "transparent", fontSize: 14, fontFamily: "var(--font-b)", color: "var(--navy)" }} placeholder="House / Flat No., Street" value={checkoutAddress} onChange={(e) => setCheckoutAddress(e.target.value)} />
                 <input style={{ padding: "12px 0", border: "none", borderBottom: "1px solid var(--border2)", outline: "none", background: "transparent", fontSize: 14, fontFamily: "var(--font-b)", color: "var(--navy)" }} placeholder="Landmark (e.g. Near City Mall)" value={checkoutLandmark} onChange={(e) => setCheckoutLandmark(e.target.value)} />
                 <div style={{ display: "flex", gap: 16 }}>

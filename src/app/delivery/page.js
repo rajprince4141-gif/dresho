@@ -115,17 +115,21 @@ export default function DeliveryPage() {
 
     if (sellerIds.size > 0) {
       const fetchSellers = async () => {
-        const sellerPromises = Array.from(sellerIds).map(sellerId => 
-          getDoc(doc(db, "sellers_profile", sellerId))
-        );
-        const sellerDocs = await Promise.all(sellerPromises);
-        const sellerMap = {};
-        sellerDocs.forEach(doc => {
-          if (doc.exists()) {
-            sellerMap[doc.id] = doc.data();
-          }
-        });
-        setSellersData(prev => ({ ...prev, ...sellerMap }));
+        try {
+          const sellerPromises = Array.from(sellerIds).map(sellerId => 
+            getDoc(doc(db, "sellers_profile", sellerId))
+          );
+          const sellerDocs = await Promise.all(sellerPromises);
+          const sellerMap = {};
+          sellerDocs.forEach(doc => {
+            if (doc.exists()) {
+              sellerMap[doc.id] = doc.data();
+            }
+          });
+          setSellersData(prev => ({ ...prev, ...sellerMap }));
+        } catch (err) {
+          console.error("Error fetching sellers in delivery dashboard:", err);
+        }
       };
       fetchSellers();
     }

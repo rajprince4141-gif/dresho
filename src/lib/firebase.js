@@ -28,16 +28,25 @@ export const messaging = typeof window !== 'undefined' ? getMessaging(app) : nul
 // Helper to request permission and get the FCM token
 export const requestNotificationPermission = async () => {
   if (!messaging) return null;
+  // Guard: Notification API may not exist in all environments
+  if (typeof Notification === 'undefined') return null;
   try {
     const permission = await Notification.requestPermission();
     if (permission === 'granted') {
-      const token = await getToken(messaging, {
-        vapidKey: process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY
-      });
-      return token;
+      try {
+        const token = await getToken(messaging, {
+          vapidKey: process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY,
+          serviceWorkerRegistration: await navigator.serviceWorker?.getRegistration('/firebase-messaging-sw.js') || undefined
+        });
+        return token;
+      } catch (tokenError) {
+        // Silently handle token retrieval failures (auth credential issues, network, etc.)
+        console.warn('FCM token retrieval failed (non-critical):', tokenError.message || tokenError);
+        return null;
+      }
     }
   } catch (error) {
-    console.error('An error occurred while retrieving token:', error);
+    console.warn('Notification permission request failed (non-critical):', error.message || error);
   }
   return null;
 };

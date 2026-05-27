@@ -32,6 +32,8 @@ export default function NotificationBell({ userId, role }) {
       
       setNotifications(notifs);
       setUnreadCount(unread);
+    }, (err) => {
+      console.error("Error listening to user notifications:", err);
     });
 
     return () => unsubscribe();
@@ -60,6 +62,8 @@ export default function NotificationBell({ userId, role }) {
         unique.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
         return unique;
       });
+    }, (err) => {
+      console.error("Error listening to broadcast notifications:", err);
     });
 
     return () => unsubscribeBroadcast();

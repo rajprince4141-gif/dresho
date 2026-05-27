@@ -17,6 +17,8 @@ export const useSellerStatus = (sellerUid) => {
     }
     const unsub = onSnapshot(doc(db, "sellers_profile", sellerUid), (snap) => {
       setIsOnline(snap.exists() && snap.data().online === true);
+    }, (err) => {
+      console.error(`Error listening to seller status for ${sellerUid}:`, err);
     });
     return () => unsub();
   }, [sellerUid]);
