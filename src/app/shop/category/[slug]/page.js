@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
+import { getProductPricing } from "@/utils/formatters";
 import { doc, getDoc, collection, onSnapshot } from "firebase/firestore";
 
 const SLUG_MAP = {
@@ -50,6 +51,8 @@ export default function CategoryPage() {
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  const [touchStartDist, setTouchStartDist] = useState(0);
+  const [swipeStartX, setSwipeStartX] = useState(null);
   const [selectedSize, setSelectedSize] = useState("");
   const [sortBy, setSortBy] = useState("default");
   const [showCart, setShowCart] = useState(false);
@@ -96,6 +99,13 @@ export default function CategoryPage() {
     });
     return () => unsub();
   }, []);
+
+  // Reset pincode state when switching/viewing products to prevent cross-contamination
+  useEffect(() => {
+    setPincode("");
+    setPincodeStatus(null);
+    setCheckingPincode(false);
+  }, [viewProduct]);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "products"), (snap) => {
@@ -313,41 +323,56 @@ export default function CategoryPage() {
           </div>
         ) : (
           <div className="cp-grid">
-            {filtered.map((p) => (
-              <div key={p.id} className="cp-card" onClick={() => { setViewProduct(p); setSelectedSize(p.sizes?.[0] || "M"); }}>
-                <div className="cp-card-img">
-                  <img src={p.image} alt={p.name} style={{ opacity: (p.outOfStock || p.stock === 0) ? 0.4 : 1 }} onError={(e) => { e.target.style.display = "none"; }} />
-                  {(p.outOfStock || p.stock === 0) && (
-                    <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "rgba(0,0,0,0.6)", color: "white", padding: "8px 16px", borderRadius: 8, fontSize: 10, fontWeight: 900, zIndex: 10, letterSpacing: 1, whiteSpace: "nowrap", backdropFilter: "blur(2px)" }}>
-                      OUT OF STOCK
+            {filtered.map((p) => {
+              const pricing = getProductPricing(p);
+              return (
+                <div key={p.id} className="cp-card" onClick={() => { setViewProduct(p); setSelectedSize(p.sizes?.[0] || "M"); }}>
+                  <div className="cp-card-img" style={{ position: "relative" }}>
+                    <img src={p.image} alt={p.name} style={{ opacity: (p.outOfStock || p.stock === 0) ? 0.4 : 1 }} onError={(e) => { e.target.style.display = "none"; }} />
+                    
+                    {/* Dynamic Discount Badge on Image Top-Left */}
+                    <div style={{ position: "absolute", top: 8, left: 8, background: "var(--red)", color: "white", padding: "4px 8px", fontSize: 10, fontWeight: 900, borderRadius: 4, zIndex: 10 }}>
+                      −{pricing.discount}%
                     </div>
-                  )}
-                  {!(p.outOfStock || p.stock === 0) && (
-                    <div className="cp-quick-add" onClick={(e) => { e.stopPropagation(); addToCart(p, p.sizes?.[0] || "M"); }}>⚡ Quick Add</div>
-                  )}
-                </div>
-                <div className="cp-card-info">
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                    <div className="cp-card-brand" style={{ marginBottom: 0 }}>{p.storeName || "DRESHO"}</div>
-                    {p.stock > 0 && p.stock <= 5 && !p.outOfStock && (
-                      <span style={{ color: "#ef4444", fontSize: 10, fontWeight: 800 }}>Only {p.stock} left</span>
+
+                    {(p.outOfStock || p.stock === 0) && (
+                      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "rgba(0,0,0,0.6)", color: "white", padding: "8px 16px", borderRadius: 8, fontSize: 10, fontWeight: 900, zIndex: 10, letterSpacing: 1, whiteSpace: "nowrap", backdropFilter: "blur(2px)" }}>
+                        OUT OF STOCK
+                      </div>
+                    )}
+                    {!(p.outOfStock || p.stock === 0) && (
+                      <div className="cp-quick-add" onClick={(e) => { e.stopPropagation(); addToCart(p, p.sizes?.[0] || "M"); }}>⚡ Quick Add</div>
                     )}
                   </div>
-                  <div className="cp-card-name">{p.name}</div>
-                  <div className="cp-price-row">
-                    <span className="cp-price">₹{p.price}</span>
-                    {p.mrp && p.mrp > p.price && <>
-                      <span className="cp-mrp">₹{p.mrp}</span>
-                      <span className="cp-off">{Math.round(((p.mrp - p.price) / p.mrp) * 100)}% off</span>
-                    </>}
-                  </div>
+                  <div className="cp-card-info">
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <div className="cp-card-brand" style={{ marginBottom: 0 }}>{p.storeName || "DRESHO"}</div>
+                      {p.stock > 0 && p.stock <= 5 && !p.outOfStock && (
+                        <span style={{ color: "#ef4444", fontSize: 10, fontWeight: 800 }}>Only {p.stock} left</span>
+                      )}
+                    </div>
+                    <div className="cp-card-name">{p.name}</div>
+                    
+                    {/* Dynamic Price Calculation Row */}
+                    <div className="cp-price-row" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <span style={{ color: "#16a34a", fontWeight: "bold", fontSize: "14px" }}>
+                        <i className="fas fa-arrow-down" style={{ marginRight: 2, fontSize: 11 }} />{pricing.discount}%
+                      </span>
+                      <span style={{ textDecoration: "line-through", color: "#888", fontSize: "13px" }}>
+                        ₹{pricing.mrp.toLocaleString("en-IN")}
+                      </span>
+                      <span style={{ color: "#14213d", fontWeight: "bold", fontSize: "16px" }}>
+                        ₹{pricing.price.toLocaleString("en-IN")}
+                      </span>
+                    </div>
                   {(() => {
                     const allReviews = p.reviews || [];
+                    if (allReviews.length === 0) return null;
                     const totalRating = allReviews.reduce((sum, r) => sum + (Number(r.rating) || 5), 0);
-                    const avgRating = allReviews.length > 0 ? (totalRating / allReviews.length).toFixed(1) : "5.0";
+                    const avgRating = (totalRating / allReviews.length).toFixed(1);
                     return (
                       <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
-                        <span style={{ color: "var(--gold)", fontSize: 12, fontWeight: 700 }}>★ {avgRating}</span>
+                        <span className="deal-rating-stars" style={{ color: "#fff", fontSize: 11, fontWeight: 700, padding: "2px 6px", borderRadius: 4 }}>★ {avgRating}</span>
                         <span style={{ color: "var(--sub)", fontSize: 11 }}>({allReviews.length})</span>
                       </div>
                     );
@@ -355,7 +380,7 @@ export default function CategoryPage() {
                   <div className="cp-delivery"><span className="cp-dot" /> 30 min delivery</div>
                 </div>
               </div>
-            ))}
+            )})}
           </div>
         )}
       </div>
@@ -463,36 +488,62 @@ export default function CategoryPage() {
                       userSelect: "none"
                     }}
                   >
-                    <div style={{ 
-                      background: "#16a34a", 
-                      color: "white", 
-                      padding: "4px 8px", 
-                      borderRadius: 6, 
-                      fontSize: 13, 
-                      fontWeight: 800, 
-                      display: "flex", 
-                      alignItems: "center", 
-                      gap: 4 
-                    }}>
-                      {avgRating > 0 ? avgRating : "5.0"} <i className="fas fa-star" style={{ fontSize: 10 }} />
-                    </div>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "var(--gold)", textDecoration: "underline" }}>
-                      {allReviews.length} {allReviews.length === 1 ? "Rating" : "Ratings"} & {allReviews.length} {allReviews.length === 1 ? "Review" : "Reviews"}
-                    </span>
+                    {allReviews.length > 0 ? (
+                      <>
+                        <div style={{ 
+                          background: "#16a34a", 
+                          color: "white", 
+                          padding: "4px 8px", 
+                          borderRadius: 6, 
+                          fontSize: 13, 
+                          fontWeight: 800, 
+                          display: "flex", 
+                          alignItems: "center", 
+                          gap: 4 
+                        }}>
+                          {avgRating} <i className="fas fa-star" style={{ fontSize: 10 }} />
+                        </div>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: "var(--gold)", textDecoration: "underline" }}>
+                          {allReviews.length} {allReviews.length === 1 ? "Rating" : "Ratings"} & {allReviews.length} {allReviews.length === 1 ? "Review" : "Reviews"}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ 
+                          background: "#f1f5f9", 
+                          color: "#64748b", 
+                          padding: "4px 8px", 
+                          borderRadius: 6, 
+                          fontSize: 12, 
+                          fontWeight: 600, 
+                          display: "flex", 
+                          alignItems: "center", 
+                          gap: 4 
+                        }}>
+                          <i className="far fa-star" style={{ fontSize: 10 }} /> Be the first to review
+                        </div>
+                        <span style={{ fontSize: 12, fontWeight: 500, color: "var(--sub)" }}>
+                          0 Ratings & 0 Reviews
+                        </span>
+                      </>
+                    )}
                   </div>
                 );
               })()}
 
               {/* Price Row */}
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12 }}>
-                <span style={{ fontSize: 28, fontWeight: 800, color: "var(--navy)" }}>₹{viewProduct.price}</span>
-                {viewProduct.mrp && viewProduct.mrp > viewProduct.price && (
-                  <>
-                    <span style={{ fontSize: 16, fontWeight: 500, color: "var(--sub)", textDecoration: "line-through" }}>₹{viewProduct.mrp}</span>
-                    <span style={{ padding: "4px 8px", background: "#fef2f2", color: "#ef4444", borderRadius: 6, fontSize: 12, fontWeight: 800 }}>{Math.round(((viewProduct.mrp - viewProduct.price) / viewProduct.mrp) * 100)}% OFF</span>
-                  </>
-                )}
-              </div>
+              {(() => {
+                const pricing = getProductPricing(viewProduct);
+                return (
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12 }}>
+                    <span style={{ fontSize: 28, fontWeight: 800, color: "var(--navy)" }}>₹{pricing.price.toLocaleString("en-IN")}</span>
+                    <span style={{ fontSize: 16, fontWeight: 500, color: "var(--sub)", textDecoration: "line-through" }}>₹{pricing.mrp.toLocaleString("en-IN")}</span>
+                    <span style={{ padding: "4px 8px", background: "#fef2f2", color: "#16a34a", borderRadius: 6, fontSize: 12, fontWeight: 800, display: "flex", alignItems: "center", gap: 2 }}>
+                      <i className="fas fa-arrow-down" style={{ fontSize: 10 }} /> {pricing.discount}% OFF
+                    </span>
+                  </div>
+                );
+              })()}
               <p style={{ fontSize: 11, color: "var(--sub)", marginTop: 4 }}>Inclusive of all taxes</p>
 
               {/* Delivery + Pincode */}
@@ -772,6 +823,39 @@ export default function CategoryPage() {
           setIsPanning(false);
         };
 
+        // Mouse / Touch Swipe gesture handlers
+        const handleMouseDown = (e) => {
+          if (zoomScale > 1) {
+            startPan(e.clientX, e.clientY);
+          } else {
+            setSwipeStartX(e.clientX);
+          }
+        };
+
+        const handleMouseMove = (e) => {
+          if (zoomScale > 1) {
+            doPan(e.clientX, e.clientY);
+          }
+        };
+
+        const handleMouseUp = (e) => {
+          setIsPanning(false);
+          if (zoomScale === 1 && swipeStartX !== null) {
+            const diffX = e.clientX - swipeStartX;
+            if (diffX > 50) {
+              setZoomImageIndex(prev => (prev === 0 ? images.length - 1 : prev - 1));
+            } else if (diffX < -50) {
+              setZoomImageIndex(prev => (prev === images.length - 1 ? 0 : prev + 1));
+            }
+          }
+          setSwipeStartX(null);
+        };
+
+        const handleMouseLeave = () => {
+          setIsPanning(false);
+          setSwipeStartX(null);
+        };
+
         return (
           <div 
             onClick={() => setZoomImageIndex(null)}
@@ -888,24 +972,69 @@ export default function CategoryPage() {
               </>
             )}
 
-            {/* Image Container with Zoom & Drag Support */}
+            {/* Image Container with Zoom, Wheel-scroll Zoom, Swipe & Drag Support */}
             <div 
               onClick={(e) => e.stopPropagation()}
-              onMouseDown={(e) => startPan(e.clientX, e.clientY)}
-              onMouseMove={(e) => doPan(e.clientX, e.clientY)}
-              onMouseUp={stopPan}
-              onMouseLeave={stopPan}
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseLeave}
+              onWheel={(e) => {
+                if (e.deltaY < 0) {
+                  setZoomScale(prev => Math.min(prev + 0.15, 4));
+                } else {
+                  setZoomScale(prev => {
+                    const next = Math.max(prev - 0.15, 1);
+                    if (next === 1) setPanOffset({ x: 0, y: 0 });
+                    return next;
+                  });
+                }
+              }}
               onTouchStart={(e) => {
-                if (e.touches.length === 1) {
-                  startPan(e.touches[0].clientX, e.touches[0].clientY);
+                if (e.touches.length === 2) {
+                  const dx = e.touches[0].clientX - e.touches[1].clientX;
+                  const dy = e.touches[0].clientY - e.touches[1].clientY;
+                  const dist = Math.sqrt(dx * dx + dy * dy);
+                  setTouchStartDist(dist);
+                  setIsPanning(false);
+                } else if (e.touches.length === 1) {
+                  if (zoomScale > 1) {
+                    startPan(e.touches[0].clientX, e.touches[0].clientY);
+                  } else {
+                    setSwipeStartX(e.touches[0].clientX);
+                  }
                 }
               }}
               onTouchMove={(e) => {
-                if (e.touches.length === 1) {
+                if (e.touches.length === 2 && touchStartDist > 0) {
+                  const dx = e.touches[0].clientX - e.touches[1].clientX;
+                  const dy = e.touches[0].clientY - e.touches[1].clientY;
+                  const dist = Math.sqrt(dx * dx + dy * dy);
+                  const factor = dist / touchStartDist;
+                  setZoomScale(prev => {
+                    const next = Math.min(Math.max(prev * factor, 1), 4);
+                    if (next === 1) setPanOffset({ x: 0, y: 0 });
+                    return next;
+                  });
+                  setTouchStartDist(dist);
+                } else if (e.touches.length === 1 && zoomScale > 1) {
                   doPan(e.touches[0].clientX, e.touches[0].clientY);
                 }
               }}
-              onTouchEnd={stopPan}
+              onTouchEnd={(e) => {
+                setIsPanning(false);
+                setTouchStartDist(0);
+                if (zoomScale === 1 && swipeStartX !== null && e.changedTouches.length > 0) {
+                  const endX = e.changedTouches[0].clientX;
+                  const diffX = endX - swipeStartX;
+                  if (diffX > 50) {
+                    setZoomImageIndex(prev => (prev === 0 ? images.length - 1 : prev - 1));
+                  } else if (diffX < -50) {
+                    setZoomImageIndex(prev => (prev === images.length - 1 ? 0 : prev + 1));
+                  }
+                }
+                setSwipeStartX(null);
+              }}
               style={{
                 width: "100%",
                 height: "100%",
@@ -940,7 +1069,7 @@ export default function CategoryPage() {
 
             {/* Instructions Bar */}
             <div style={{ position: "absolute", bottom: 24, zIndex: 2010, color: "rgba(255,255,255,0.6)", fontSize: 11, fontWeight: 500, letterSpacing: 0.5 }}>
-              💡 Swipe / Use Arrows to navigate · Double click/tap to zoom · Drag to pan
+              💡 Swipe/Drag to navigate images · Pinch / Scroll to Zoom · Double click to reset
             </div>
           </div>
         );

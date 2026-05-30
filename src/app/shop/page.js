@@ -24,6 +24,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useCart } from "@/hooks/useCart";
 import { useProducts } from "@/hooks/useProducts";
 import { useOrders } from "@/hooks/useOrders";
+import { getProductPricing } from "@/utils/formatters";
 
 const LiveMap = dynamicImport(() => import("@/components/LiveMap"), { ssr: false });
 
@@ -174,6 +175,8 @@ export default function ShopPage() {
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  const [touchStartDist, setTouchStartDist] = useState(0);
+  const [swipeStartX, setSwipeStartX] = useState(null);
   const [selectedSize, setSelectedSize] = useState("");
   const [favorites, setFavorites] = useState([]);
   const [pincode, setPincode] = useState("");
@@ -215,6 +218,14 @@ export default function ShopPage() {
   const [returnRemarks, setReturnRemarks] = useState("");
 
   const [sellers, setSellers] = useState({});
+
+  // Reset pincode state when switching/viewing products to prevent cross-contamination
+  useEffect(() => {
+    setPincode("");
+    setPincodeStatus(null);
+    setCheckingPincode(false);
+  }, [viewProduct]);
+
   useEffect(() => {
     if (!products || products.length === 0) return;
 
@@ -1404,14 +1415,19 @@ export default function ShopPage() {
                             OUT OF STOCK
                           </div>
                         ) : null}
-                        <div className="deal-badge-wrap">
-                          {p.stock > 0 && p.stock <= 5 && !p.outOfStock && !isProductOutOfOrder(p) && (
-                            <span style={{ background: "#ef4444", color: "white", padding: "4px 8px", borderRadius: 4, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Only {p.stock} left</span>
-                          )}
-                          {i === 0 && <span className="badge-new">New</span>}
-                          {i === 1 && <span className="badge-hot">Hot</span>}
-                          <span className="badge-off">−38%</span>
-                        </div>
+                        {(() => {
+                          const pricing = getProductPricing(p);
+                          return (
+                            <div className="deal-badge-wrap">
+                              {p.stock > 0 && p.stock <= 5 && !p.outOfStock && !isProductOutOfOrder(p) && (
+                                <span style={{ background: "#ef4444", color: "white", padding: "4px 8px", borderRadius: 4, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Only {p.stock} left</span>
+                              )}
+                              {i === 0 && <span className="badge-new">New</span>}
+                              {i === 1 && <span className="badge-hot">Hot</span>}
+                              <span className="badge-off">−{pricing.discount}%</span>
+                            </div>
+                          );
+                        })()}
                         <button className="wishlist-btn">♡</button>
                         {!(p.outOfStock || p.stock === 0 || isProductOutOfOrder(p)) && (
                           <div className="deal-quick" onClick={(e) => { e.stopPropagation(); addToCart(p, p.sizes?.[0] || "M"); }}>⚡ Quick Add</div>
@@ -1420,14 +1436,30 @@ export default function ShopPage() {
                       <div className="deal-info">
                         <div className="deal-brand">{p.storeName || "DRESHO"}</div>
                         <div className="deal-name" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
-                        <div className="deal-price-row"><span className="deal-price">₹{p.price}</span>{p.mrp && p.mrp > p.price && <><span className="deal-mrp">₹{p.mrp}</span><span className="deal-off">{Math.round(((p.mrp - p.price) / p.mrp) * 100)}% off</span></>}</div>
+                        {(() => {
+                          const pricing = getProductPricing(p);
+                          return (
+                            <div className="deal-price-row" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+                              <span style={{ color: "#16a34a", fontWeight: "bold", fontSize: "14px" }}>
+                                <i className="fas fa-arrow-down" style={{ marginRight: 2, fontSize: 11 }} />{pricing.discount}%
+                              </span>
+                              <span style={{ textDecoration: "line-through", color: "#888", fontSize: "13px" }}>
+                                ₹{pricing.mrp.toLocaleString("en-IN")}
+                              </span>
+                              <span style={{ color: "#14213d", fontWeight: "bold", fontSize: "16px" }}>
+                                ₹{pricing.price.toLocaleString("en-IN")}
+                              </span>
+                            </div>
+                          );
+                        })()}
                         {(() => {
                           const allReviews = p.reviews || [];
+                          if (allReviews.length === 0) return null;
                           const totalRating = allReviews.reduce((sum, r) => sum + (Number(r.rating) || 5), 0);
-                          const avgRating = allReviews.length > 0 ? (totalRating / allReviews.length).toFixed(1) : "5.0";
+                          const avgRating = (totalRating / allReviews.length).toFixed(1);
                           return (
                             <div className="deal-rating" style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
-                              <span className="deal-rating-stars" style={{ color: "var(--gold)", fontSize: 12, fontWeight: 700 }}>
+                              <span className="deal-rating-stars" style={{ color: "#fff", fontSize: 12, fontWeight: 700 }}>
                                 ★ {avgRating}
                               </span>
                               <span className="deal-rating-count" style={{ color: "var(--sub)", fontSize: 11 }}>
@@ -1632,12 +1664,17 @@ export default function ShopPage() {
                           OUT OF STOCK
                         </div>
                       )}
-                      <div className="deal-badge-wrap">
-                        {p.stock > 0 && p.stock <= 5 && !p.outOfStock && (
-                          <span style={{ background: "#ef4444", color: "white", padding: "4px 8px", borderRadius: 4, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Only {p.stock} left</span>
-                        )}
-                        <span className="badge-off">−38%</span>
-                      </div>
+                      {(() => {
+                        const pricing = getProductPricing(p);
+                        return (
+                          <div className="deal-badge-wrap">
+                            {p.stock > 0 && p.stock <= 5 && !p.outOfStock && (
+                              <span style={{ background: "#ef4444", color: "white", padding: "4px 8px", borderRadius: 4, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Only {p.stock} left</span>
+                            )}
+                            <span className="badge-off">−{pricing.discount}%</span>
+                          </div>
+                        );
+                      })()}
                       <button onClick={(e) => { e.stopPropagation(); toggleFavorite(p); }} style={{ position: "absolute", top: 8, right: 8, width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,0.9)", border: "none", color: "#ef4444", zIndex: 10, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }}>
                         <i className="fas fa-heart" />
                       </button>
@@ -1648,15 +1685,31 @@ export default function ShopPage() {
                     <div className="deal-info">
                       <div className="deal-brand">{p.storeName || "DRESHO"}</div>
                       <div className="deal-name" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
-                      <div className="deal-price-row"><span className="deal-price">₹{p.price}</span>{p.mrp && p.mrp > p.price && <><span className="deal-mrp">₹{p.mrp}</span><span className="deal-off">{Math.round(((p.mrp - p.price) / p.mrp) * 100)}% off</span></>}</div>
+                      {(() => {
+                        const pricing = getProductPricing(p);
+                        return (
+                          <div className="deal-price-row" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+                            <span style={{ color: "#16a34a", fontWeight: "bold", fontSize: "14px" }}>
+                              <i className="fas fa-arrow-down" style={{ marginRight: 2, fontSize: 11 }} />{pricing.discount}%
+                            </span>
+                            <span style={{ textDecoration: "line-through", color: "#888", fontSize: "13px" }}>
+                              ₹{pricing.mrp.toLocaleString("en-IN")}
+                            </span>
+                            <span style={{ color: "#14213d", fontWeight: "bold", fontSize: "16px" }}>
+                              ₹{pricing.price.toLocaleString("en-IN")}
+                            </span>
+                          </div>
+                        );
+                      })()}
                       {(() => {
                         const allReviews = p.reviews || [];
+                        if (allReviews.length === 0) return null;
                         const totalRating = allReviews.reduce((sum, r) => sum + (Number(r.rating) || 5), 0);
-                        const avgRating = allReviews.length > 0 ? (totalRating / allReviews.length).toFixed(1) : "5.0";
+                        const avgRating = (totalRating / allReviews.length).toFixed(1);
                         return (
-                          <div className="deal-rating">
-                            <span className="deal-rating-stars">★ {avgRating}</span>
-                            <span className="deal-rating-count">({allReviews.length})</span>
+                          <div className="deal-rating" style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                            <span className="deal-rating-stars" style={{ color: "#fff", fontSize: 12, fontWeight: 700 }}>★ {avgRating}</span>
+                            <span className="deal-rating-count" style={{ color: "var(--sub)", fontSize: 11 }}>({allReviews.length})</span>
                           </div>
                         );
                       })()}
@@ -2343,22 +2396,45 @@ export default function ShopPage() {
                             userSelect: "none"
                           }}
                         >
-                          <div style={{ 
-                            background: "#16a34a", 
-                            color: "white", 
-                            padding: "4px 8px", 
-                            borderRadius: 6, 
-                            fontSize: 13, 
-                            fontWeight: 800, 
-                            display: "flex", 
-                            alignItems: "center", 
-                            gap: 4 
-                          }}>
-                            {avgRating > 0 ? avgRating : "5.0"} <i className="fas fa-star" style={{ fontSize: 10 }} />
-                          </div>
-                          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--gold)", textDecoration: "underline" }}>
-                            {allReviews.length} {allReviews.length === 1 ? "Rating" : "Ratings"} & {allReviews.length} {allReviews.length === 1 ? "Review" : "Reviews"}
-                          </span>
+                          {allReviews.length > 0 ? (
+                            <>
+                              <div style={{ 
+                                background: "#16a34a", 
+                                color: "white", 
+                                padding: "4px 8px", 
+                                borderRadius: 6, 
+                                fontSize: 13, 
+                                fontWeight: 800, 
+                                display: "flex", 
+                                alignItems: "center", 
+                                gap: 4 
+                              }}>
+                                {avgRating} <i className="fas fa-star" style={{ fontSize: 10 }} />
+                              </div>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: "var(--gold)", textDecoration: "underline" }}>
+                                {allReviews.length} {allReviews.length === 1 ? "Rating" : "Ratings"} & {allReviews.length} {allReviews.length === 1 ? "Review" : "Reviews"}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <div style={{ 
+                                background: "#f1f5f9", 
+                                color: "#64748b", 
+                                padding: "4px 8px", 
+                                borderRadius: 6, 
+                                fontSize: 12, 
+                                fontWeight: 600, 
+                                display: "flex", 
+                                alignItems: "center", 
+                                gap: 4 
+                              }}>
+                                <i className="far fa-star" style={{ fontSize: 10 }} /> Be the first to review
+                              </div>
+                              <span style={{ fontSize: 12, fontWeight: 500, color: "var(--sub)" }}>
+                                0 Ratings & 0 Reviews
+                              </span>
+                            </>
+                          )}
                         </div>
                       );
                     })()}
@@ -2371,17 +2447,18 @@ export default function ShopPage() {
                 </div>
 
                 {/* Price Section */}
-                <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12 }}>
-                  <span style={{ fontSize: 28, fontWeight: 800, color: "var(--navy)" }}>₹{viewProduct.price}</span>
-                  {viewProduct.mrp && viewProduct.mrp > viewProduct.price && (
-                    <>
-                      <span style={{ fontSize: 16, fontWeight: 500, color: "var(--sub)", textDecoration: "line-through" }}>₹{viewProduct.mrp}</span>
-                      <span style={{ padding: "4px 8px", background: "#fef2f2", color: "#ef4444", borderRadius: 6, fontSize: 12, fontWeight: 800 }}>
-                        {Math.round(((viewProduct.mrp - viewProduct.price) / viewProduct.mrp) * 100)}% OFF
+                {(() => {
+                  const pricing = getProductPricing(viewProduct);
+                  return (
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12 }}>
+                      <span style={{ fontSize: 28, fontWeight: 800, color: "var(--navy)" }}>₹{pricing.price.toLocaleString("en-IN")}</span>
+                      <span style={{ fontSize: 16, fontWeight: 500, color: "var(--sub)", textDecoration: "line-through" }}>₹{pricing.mrp.toLocaleString("en-IN")}</span>
+                      <span style={{ padding: "4px 8px", background: "#fef2f2", color: "#16a34a", borderRadius: 6, fontSize: 12, fontWeight: 800, display: "flex", alignItems: "center", gap: 2 }}>
+                        <i className="fas fa-arrow-down" style={{ fontSize: 10 }} /> {pricing.discount}% OFF
                       </span>
-                    </>
-                  )}
-                </div>
+                    </div>
+                  );
+                })()}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
                   <p style={{ fontSize: 11, color: "var(--sub)" }}>Inclusive of all taxes</p>
                 </div>
@@ -3005,6 +3082,39 @@ export default function ShopPage() {
             setIsPanning(false);
           };
 
+          // Mouse / Touch Swipe gesture handlers
+          const handleMouseDown = (e) => {
+            if (zoomScale > 1) {
+              startPan(e.clientX, e.clientY);
+            } else {
+              setSwipeStartX(e.clientX);
+            }
+          };
+
+          const handleMouseMove = (e) => {
+            if (zoomScale > 1) {
+              doPan(e.clientX, e.clientY);
+            }
+          };
+
+          const handleMouseUp = (e) => {
+            setIsPanning(false);
+            if (zoomScale === 1 && swipeStartX !== null) {
+              const diffX = e.clientX - swipeStartX;
+              if (diffX > 50) {
+                setZoomImageIndex(prev => (prev === 0 ? images.length - 1 : prev - 1));
+              } else if (diffX < -50) {
+                setZoomImageIndex(prev => (prev === images.length - 1 ? 0 : prev + 1));
+              }
+            }
+            setSwipeStartX(null);
+          };
+
+          const handleMouseLeave = () => {
+            setIsPanning(false);
+            setSwipeStartX(null);
+          };
+
           return (
             <div 
               onClick={() => setZoomImageIndex(null)}
@@ -3121,24 +3231,69 @@ export default function ShopPage() {
                 </>
               )}
 
-              {/* Image Container with Zoom & Drag Support */}
+              {/* Image Container with Zoom, Wheel-scroll Zoom, Swipe & Drag Support */}
               <div 
                 onClick={(e) => e.stopPropagation()}
-                onMouseDown={(e) => startPan(e.clientX, e.clientY)}
-                onMouseMove={(e) => doPan(e.clientX, e.clientY)}
-                onMouseUp={stopPan}
-                onMouseLeave={stopPan}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseLeave}
+                onWheel={(e) => {
+                  if (e.deltaY < 0) {
+                    setZoomScale(prev => Math.min(prev + 0.15, 4));
+                  } else {
+                    setZoomScale(prev => {
+                      const next = Math.max(prev - 0.15, 1);
+                      if (next === 1) setPanOffset({ x: 0, y: 0 });
+                      return next;
+                    });
+                  }
+                }}
                 onTouchStart={(e) => {
-                  if (e.touches.length === 1) {
-                    startPan(e.touches[0].clientX, e.touches[0].clientY);
+                  if (e.touches.length === 2) {
+                    const dx = e.touches[0].clientX - e.touches[1].clientX;
+                    const dy = e.touches[0].clientY - e.touches[1].clientY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    setTouchStartDist(dist);
+                    setIsPanning(false);
+                  } else if (e.touches.length === 1) {
+                    if (zoomScale > 1) {
+                      startPan(e.touches[0].clientX, e.touches[0].clientY);
+                    } else {
+                      setSwipeStartX(e.touches[0].clientX);
+                    }
                   }
                 }}
                 onTouchMove={(e) => {
-                  if (e.touches.length === 1) {
+                  if (e.touches.length === 2 && touchStartDist > 0) {
+                    const dx = e.touches[0].clientX - e.touches[1].clientX;
+                    const dy = e.touches[0].clientY - e.touches[1].clientY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const factor = dist / touchStartDist;
+                    setZoomScale(prev => {
+                      const next = Math.min(Math.max(prev * factor, 1), 4);
+                      if (next === 1) setPanOffset({ x: 0, y: 0 });
+                      return next;
+                    });
+                    setTouchStartDist(dist);
+                  } else if (e.touches.length === 1 && zoomScale > 1) {
                     doPan(e.touches[0].clientX, e.touches[0].clientY);
                   }
                 }}
-                onTouchEnd={stopPan}
+                onTouchEnd={(e) => {
+                  setIsPanning(false);
+                  setTouchStartDist(0);
+                  if (zoomScale === 1 && swipeStartX !== null && e.changedTouches.length > 0) {
+                    const endX = e.changedTouches[0].clientX;
+                    const diffX = endX - swipeStartX;
+                    if (diffX > 50) {
+                      setZoomImageIndex(prev => (prev === 0 ? images.length - 1 : prev - 1));
+                    } else if (diffX < -50) {
+                      setZoomImageIndex(prev => (prev === images.length - 1 ? 0 : prev + 1));
+                    }
+                  }
+                  setSwipeStartX(null);
+                }}
                 style={{
                   width: "100%",
                   height: "100%",
@@ -3173,7 +3328,7 @@ export default function ShopPage() {
 
               {/* Instructions Bar */}
               <div style={{ position: "absolute", bottom: 24, zIndex: 2010, color: "rgba(255,255,255,0.6)", fontSize: 11, fontWeight: 500, letterSpacing: 0.5 }}>
-                💡 Swipe / Use Arrows to navigate · Double click/tap to zoom · Drag to pan
+                💡 Swipe/Drag to navigate images · Pinch / Scroll to Zoom · Double click to reset
               </div>
             </div>
           );

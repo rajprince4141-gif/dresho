@@ -93,3 +93,34 @@ export function formatDate(dateObj, options = {}) {
   
   return date.toLocaleDateString("en-IN", defaultOptions);
 }
+
+/**
+ * Calculates discount, final price, and original price (MRP) for any product.
+ * If the product doesn't have an explicit MRP higher than its price,
+ * it applies a standard 38% fallback discount.
+ * 
+ * @param {Object} product - The product object
+ * @returns {Object} { mrp: number, price: number, discount: number }
+ */
+export function getProductPricing(product) {
+  if (!product) {
+    return { mrp: 0, price: 0, discount: 0 };
+  }
+  const rawPrice = Number(String(product.price).replace(/,/g, "")) || 0;
+  
+  if (product.mrp && Number(String(product.mrp).replace(/,/g, "")) > rawPrice) {
+    const rawMrp = Number(String(product.mrp).replace(/,/g, ""));
+    return {
+      mrp: rawMrp,
+      price: rawPrice,
+      discount: Math.round(((rawMrp - rawPrice) / rawMrp) * 100)
+    };
+  }
+  
+  return {
+    mrp: rawPrice,
+    price: Math.round(rawPrice * 0.62), // 38% off
+    discount: 38
+  };
+}
+

@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { getProductPricing } from "@/utils/formatters";
 
 /**
  * Custom React Hook to manage Dresho customer cart operations.
@@ -14,6 +15,15 @@ export function useCart(user, setShowAuth) {
       setShowAuth(true);
       return;
     }
+    
+    // Resolve dynamic discount price to ensure cart, checkout and invoices are consistent!
+    const pricing = getProductPricing(product);
+    const productWithPricing = {
+      ...product,
+      price: pricing.price,
+      mrp: pricing.mrp
+    };
+
     setCart((prev) => {
       const key = product.id + (size || "");
       const existing = prev.find((item) => item.id + (item.selectedSize || "") === key);
@@ -24,7 +34,7 @@ export function useCart(user, setShowAuth) {
             : item
         );
       }
-      return [...prev, { ...product, qty: 1, selectedSize: size || "M" }];
+      return [...prev, { ...productWithPricing, qty: 1, selectedSize: size || "M" }];
     });
   }, [user, setShowAuth]);
 
