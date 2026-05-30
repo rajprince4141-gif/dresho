@@ -169,6 +169,11 @@ export default function ShopPage() {
   const { orders } = useOrders({ userId: user?.uid });
   const [riderLocations, setRiderLocations] = useState({});
   const [viewProduct, setViewProduct] = useState(null);
+  const [zoomImageIndex, setZoomImageIndex] = useState(null);
+  const [zoomScale, setZoomScale] = useState(1);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [selectedSize, setSelectedSize] = useState("");
   const [favorites, setFavorites] = useState([]);
   const [pincode, setPincode] = useState("");
@@ -1416,6 +1421,21 @@ export default function ShopPage() {
                         <div className="deal-brand">{p.storeName || "DRESHO"}</div>
                         <div className="deal-name" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
                         <div className="deal-price-row"><span className="deal-price">₹{p.price}</span>{p.mrp && p.mrp > p.price && <><span className="deal-mrp">₹{p.mrp}</span><span className="deal-off">{Math.round(((p.mrp - p.price) / p.mrp) * 100)}% off</span></>}</div>
+                        {(() => {
+                          const allReviews = p.reviews || [];
+                          const totalRating = allReviews.reduce((sum, r) => sum + (Number(r.rating) || 5), 0);
+                          const avgRating = allReviews.length > 0 ? (totalRating / allReviews.length).toFixed(1) : "5.0";
+                          return (
+                            <div className="deal-rating" style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                              <span className="deal-rating-stars" style={{ color: "var(--gold)", fontSize: 12, fontWeight: 700 }}>
+                                ★ {avgRating}
+                              </span>
+                              <span className="deal-rating-count" style={{ color: "var(--sub)", fontSize: 11 }}>
+                                ({allReviews.length})
+                              </span>
+                            </div>
+                          );
+                        })()}
                         <div className="deal-delivery"><span className="green-dot"></span>Delivery in 30 min</div>
                       </div>
                     </div>
@@ -1629,7 +1649,17 @@ export default function ShopPage() {
                       <div className="deal-brand">{p.storeName || "DRESHO"}</div>
                       <div className="deal-name" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
                       <div className="deal-price-row"><span className="deal-price">₹{p.price}</span>{p.mrp && p.mrp > p.price && <><span className="deal-mrp">₹{p.mrp}</span><span className="deal-off">{Math.round(((p.mrp - p.price) / p.mrp) * 100)}% off</span></>}</div>
-                      <div className="deal-rating"><span className="deal-rating-stars">★ {p.averageRating || "New"}</span><span className="deal-rating-count">{p.reviews?.length ? `(${p.reviews.length})` : ""}</span></div>
+                      {(() => {
+                        const allReviews = p.reviews || [];
+                        const totalRating = allReviews.reduce((sum, r) => sum + (Number(r.rating) || 5), 0);
+                        const avgRating = allReviews.length > 0 ? (totalRating / allReviews.length).toFixed(1) : "5.0";
+                        return (
+                          <div className="deal-rating">
+                            <span className="deal-rating-stars">★ {avgRating}</span>
+                            <span className="deal-rating-count">({allReviews.length})</span>
+                          </div>
+                        );
+                      })()}
                       <div className="deal-delivery"><span className="green-dot"></span>Delivery in 30 min</div>
                     </div>
                   </div>
@@ -2252,7 +2282,23 @@ export default function ShopPage() {
               <div style={{ width: "100%", height: 450, background: "var(--ivory2)", position: "relative", display: "flex", overflowX: "auto", scrollSnapType: "x mandatory", scrollBehavior: "smooth", WebkitOverflowScrolling: "touch" }} className="hide-scrollbar">
                 {(viewProduct.images && viewProduct.images.length > 0 ? viewProduct.images : [viewProduct.image]).map((img, i) => (
                   <div key={i} style={{ minWidth: "100%", height: "100%", scrollSnapAlign: "start", position: "relative" }}>
-                    <img src={img} alt="" style={{ width: "100%", height: "100%", objectFit: "contain", opacity: (viewProduct.outOfStock || viewProduct.stock === 0) ? 0.4 : 1 }} onError={(e) => { e.target.style.display = "none"; }} />
+                    <img 
+                      src={img} 
+                      alt="" 
+                      onClick={() => {
+                        setZoomImageIndex(i);
+                        setZoomScale(1);
+                        setPanOffset({ x: 0, y: 0 });
+                      }}
+                      style={{ 
+                        width: "100%", 
+                        height: "100%", 
+                        objectFit: "contain", 
+                        opacity: (viewProduct.outOfStock || viewProduct.stock === 0) ? 0.4 : 1,
+                        cursor: "zoom-in"
+                      }} 
+                      onError={(e) => { e.target.style.display = "none"; }} 
+                    />
                     {i === 0 && (
                       <div style={{ position: "absolute", bottom: 40, right: 16, width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,0.9)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--navy)", cursor: "pointer", boxShadow: "0 4px 14px rgba(0,0,0,0.15)" }}>
                         <i className="fas fa-play" style={{ marginLeft: 3, fontSize: 16 }} />
@@ -2278,6 +2324,44 @@ export default function ShopPage() {
                       {viewProduct.storeName || "DRESHO"} <i className="fas fa-check-circle" style={{ color: "#10b981", fontSize: 10 }} />
                     </p>
                     <h1 style={{ fontFamily: "var(--font-d)", fontSize: 24, color: "var(--navy)", lineHeight: 1.2, margin: 0 }}>{viewProduct.name}</h1>
+                    {/* Dynamic Ratings Badge */}
+                    {(() => {
+                      const allReviews = viewProduct.reviews || [];
+                      const totalRating = allReviews.reduce((sum, r) => sum + (Number(r.rating) || 5), 0);
+                      const avgRating = allReviews.length > 0 ? (totalRating / allReviews.length).toFixed(1) : 0;
+                      return (
+                        <div 
+                          onClick={() => {
+                            document.getElementById('reviews-section')?.scrollIntoView({ behavior: 'smooth' });
+                          }}
+                          style={{ 
+                            display: "inline-flex", 
+                            alignItems: "center", 
+                            gap: 8, 
+                            marginTop: 10, 
+                            cursor: "pointer",
+                            userSelect: "none"
+                          }}
+                        >
+                          <div style={{ 
+                            background: "#16a34a", 
+                            color: "white", 
+                            padding: "4px 8px", 
+                            borderRadius: 6, 
+                            fontSize: 13, 
+                            fontWeight: 800, 
+                            display: "flex", 
+                            alignItems: "center", 
+                            gap: 4 
+                          }}>
+                            {avgRating > 0 ? avgRating : "5.0"} <i className="fas fa-star" style={{ fontSize: 10 }} />
+                          </div>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--gold)", textDecoration: "underline" }}>
+                            {allReviews.length} {allReviews.length === 1 ? "Rating" : "Ratings"} & {allReviews.length} {allReviews.length === 1 ? "Review" : "Reviews"}
+                          </span>
+                        </div>
+                      );
+                    })()}
                     {viewProduct.trending && (
                       <div style={{ marginTop: 8, display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
                         <span style={{ fontSize: 11, background: "linear-gradient(135deg, #ef4444, #b91c1c)", color: "white", padding: "4px 8px", borderRadius: 6, fontWeight: 800 }}>🔥 #1 Trending this week</span>
@@ -2316,12 +2400,6 @@ export default function ShopPage() {
                             <i className="fas fa-fire" /> Only {viewProduct.stock} left - selling fast!
                           </div>
                         )}
-                        <div style={{ fontSize: 11, fontWeight: 700, color: "var(--navy)", background: "white", padding: "4px 8px", borderRadius: 6, display: "flex", alignItems: "center", gap: 4, border: "1px solid #bbf7d0" }}>
-                          <i className="fas fa-eye" style={{ color: "var(--gold)" }} /> {Math.floor(viewProduct.price % 30) + 15} people looking right now
-                        </div>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: "var(--navy)", background: "white", padding: "4px 8px", borderRadius: 6, display: "flex", alignItems: "center", gap: 4, border: "1px solid #bbf7d0" }}>
-                          <i className="fas fa-shopping-bag" style={{ color: "#f59e0b" }} /> Ordered {Math.floor(viewProduct.price % 50) + 10} times today
-                        </div>
                       </div>
                     </div>
                   </div>
@@ -2353,21 +2431,42 @@ export default function ShopPage() {
                     <span style={{ fontSize: 12, fontWeight: 600, color: "var(--gold)", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}><i className="fas fa-ruler" /> Size Guide</span>
                   </div>
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    {(viewProduct.sizes || ["S", "M", "L", "XL"]).map((size) => (
-                      <button
-                        key={size}
-                        onClick={() => setSelectedSize(size)}
-                        style={{
-                          flex: 1, minWidth: 60, height: 60, borderRadius: 12, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                          background: selectedSize === size ? "var(--navy)" : "white",
-                          color: selectedSize === size ? "white" : "var(--navy)",
-                          border: selectedSize === size ? "2px solid var(--navy)" : "1px solid var(--border)",
-                          cursor: "pointer", transition: "all 0.2s ease",
-                        }}
-                      >
-                        <span style={{ fontSize: 14, fontWeight: 700 }}>{size}</span>
-                      </button>
-                    ))}
+                    {(() => {
+                      const sizes = viewProduct.sizes || ["S", "M", "L", "XL"];
+                      const cat = viewProduct.category || "";
+                      let filteredSizes = sizes;
+                      
+                      if (cat === "Footwear") {
+                        // Display ONLY numeric shoe sizes (filter out S, M, L, XL, etc.)
+                        filteredSizes = sizes.filter(s => {
+                          const sizeStr = String(s).trim().toUpperCase();
+                          return !["S", "M", "L", "XL", "XXL", "XXXL", "XS", "FREE SIZE", "FS"].includes(sizeStr);
+                        });
+                      } else {
+                        // Display ONLY apparel clothing sizes (filter out typical shoe sizes like 5, 6, 7, 8, 9, 10, 11)
+                        filteredSizes = sizes.filter(s => {
+                          const sizeStr = String(s).trim();
+                          const isShoeSize = /^[4-9]$|^1[0-5]$|^[4-9]\.5$|^1[0-4]\.5$/.test(sizeStr);
+                          return !isShoeSize;
+                        });
+                      }
+                      
+                      return filteredSizes.map((size) => (
+                        <button
+                          key={size}
+                          onClick={() => setSelectedSize(size)}
+                          style={{
+                            flex: "1 1 calc(20% - 10px)", minWidth: 60, height: 60, borderRadius: 12, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                            background: selectedSize === size ? "var(--navy)" : "white",
+                            color: selectedSize === size ? "white" : "var(--navy)",
+                            border: selectedSize === size ? "2px solid var(--navy)" : "1px solid var(--border)",
+                            cursor: "pointer", transition: "all 0.2s ease",
+                          }}
+                        >
+                          <span style={{ fontSize: 14, fontWeight: 700 }}>{size}</span>
+                        </button>
+                      ));
+                    })()}
                   </div>
                   {viewProduct.modelInfo && (
                     <div style={{ marginTop: 12, padding: "12px", background: "var(--ivory2)", borderRadius: 12, display: "flex", alignItems: "center", gap: 12 }}>
@@ -2534,7 +2633,7 @@ export default function ShopPage() {
                   const allReviewImages = allReviews.flatMap(r => r.images || []);
 
                   return (
-                    <div style={{ borderTop: "8px solid #f1f5f9", paddingTop: 20, marginTop: 16, paddingBottom: 20 }}>
+                    <div id="reviews-section" style={{ borderTop: "8px solid #f1f5f9", paddingTop: 20, marginTop: 16, paddingBottom: 20 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                         <h4 style={{ fontSize: 18, fontWeight: 800, color: "var(--navy)" }}>Ratings and reviews</h4>
                         <button style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #e2e8f0", background: "white", fontSize: 13, fontWeight: 700, color: "var(--navy)", cursor: "pointer", boxShadow: "0 2px 4px rgba(0,0,0,0.02)" }} onClick={() => setShowReviewModal(true)}>
@@ -2860,6 +2959,225 @@ export default function ShopPage() {
             </div>
           </div>
         )}
+
+        {/* ── PREMIUM PRODUCT IMAGE ZOOM LIGHTBOX ── */}
+        {zoomImageIndex !== null && viewProduct && (() => {
+          const images = viewProduct.images && viewProduct.images.length > 0 ? viewProduct.images : [viewProduct.image];
+          const activeImage = images[zoomImageIndex];
+
+          const handleZoomIn = () => setZoomScale(prev => Math.min(prev + 0.5, 4));
+          const handleZoomOut = () => {
+            setZoomScale(prev => {
+              const next = Math.max(prev - 0.5, 1);
+              if (next === 1) setPanOffset({ x: 0, y: 0 });
+              return next;
+            });
+          };
+          const handleReset = () => {
+            setZoomScale(1);
+            setPanOffset({ x: 0, y: 0 });
+          };
+
+          const handlePrev = (e) => {
+            e.stopPropagation();
+            setZoomImageIndex(prev => (prev === 0 ? images.length - 1 : prev - 1));
+            handleReset();
+          };
+          const handleNext = (e) => {
+            e.stopPropagation();
+            setZoomImageIndex(prev => (prev === images.length - 1 ? 0 : prev + 1));
+            handleReset();
+          };
+
+          // Mouse/Touch Drag Panning
+          const startPan = (clientX, clientY) => {
+            if (zoomScale <= 1) return;
+            setIsPanning(true);
+            setPanStart({ x: clientX - panOffset.x, y: clientY - panOffset.y });
+          };
+
+          const doPan = (clientX, clientY) => {
+            if (!isPanning || zoomScale <= 1) return;
+            setPanOffset({ x: clientX - panStart.x, y: clientY - panStart.y });
+          };
+
+          const stopPan = () => {
+            setIsPanning(false);
+          };
+
+          return (
+            <div 
+              onClick={() => setZoomImageIndex(null)}
+              style={{
+                position: "fixed",
+                inset: 0,
+                zIndex: 2000,
+                background: "rgba(10, 15, 30, 0.96)",
+                backdropFilter: "blur(8px)",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                animation: "fadeIn 0.25s ease-out"
+              }}
+            >
+              {/* Top Bar Controls */}
+              <div 
+                onClick={(e) => e.stopPropagation()} 
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  padding: "16px 24px",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  zIndex: 2010
+                }}
+              >
+                <div style={{ color: "white", fontSize: 13, fontWeight: 700, letterSpacing: 0.5 }}>
+                  {zoomImageIndex + 1} / {images.length} · {viewProduct.name}
+                </div>
+                <div style={{ display: "flex", gap: 12 }}>
+                  <button 
+                    onClick={handleZoomIn} 
+                    style={{ width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", color: "white", fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                  >
+                    <i className="fas fa-search-plus" style={{ margin: "auto" }} />
+                  </button>
+                  <button 
+                    onClick={handleZoomOut} 
+                    style={{ width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", color: "white", fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                  >
+                    <i className="fas fa-search-minus" style={{ margin: "auto" }} />
+                  </button>
+                  <button 
+                    onClick={handleReset} 
+                    style={{ padding: "0 16px", height: 44, borderRadius: 22, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                  >
+                    Reset
+                  </button>
+                  <button 
+                    onClick={() => setZoomImageIndex(null)}
+                    style={{ width: 44, height: 44, borderRadius: "50%", background: "var(--red)", border: "none", color: "white", fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                  >
+                    <i className="fas fa-times" style={{ margin: "auto" }} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Side Navigation Arrows */}
+              {images.length > 1 && (
+                <>
+                  <button 
+                    onClick={handlePrev}
+                    style={{
+                      position: "absolute",
+                      left: 24,
+                      zIndex: 2010,
+                      width: 56,
+                      height: 56,
+                      borderRadius: "50%",
+                      background: "rgba(255,255,255,0.1)",
+                      border: "1px solid rgba(255,255,255,0.15)",
+                      color: "white",
+                      fontSize: 24,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      transition: "background 0.2s"
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.2)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.1)"}
+                  >
+                    ‹
+                  </button>
+                  <button 
+                    onClick={handleNext}
+                    style={{
+                      position: "absolute",
+                      right: 24,
+                      zIndex: 2010,
+                      width: 56,
+                      height: 56,
+                      borderRadius: "50%",
+                      background: "rgba(255,255,255,0.1)",
+                      border: "1px solid rgba(255,255,255,0.15)",
+                      color: "white",
+                      fontSize: 24,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      transition: "background 0.2s"
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.2)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.1)"}
+                  >
+                    ›
+                  </button>
+                </>
+              )}
+
+              {/* Image Container with Zoom & Drag Support */}
+              <div 
+                onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => startPan(e.clientX, e.clientY)}
+                onMouseMove={(e) => doPan(e.clientX, e.clientY)}
+                onMouseUp={stopPan}
+                onMouseLeave={stopPan}
+                onTouchStart={(e) => {
+                  if (e.touches.length === 1) {
+                    startPan(e.touches[0].clientX, e.touches[0].clientY);
+                  }
+                }}
+                onTouchMove={(e) => {
+                  if (e.touches.length === 1) {
+                    doPan(e.touches[0].clientX, e.touches[0].clientY);
+                  }
+                }}
+                onTouchEnd={stopPan}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  overflow: "hidden",
+                  cursor: zoomScale > 1 ? (isPanning ? "grabbing" : "grab") : "default",
+                  userSelect: "none"
+                }}
+              >
+                <img 
+                  src={activeImage}
+                  alt=""
+                  onDoubleClick={() => {
+                    if (zoomScale > 1) handleReset();
+                    else {
+                      setZoomScale(2.2);
+                      setPanOffset({ x: 0, y: 0 });
+                    }
+                  }}
+                  style={{
+                    maxWidth: "90%",
+                    maxHeight: "85%",
+                    objectFit: "contain",
+                    transform: `scale(${zoomScale}) translate(${panOffset.x / zoomScale}px, ${panOffset.y / zoomScale}px)`,
+                    transition: isPanning ? "none" : "transform 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
+                    pointerEvents: "none"
+                  }}
+                />
+              </div>
+
+              {/* Instructions Bar */}
+              <div style={{ position: "absolute", bottom: 24, zIndex: 2010, color: "rgba(255,255,255,0.6)", fontSize: 11, fontWeight: 500, letterSpacing: 0.5 }}>
+                💡 Swipe / Use Arrows to navigate · Double click/tap to zoom · Drag to pan
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ── CHECKOUT MODAL ── */}
         {showCheckout && (

@@ -55,21 +55,8 @@ export function useAuth(role = "user") {
               }
             }
 
-            // ── Session Expiry Check (10 Minutes Inactivity) ──
-            const lastActive = localStorage.getItem("dreshoLastActive");
-            const now = Date.now();
-            if (lastActive && now - parseInt(lastActive) > 10 * 60 * 1000) {
-              localStorage.setItem("dreshoSavedEmail", u.email || "");
-              await signOut(auth);
-              localStorage.removeItem("dreshoLastActive");
-              setUser(null);
-              setUserData(null);
-              setAuthStep("welcome");
-              alert("Session expired. Please login again.");
-              setLoading(false);
-              return;
-            }
-            localStorage.setItem("dreshoLastActive", now.toString());
+            // Session is handled persistently by Firebase Client SDK.
+            localStorage.setItem("dreshoLastActive", Date.now().toString());
 
             setUser(u);
             const currentData = snap.data();
@@ -150,20 +137,8 @@ export function useAuth(role = "user") {
                 }
               }
 
-              // Session check for shop/user
-              const lastActive = localStorage.getItem("dreshoLastActive");
-              const now = Date.now();
-              if (lastActive && now - parseInt(lastActive) > 10 * 60 * 1000) {
-                localStorage.setItem("dreshoSavedEmail", u.email || "");
-                await signOut(auth);
-                localStorage.removeItem("dreshoLastActive");
-                setUser(null);
-                setUserData(null);
-                alert("Session expired. Please login again.");
-                setLoading(false);
-                return;
-              }
-              localStorage.setItem("dreshoLastActive", now.toString());
+              // Session is handled persistently by Firebase Client SDK.
+              localStorage.setItem("dreshoLastActive", Date.now().toString());
 
               setUser(u);
               setUserData({ ...finalData, role: currentRole });
@@ -207,15 +182,7 @@ export function useAuth(role = "user") {
     };
   }, [role]);
 
-  // Session keep-alive trigger
-  useEffect(() => {
-    if (user) {
-      const interval = setInterval(() => {
-        localStorage.setItem("dreshoLastActive", Date.now().toString());
-      }, 60000);
-      return () => clearInterval(interval);
-    }
-  }, [user]);
+  // Keep-alive triggers are deprecated as sessions are now fully persistent
 
   const logout = async () => {
     await signOut(auth);

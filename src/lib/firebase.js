@@ -34,6 +34,16 @@ export const requestNotificationPermission = async () => {
     const permission = await Notification.requestPermission();
     if (permission === 'granted') {
       try {
+        // Register the FCM Service Worker if browser supports it
+        if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+          try {
+            await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+            console.log('FCM Service Worker registered successfully.');
+          } catch (swErr) {
+            console.warn('Service Worker registration failed:', swErr);
+          }
+        }
+        
         const token = await getToken(messaging, {
           vapidKey: process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY,
           serviceWorkerRegistration: await navigator.serviceWorker?.getRegistration('/firebase-messaging-sw.js') || undefined

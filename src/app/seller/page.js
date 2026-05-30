@@ -179,6 +179,19 @@ export default function SellerPage() {
           })
         }).catch(err => console.error("Notification failed", err));
       }
+
+      // Broadcast to active riders to grab the delivery job
+      fetch("/api/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "broadcast_riders",
+          title: "New Delivery Available! 📦",
+          body: `A new order #${order?.trackingId || ""} is available for delivery from ${sellerData?.storeName || "a nearby store"}.`,
+          link: "/delivery"
+        })
+      }).catch(err => console.error("Rider broadcast failed", err));
+
     } catch (e) {
       alert("Failed to accept order: " + e.message);
     }

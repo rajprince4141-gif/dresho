@@ -94,6 +94,18 @@ export default function AdminPage() {
     return () => unsub();
   }, []);
 
+  const messagesDropdownRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (messagesDropdownRef.current && !messagesDropdownRef.current.contains(event.target)) {
+        setShowMessages(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   // Push Notification state
   const [pushTitle, setPushTitle] = useState("");
   const [pushBody, setPushBody] = useState("");
@@ -365,6 +377,19 @@ export default function AdminPage() {
           })
         });
       }
+
+      // Broadcast to online active riders that the delivery is available again
+      fetch("/api/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "broadcast_riders",
+          title: "New Delivery Available! 📦",
+          body: `Order #${order?.trackingId || ""} is available for delivery from ${order?.storeName || "a nearby store"}.`,
+          link: "/delivery"
+        })
+      }).catch(err => console.error("Rider reassignment broadcast failed", err));
+
     } catch (e) {
       alert("Failed to reassign rider: " + e.message);
     }
@@ -610,7 +635,7 @@ export default function AdminPage() {
               </button>
             </Link>
             <div className="adm-tb-divider"/>
-            <div style={{ position: "relative" }}>
+            <div style={{ position: "relative" }} ref={messagesDropdownRef}>
               <div className="adm-tb-action" onClick={() => setShowMessages(!showMessages)}>
                 <i className="far fa-envelope" />
                 {feedbacks.length > 0 && <div className="adm-tb-notif">{feedbacks.length}</div>}
@@ -619,7 +644,6 @@ export default function AdminPage() {
               {/* Messages Dropdown */}
               {showMessages && (
                 <>
-                  <div style={{ position: "fixed", inset: 0, zIndex: 90 }} onClick={() => setShowMessages(false)} />
                   <div style={{
                     position: "absolute", top: "calc(100% + 10px)", right: 0, width: 340,
                     background: "var(--white, #fff)", borderRadius: 16, boxShadow: "0 10px 40px rgba(0,0,0,0.12)",

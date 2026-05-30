@@ -45,6 +45,11 @@ export default function CategoryPage() {
   const [products, setProducts] = useState([]);
   const [cart, setCart] = useState([]);
   const [viewProduct, setViewProduct] = useState(null);
+  const [zoomImageIndex, setZoomImageIndex] = useState(null);
+  const [zoomScale, setZoomScale] = useState(1);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [selectedSize, setSelectedSize] = useState("");
   const [sortBy, setSortBy] = useState("default");
   const [showCart, setShowCart] = useState(false);
@@ -336,6 +341,17 @@ export default function CategoryPage() {
                       <span className="cp-off">{Math.round(((p.mrp - p.price) / p.mrp) * 100)}% off</span>
                     </>}
                   </div>
+                  {(() => {
+                    const allReviews = p.reviews || [];
+                    const totalRating = allReviews.reduce((sum, r) => sum + (Number(r.rating) || 5), 0);
+                    const avgRating = allReviews.length > 0 ? (totalRating / allReviews.length).toFixed(1) : "5.0";
+                    return (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                        <span style={{ color: "var(--gold)", fontSize: 12, fontWeight: 700 }}>★ {avgRating}</span>
+                        <span style={{ color: "var(--sub)", fontSize: 11 }}>({allReviews.length})</span>
+                      </div>
+                    );
+                  })()}
                   <div className="cp-delivery"><span className="cp-dot" /> 30 min delivery</div>
                 </div>
               </div>
@@ -363,7 +379,23 @@ export default function CategoryPage() {
             <div style={{ position: "relative", width: "100%", height: 420, background: "var(--ivory2)", overflow: "hidden" }}>
               {(viewProduct.images && viewProduct.images.length > 0 ? viewProduct.images : [viewProduct.image]).map((img, i) => (
                 <div key={i} style={{ position: "absolute", inset: 0, transition: "opacity 0.3s", opacity: i === imgIndex ? 1 : 0, pointerEvents: i === imgIndex ? "auto" : "none" }}>
-                  <img src={img} alt="" style={{ width: "100%", height: "100%", objectFit: "contain", opacity: (viewProduct.outOfStock || viewProduct.stock === 0) ? 0.4 : 1 }} onError={(e) => { e.target.style.display = "none"; }} />
+                  <img 
+                    src={img} 
+                    alt="" 
+                    onClick={() => {
+                      setZoomImageIndex(i);
+                      setZoomScale(1);
+                      setPanOffset({ x: 0, y: 0 });
+                    }}
+                    style={{ 
+                      width: "100%", 
+                      height: "100%", 
+                      objectFit: "contain", 
+                      opacity: (viewProduct.outOfStock || viewProduct.stock === 0) ? 0.4 : 1,
+                      cursor: "zoom-in"
+                    }} 
+                    onError={(e) => { e.target.style.display = "none"; }} 
+                  />
                 </div>
               ))}
               {(viewProduct.outOfStock || viewProduct.stock === 0) && (
@@ -412,6 +444,44 @@ export default function CategoryPage() {
                   <span style={{ color: "#ef4444", fontSize: 12, fontWeight: 800, flexShrink: 0, marginLeft: 8 }}>Only {viewProduct.stock} left!</span>
                 )}
               </div>
+              {/* Dynamic Clickable Ratings Badge */}
+              {(() => {
+                const allReviews = viewProduct.reviews || [];
+                const totalRating = allReviews.reduce((sum, r) => sum + (Number(r.rating) || 5), 0);
+                const avgRating = allReviews.length > 0 ? (totalRating / allReviews.length).toFixed(1) : 0;
+                return (
+                  <div 
+                    onClick={() => {
+                      document.getElementById('reviews-section')?.scrollIntoView({ behavior: 'smooth' });
+                    }}
+                    style={{ 
+                      display: "inline-flex", 
+                      alignItems: "center", 
+                      gap: 8, 
+                      marginTop: 10, 
+                      cursor: "pointer",
+                      userSelect: "none"
+                    }}
+                  >
+                    <div style={{ 
+                      background: "#16a34a", 
+                      color: "white", 
+                      padding: "4px 8px", 
+                      borderRadius: 6, 
+                      fontSize: 13, 
+                      fontWeight: 800, 
+                      display: "flex", 
+                      alignItems: "center", 
+                      gap: 4 
+                    }}>
+                      {avgRating > 0 ? avgRating : "5.0"} <i className="fas fa-star" style={{ fontSize: 10 }} />
+                    </div>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "var(--gold)", textDecoration: "underline" }}>
+                      {allReviews.length} {allReviews.length === 1 ? "Rating" : "Ratings"} & {allReviews.length} {allReviews.length === 1 ? "Review" : "Reviews"}
+                    </span>
+                  </div>
+                );
+              })()}
 
               {/* Price Row */}
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12 }}>
@@ -433,19 +503,13 @@ export default function CategoryPage() {
                     <h4 style={{ fontSize: 14, fontWeight: 800, color: "#166534", marginBottom: 2 }}>Fast Delivery Available</h4>
                     <p style={{ fontSize: 12, color: "#15803d", fontWeight: 600 }}>Get it by {new Date(Date.now() + 86400000 * 2).toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric' })} with live rider tracking.</p>
                     
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-                      {viewProduct.stock > 0 && viewProduct.stock <= 5 && !viewProduct.outOfStock && (
+                    {viewProduct.stock > 0 && viewProduct.stock <= 5 && !viewProduct.outOfStock && (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
                         <div style={{ fontSize: 11, fontWeight: 700, color: "#ef4444", background: "#fef2f2", padding: "4px 8px", borderRadius: 6, display: "flex", alignItems: "center", gap: 4 }}>
                           <i className="fas fa-fire" /> Only {viewProduct.stock} left - selling fast!
                         </div>
-                      )}
-                      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--navy)", background: "white", padding: "4px 8px", borderRadius: 6, display: "flex", alignItems: "center", gap: 4, border: "1px solid #bbf7d0" }}>
-                        <i className="fas fa-eye" style={{ color: "var(--gold)" }} /> {Math.floor(viewProduct.price % 30) + 15} people looking right now
                       </div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--navy)", background: "white", padding: "4px 8px", borderRadius: 6, display: "flex", alignItems: "center", gap: 4, border: "1px solid #bbf7d0" }}>
-                        <i className="fas fa-shopping-bag" style={{ color: "#f59e0b" }} /> Ordered {Math.floor(viewProduct.price % 50) + 10} times today
-                      </div>
-                    </div>
+                    )}
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 8, marginTop: 12, borderTop: "1px solid #bbf7d0", paddingTop: 12 }}>
@@ -473,11 +537,42 @@ export default function CategoryPage() {
                   <span style={{ fontSize: 12, fontWeight: 600, color: "var(--gold)", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}><i className="fas fa-ruler" /> Size Guide</span>
                 </div>
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                  {(viewProduct.sizes || ["S", "M", "L", "XL"]).map((size) => (
-                    <button key={size} onClick={() => setSelectedSize(size)} style={{ flex: 1, minWidth: 60, height: 60, borderRadius: 12, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: selectedSize === size ? "var(--navy)" : "white", color: selectedSize === size ? "white" : "var(--navy)", border: selectedSize === size ? "2px solid var(--navy)" : "1px solid var(--border)", cursor: "pointer", transition: "all 0.2s ease" }}>
-                      <span style={{ fontSize: 14, fontWeight: 700 }}>{size}</span>
-                    </button>
-                  ))}
+                  {(() => {
+                    const sizes = viewProduct.sizes || ["S", "M", "L", "XL"];
+                    const cat = viewProduct.category || "";
+                    let filteredSizes = sizes;
+                    
+                    if (cat === "Footwear") {
+                      // Display ONLY numeric shoe sizes (filter out S, M, L, XL, etc.)
+                      filteredSizes = sizes.filter(s => {
+                        const sizeStr = String(s).trim().toUpperCase();
+                        return !["S", "M", "L", "XL", "XXL", "XXXL", "XS", "FREE SIZE", "FS"].includes(sizeStr);
+                      });
+                    } else {
+                      // Display ONLY apparel clothing sizes (filter out typical shoe sizes like 5, 6, 7, 8, 9, 10, 11)
+                      filteredSizes = sizes.filter(s => {
+                        const sizeStr = String(s).trim();
+                        const isShoeSize = /^[4-9]$|^1[0-5]$|^[4-9]\.5$|^1[0-4]\.5$/.test(sizeStr);
+                        return !isShoeSize;
+                      });
+                    }
+                    
+                    return filteredSizes.map((size) => (
+                      <button
+                        key={size}
+                        onClick={() => setSelectedSize(size)}
+                        style={{
+                          flex: "1 1 calc(20% - 10px)", minWidth: 60, height: 60, borderRadius: 12, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                          background: selectedSize === size ? "var(--navy)" : "white",
+                          color: selectedSize === size ? "white" : "var(--navy)",
+                          border: selectedSize === size ? "2px solid var(--navy)" : "1px solid var(--border)",
+                          cursor: "pointer", transition: "all 0.2s ease",
+                        }}
+                      >
+                        <span style={{ fontSize: 14, fontWeight: 700 }}>{size}</span>
+                      </button>
+                    ));
+                  })()}
                 </div>
               </div>
 
@@ -506,25 +601,46 @@ export default function CategoryPage() {
               {/* Ratings & Reviews */}
               {(() => {
                 const allReviews = viewProduct.reviews || [];
-                const avgRating = allReviews.length > 0 ? (allReviews.reduce((s,r) => s+(Number(r.rating)||5),0)/allReviews.length).toFixed(1) : 0;
+                const totalRating = allReviews.reduce((sum, r) => sum + (Number(r.rating) || 5), 0);
+                const avgRating = allReviews.length > 0 ? (totalRating / allReviews.length).toFixed(1) : 0;
                 return (
-                  <div style={{ borderTop: "8px solid #f1f5f9", paddingTop: 20, marginTop: 16, paddingBottom: 20 }}>
+                  <div id="reviews-section" style={{ borderTop: "8px solid #f1f5f9", paddingTop: 20, marginTop: 16, paddingBottom: 20 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                       <h4 style={{ fontSize: 18, fontWeight: 800, color: "var(--navy)" }}>Ratings and reviews</h4>
-                      <button style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #e2e8f0", background: "white", fontSize: 13, fontWeight: 700, color: "var(--navy)", cursor: "pointer" }} onClick={() => setShowReviewModal(true)}>Rate Product</button>
+                      <button style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #e2e8f0", background: "white", fontSize: 13, fontWeight: 700, color: "var(--navy)", cursor: "pointer", boxShadow: "0 2px 4px rgba(0,0,0,0.02)" }} onClick={() => setShowReviewModal(true)}>Rate Product</button>
                     </div>
                     {allReviews.length > 0 ? (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                        {allReviews.map((rev, i) => (
-                          <div key={i} style={{ paddingBottom: 16, borderBottom: "1px solid #e2e8f0" }}>
-                            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-                              <span style={{ background: rev.rating >= 4 ? "#16a34a" : "#f59e0b", color: "white", padding: "2px 6px", borderRadius: 4, fontSize: 11, fontWeight: 800 }}>{rev.rating} <i className="fas fa-star" style={{ fontSize: 8 }} /></span>
-                              <span style={{ fontSize: 14, fontWeight: 700, color: "var(--navy)" }}>{rev.title || "Review"}</span>
+                      <>
+                        {/* Overall Rating Block */}
+                        <div style={{ marginBottom: 16 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                            <div style={{ fontSize: 32, fontWeight: 900, color: "var(--navy)", display: "flex", alignItems: "center", gap: 4 }}>
+                              {avgRating} <i className="fas fa-star" style={{ fontSize: 20, color: "#16a34a" }} />
                             </div>
-                            <p style={{ fontSize: 13, color: "#475569", lineHeight: 1.5 }}>{rev.text}</p>
+                            <div style={{ fontSize: 16, fontWeight: 700, color: "#16a34a", background: "#dcfce7", padding: "4px 12px", borderRadius: 20 }}>
+                              {avgRating >= 4 ? "Good" : avgRating >= 3 ? "Average" : "Poor"}
+                            </div>
                           </div>
-                        ))}
-                      </div>
+                          <p style={{ fontSize: 13, color: "var(--sub)", marginTop: 4 }}>
+                            based on {allReviews.length} ratings by <i className="fas fa-check-circle" style={{ color: "#16a34a" }} /> Verified Buyers
+                          </p>
+                        </div>
+
+                        {/* Reviews List */}
+                        <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 16 }}>
+                          {allReviews.map((rev, i) => (
+                            <div key={i} style={{ paddingBottom: 16, borderBottom: "1px solid #e2e8f0" }}>
+                              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                                <span style={{ background: rev.rating >= 4 ? "#16a34a" : rev.rating >= 3 ? "#f59e0b" : "#ef4444", color: "white", padding: "2px 6px", borderRadius: 4, fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", gap: 4 }}>
+                                  {rev.rating} <i className="fas fa-star" style={{ fontSize: 8 }} />
+                                </span>
+                                <span style={{ fontSize: 14, fontWeight: 700, color: "var(--navy)" }}>{rev.title || (rev.rating >= 4 ? "Awesome!" : rev.rating >= 3 ? "Good product" : "Okay")}</span>
+                              </div>
+                              <p style={{ fontSize: 13, color: "#475569", lineHeight: 1.5 }}>{rev.text}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </>
                     ) : (
                       <div style={{ textAlign: "center", padding: "32px 0", background: "#f8fafc", borderRadius: 16 }}>
                         <i className="fas fa-comment-dots" style={{ fontSize: 32, color: "#cbd5e1", marginBottom: 12 }} />
@@ -610,6 +726,225 @@ export default function CategoryPage() {
           </div>
         </div>
       )}
+
+      {/* ── PREMIUM PRODUCT IMAGE ZOOM LIGHTBOX ── */}
+      {zoomImageIndex !== null && viewProduct && (() => {
+        const images = viewProduct.images && viewProduct.images.length > 0 ? viewProduct.images : [viewProduct.image];
+        const activeImage = images[zoomImageIndex];
+
+        const handleZoomIn = () => setZoomScale(prev => Math.min(prev + 0.5, 4));
+        const handleZoomOut = () => {
+          setZoomScale(prev => {
+            const next = Math.max(prev - 0.5, 1);
+            if (next === 1) setPanOffset({ x: 0, y: 0 });
+            return next;
+          });
+        };
+        const handleReset = () => {
+          setZoomScale(1);
+          setPanOffset({ x: 0, y: 0 });
+        };
+
+        const handlePrev = (e) => {
+          e.stopPropagation();
+          setZoomImageIndex(prev => (prev === 0 ? images.length - 1 : prev - 1));
+          handleReset();
+        };
+        const handleNext = (e) => {
+          e.stopPropagation();
+          setZoomImageIndex(prev => (prev === images.length - 1 ? 0 : prev + 1));
+          handleReset();
+        };
+
+        // Mouse/Touch Drag Panning
+        const startPan = (clientX, clientY) => {
+          if (zoomScale <= 1) return;
+          setIsPanning(true);
+          setPanStart({ x: clientX - panOffset.x, y: clientY - panOffset.y });
+        };
+
+        const doPan = (clientX, clientY) => {
+          if (!isPanning || zoomScale <= 1) return;
+          setPanOffset({ x: clientX - panStart.x, y: clientY - panStart.y });
+        };
+
+        const stopPan = () => {
+          setIsPanning(false);
+        };
+
+        return (
+          <div 
+            onClick={() => setZoomImageIndex(null)}
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 2000,
+              background: "rgba(10, 15, 30, 0.96)",
+              backdropFilter: "blur(8px)",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              animation: "fadeIn 0.25s ease-out"
+            }}
+          >
+            {/* Top Bar Controls */}
+            <div 
+              onClick={(e) => e.stopPropagation()} 
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                right: 0,
+                padding: "16px 24px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                zIndex: 2010
+              }}
+            >
+              <div style={{ color: "white", fontSize: 13, fontWeight: 700, letterSpacing: 0.5 }}>
+                {zoomImageIndex + 1} / {images.length} · {viewProduct.name}
+              </div>
+              <div style={{ display: "flex", gap: 12 }}>
+                <button 
+                  onClick={handleZoomIn} 
+                  style={{ width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", color: "white", fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                >
+                  <i className="fas fa-search-plus" style={{ margin: "auto" }} />
+                </button>
+                <button 
+                  onClick={handleZoomOut} 
+                  style={{ width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", color: "white", fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                >
+                  <i className="fas fa-search-minus" style={{ margin: "auto" }} />
+                </button>
+                <button 
+                  onClick={handleReset} 
+                  style={{ padding: "0 16px", height: 44, borderRadius: 22, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                >
+                  Reset
+                </button>
+                <button 
+                  onClick={() => setZoomImageIndex(null)}
+                  style={{ width: 44, height: 44, borderRadius: "50%", background: "var(--red)", border: "none", color: "white", fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                >
+                  <i className="fas fa-times" style={{ margin: "auto" }} />
+                </button>
+              </div>
+            </div>
+
+            {/* Side Navigation Arrows */}
+            {images.length > 1 && (
+              <>
+                <button 
+                  onClick={handlePrev}
+                  style={{
+                    position: "absolute",
+                    left: 24,
+                    zIndex: 2010,
+                    width: 56,
+                    height: 56,
+                    borderRadius: "50%",
+                    background: "rgba(255,255,255,0.1)",
+                    border: "1px solid rgba(255,255,255,0.15)",
+                    color: "white",
+                    fontSize: 24,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "background 0.2s"
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.2)"}
+                  onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.1)"}
+                >
+                  ‹
+                </button>
+                <button 
+                  onClick={handleNext}
+                  style={{
+                    position: "absolute",
+                    right: 24,
+                    zIndex: 2010,
+                    width: 56,
+                    height: 56,
+                    borderRadius: "50%",
+                    background: "rgba(255,255,255,0.1)",
+                    border: "1px solid rgba(255,255,255,0.15)",
+                    color: "white",
+                    fontSize: 24,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "background 0.2s"
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.2)"}
+                  onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.1)"}
+                >
+                  ›
+                </button>
+              </>
+            )}
+
+            {/* Image Container with Zoom & Drag Support */}
+            <div 
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => startPan(e.clientX, e.clientY)}
+              onMouseMove={(e) => doPan(e.clientX, e.clientY)}
+              onMouseUp={stopPan}
+              onMouseLeave={stopPan}
+              onTouchStart={(e) => {
+                if (e.touches.length === 1) {
+                  startPan(e.touches[0].clientX, e.touches[0].clientY);
+                }
+              }}
+              onTouchMove={(e) => {
+                if (e.touches.length === 1) {
+                  doPan(e.touches[0].clientX, e.touches[0].clientY);
+                }
+              }}
+              onTouchEnd={stopPan}
+              style={{
+                width: "100%",
+                height: "100%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                overflow: "hidden",
+                cursor: zoomScale > 1 ? (isPanning ? "grabbing" : "grab") : "default",
+                userSelect: "none"
+              }}
+            >
+              <img 
+                src={activeImage}
+                alt=""
+                onDoubleClick={() => {
+                  if (zoomScale > 1) handleReset();
+                  else {
+                    setZoomScale(2.2);
+                    setPanOffset({ x: 0, y: 0 });
+                  }
+                }}
+                style={{
+                  maxWidth: "90%",
+                  maxHeight: "85%",
+                  objectFit: "contain",
+                  transform: `scale(${zoomScale}) translate(${panOffset.x / zoomScale}px, ${panOffset.y / zoomScale}px)`,
+                  transition: isPanning ? "none" : "transform 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
+                  pointerEvents: "none"
+                }}
+              />
+            </div>
+
+            {/* Instructions Bar */}
+            <div style={{ position: "absolute", bottom: 24, zIndex: 2010, color: "rgba(255,255,255,0.6)", fontSize: 11, fontWeight: 500, letterSpacing: 0.5 }}>
+              💡 Swipe / Use Arrows to navigate · Double click/tap to zoom · Drag to pan
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── CART DRAWER ── */}
       {showCart && (

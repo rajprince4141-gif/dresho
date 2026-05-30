@@ -1,16 +1,71 @@
 "use client";
 import React, { useState, useEffect, useRef } from "react";
 import { collection, query, where, orderBy, onSnapshot, doc, updateDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { onMessage } from "firebase/messaging";
+import { db, messaging } from "@/lib/firebase";
+
+// Premium sound chime generator using Web Audio API
+const playNotificationSound = () => {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+    
+    const playNote = (frequency, startTime, duration) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(frequency, startTime);
+      
+      gain.gain.setValueAtTime(0.15, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+      
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      
+      osc.start(startTime);
+      osc.stop(startTime + duration);
+    };
+    
+    const now = ctx.currentTime;
+    playNote(523.25, now, 0.15); // C5 (pleasant tone)
+    playNote(783.99, now + 0.12, 0.3); // G5 (ascending success chord)
+  } catch (e) {
+    console.warn("Failed to play sound chime:", e);
+  }
+};
 
 export default function NotificationBell({ userId, role }) {
+  const [personalNotifs, setPersonalNotifs] = useState([]);
+  const [broadcastNotifs, setBroadcastNotifs] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef(null);
 
+  // ── 1. Foreground Push Messaging Listener ──
+  useEffect(() => {
+    if (!messaging) return;
+    const unsubscribe = onMessage(messaging, (payload) => {
+      console.log("Foreground message received:", payload);
+      playNotificationSound();
+      
+      // Trigger native browser notification
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+        new Notification(payload.notification.title, {
+          body: payload.notification.body,
+          icon: "/logo.jpeg"
+        });
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // ── 2. Real-Time Personal Notifications listener ──
   useEffect(() => {
     if (!userId) return;
+    let isInitialLoad = true;
 
     // Listen to notifications for this specific user
     const q1 = query(
@@ -21,16 +76,26 @@ export default function NotificationBell({ userId, role }) {
     const unsubscribe = onSnapshot(q1, (snap) => {
       let notifs = [];
       let unread = 0;
+      let hasNewAdditions = false;
+      
+      snap.docChanges().forEach((change) => {
+        if (change.type === "added" && !isInitialLoad) {
+          hasNewAdditions = true;
+        }
+      });
+      
       snap.forEach((doc) => {
         const data = doc.data();
         notifs.push({ id: doc.id, ...data });
         if (!data.read) unread++;
       });
       
-      // Sort by createdAt descending
-      notifs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      if (hasNewAdditions) {
+        playNotificationSound();
+      }
+      isInitialLoad = false;
       
-      setNotifications(notifs);
+      setPersonalNotifs(notifs);
       setUnreadCount(unread);
     }, (err) => {
       console.error("Error listening to user notifications:", err);
@@ -39,35 +104,59 @@ export default function NotificationBell({ userId, role }) {
     return () => unsubscribe();
   }, [userId]);
 
-  // For riders, listen to broadcast notifications too
+  // ── 3. Role-based Broadcast Notifications listener ──
   useEffect(() => {
-    if (role !== "rider") return;
+    if (!role || !userId) return;
+
+    const targetRoles = [role, "all"];
+    if (role === "user" || role === "customer") {
+      targetRoles.push("user", "customer");
+    } else if (role === "rider" || role === "delivery") {
+      targetRoles.push("rider", "delivery");
+    }
 
     const qBroadcast = query(
       collection(db, "broadcast_notifications"),
-      where("role", "==", "rider")
+      where("role", "in", targetRoles)
     );
 
+    let isInitialLoad = true;
     const unsubscribeBroadcast = onSnapshot(qBroadcast, (snap) => {
       let bNotifs = [];
+      let hasNewAdditions = false;
+
+      snap.docChanges().forEach((change) => {
+        if (change.type === "added" && !isInitialLoad) {
+          hasNewAdditions = true;
+        }
+      });
+
       snap.forEach((doc) => {
         const data = doc.data();
         bNotifs.push({ id: doc.id, ...data, isBroadcast: true });
       });
       
-      setNotifications(prev => {
-        const merged = [...prev, ...bNotifs];
-        // Deduplicate
-        const unique = Array.from(new Set(merged.map(a => a.id))).map(id => merged.find(a => a.id === id));
-        unique.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-        return unique;
-      });
+      if (hasNewAdditions) {
+        playNotificationSound();
+      }
+      isInitialLoad = false;
+
+      setBroadcastNotifs(bNotifs);
     }, (err) => {
       console.error("Error listening to broadcast notifications:", err);
     });
 
     return () => unsubscribeBroadcast();
-  }, [role]);
+  }, [role, userId]);
+
+  // ── 4. Unified Reactive Notification Merging & Sorting ──
+  useEffect(() => {
+    const merged = [...personalNotifs, ...broadcastNotifs];
+    // Deduplicate
+    const unique = Array.from(new Set(merged.map(a => a.id))).map(id => merged.find(a => a.id === id));
+    unique.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    setNotifications(unique);
+  }, [personalNotifs, broadcastNotifs]);
 
   useEffect(() => {
     function handleClickOutside(event) {
