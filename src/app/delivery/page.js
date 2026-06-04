@@ -9,7 +9,7 @@ import {
 } from "firebase/auth";
 import {
   doc, setDoc, getDoc, collection, query, where,
-  onSnapshot, updateDoc, increment, getDocs
+  onSnapshot, updateDoc, increment, getDocs, arrayUnion
 } from "firebase/firestore";
 import { requestNotificationPermission } from "@/lib/firebase";
 import NotificationBell from "@/components/NotificationBell";
@@ -49,8 +49,9 @@ export default function DeliveryPage() {
   const [isOnline, setIsOnline] = useState(false);
   const [tab, setTab] = useState("jobs");
   const [orderSegment, setOrderSegment] = useState("new");
-  const { availableOrders, activeDeliveries } = useOrders({ role: "delivery", riderId: user?.uid, approved: riderData?.approved });
+  const { availableOrders, activeDeliveries, loading: ordersLoading } = useOrders({ role: "delivery", riderId: user?.uid, approved: riderData?.approved });
   const [sellersData, setSellersData] = useState({});
+  const [selectedOrderId, setSelectedOrderId] = useState(null);
 
   // Payment Modal
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -73,6 +74,39 @@ export default function DeliveryPage() {
     }
   }, [riderData]);
 
+  // Deep Link parser for Rider Dashboard
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const queryTab = params.get("tab");
+    const queryOrderId = params.get("orderId");
+    
+    if (queryTab === "jobs" || queryTab === "active" || queryTab === "orders") {
+      setTab(queryTab);
+      if (queryOrderId) {
+        setSelectedOrderId(queryOrderId);
+        // Map order segment based on status
+        const order = availableOrders.find(o => o.id === queryOrderId || o.trackingId === queryOrderId) || 
+                      activeDeliveries.find(o => o.id === queryOrderId || o.trackingId === queryOrderId);
+        if (order) {
+          if (order.status === "Searching Rider" || order.status === "Packed Ready") {
+            setTab("orders");
+            setOrderSegment("new");
+          } else if (["Rider Assigned", "Rider Accepted", "Preparing", "Ready For Pickup", "Pickup Assigned", "Pickup Scheduled"].includes(order.status) || (order.status === "Return Approved" && !order.pickedUpFromCustomer) || (order.status === "Exchange Approved" && !order.pickedUpFromSeller)) {
+            setTab("orders");
+            setOrderSegment("accepted");
+          } else if (["Picked Up", "Out For Delivery", "Replacement Processing", "Return Picked Up"].includes(order.status) || (order.status === "Return Approved" && order.pickedUpFromCustomer) || (order.status === "Exchange Approved" && order.pickedUpFromSeller)) {
+            setTab("orders");
+            setOrderSegment("picked_up");
+          } else {
+            setTab("orders");
+            setOrderSegment("delivered");
+          }
+        }
+      }
+    }
+  }, [availableOrders, activeDeliveries]);
+
   // ── LIVE LOCATION TRACKING ──
   useEffect(() => {
     let watchId;
@@ -90,7 +124,7 @@ export default function DeliveryPage() {
             } catch(e) { console.error("Error updating location", e); }
           },
           (err) => { console.warn("Location error:", err); },
-          { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
+          { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
         );
       }
     } else if (!isOnline && user) {
@@ -266,76 +300,84 @@ export default function DeliveryPage() {
   };
 
   const acceptOrder = async (orderId) => {
-    // Notify the customer that rider is assigned and it's out for delivery
-    const oSnap = await getDoc(doc(db, "orders", orderId));
-    if (oSnap.exists()) {
-      const oData = oSnap.data();
-      let newStatus = oData.status;
-      let title = "Rider Assigned! 🚚";
-      let body = `Rider ${riderData?.name} has accepted your order and is on the way.`;
+    try {
+      const oSnap = await getDoc(doc(db, "orders", orderId));
+      if (oSnap.exists()) {
+        const oData = oSnap.data();
+        let newStatus = oData.status;
+        let title = "Rider Assigned! 🚚";
+        let body = `Rider ${riderData?.name} has accepted your order and is on the way.`;
+        const now = new Date();
 
-      if (oData.status === "Rider Searching") {
-        newStatus = "Rider Accepted";
-      } else if (oData.status === "Return Approved") {
-        newStatus = "Pickup Assigned";
-        title = "Return Rider Assigned! 🚚";
-        body = `Rider ${riderData?.name} is on the way to pick up your return for order #${oData.trackingId}.`;
-      } else if (oData.status === "Exchange Approved") {
-        newStatus = "Pickup Scheduled";
-        title = "Exchange Rider Assigned! 🚚";
-        body = `Rider ${riderData?.name} is on the way to pick up replacement and perform exchange swap for order #${oData.trackingId}.`;
-      }
-
-      fetch("/api/notify", { 
-        method: "POST", 
-        headers: { "Content-Type": "application/json" }, 
-        body: JSON.stringify({ 
-          userId: oData.userId, 
-          role: "customer", 
-          title: title, 
-          body: body, 
-          link: "/shop?section=orders" 
-        }) 
-      });
-
-      if (oData.sellerId) {
-        let sellerTitle = "Rider Assigned";
-        let sellerBody = `Rider ${riderData?.name} has accepted the job for order #${oData.trackingId}.`;
-        if (oData.status === "Return Approved" || oData.status === "Exchange Approved") {
-          sellerTitle = "Return/Exchange Rider Assigned";
-        } else {
-          sellerBody = `Rider ${riderData?.name} has accepted the job for order #${oData.trackingId}. Please prepare the items.`;
+        if (oData.status === "Rider Searching" || oData.status === "Searching Rider" || oData.status === "Packed Ready") {
+          newStatus = "Rider Assigned";
+        } else if (oData.status === "Return Approved") {
+          newStatus = "Pickup Assigned";
+          title = "Return Rider Assigned! 🚚";
+          body = `Rider ${riderData?.name} is on the way to pick up your return for order #${oData.trackingId}.`;
+        } else if (oData.status === "Exchange Approved") {
+          newStatus = "Pickup Scheduled";
+          title = "Exchange Rider Assigned! 🚚";
+          body = `Rider ${riderData?.name} is on the way to pick up replacement and perform exchange swap for order #${oData.trackingId}.`;
         }
-        
-        fetch("/api/notify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userId: oData.sellerId,
-            role: "seller",
-            title: sellerTitle,
-            body: sellerBody,
-            link: "/seller"
-          })
+
+        fetch("/api/notify", { 
+          method: "POST", 
+          headers: { "Content-Type": "application/json" }, 
+          body: JSON.stringify({ 
+            userId: oData.userId, 
+            role: "customer", 
+            title: title, 
+            body: body, 
+            link: `/shop?section=orders&orderId=${orderId}` 
+          }) 
+        });
+
+        if (oData.sellerId) {
+          let sellerTitle = "Rider Assigned";
+          let sellerBody = `Rider ${riderData?.name} has accepted the job for order #${oData.trackingId}.`;
+          if (oData.status === "Return Approved" || oData.status === "Exchange Approved") {
+            sellerTitle = "Return/Exchange Rider Assigned";
+          } else {
+            sellerBody = `Rider ${riderData?.name} has accepted the job for order #${oData.trackingId}. Please prepare the items.`;
+          }
+          
+          fetch("/api/notify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId: oData.sellerId,
+              role: "seller",
+              title: sellerTitle,
+              body: sellerBody,
+              link: `/seller?tab=orders&orderId=${orderId}`
+            })
+          });
+        }
+
+        await updateDoc(doc(db, "orders", orderId), { 
+          riderId: user.uid, 
+          riderName: riderData?.name || "Rider",
+          riderPhone: riderData?.phone || "",
+          riderAcceptedAt: now,
+          status: newStatus,
+          statusHistory: arrayUnion({ status: newStatus, timestamp: now })
         });
       }
-
-      await updateDoc(doc(db, "orders", orderId), { 
-        riderId: user.uid, 
-        riderName: riderData?.name || "Rider",
-        riderPhone: riderData?.phone || "",
-        riderAcceptedAt: new Date(),
-        status: newStatus 
-      });
+      setTab("active");
+    } catch (e) {
+      alert("Error accepting order: " + e.message);
     }
-    setTab("active");
   };
 
   const handleMarkArrivedAtStore = async (order) => {
     try {
+      const now = new Date();
       await updateDoc(doc(db, "orders", order.id), {
+        status: "Rider Arrived At Pickup",
+        statusHistory: arrayUnion({ status: "Rider Arrived At Pickup", timestamp: now }),
         riderArrivedAtStore: true,
-        riderArrivedAtStoreAt: new Date()
+        riderArrivedAtStoreAt: now
       });
       alert("Status updated: Arrived at store!");
 
@@ -348,7 +390,7 @@ export default function DeliveryPage() {
           role: "customer",
           title: "Rider Arrived at Store! 🏪",
           body: `Rider ${riderData?.name || "Rider"} has arrived at the store to pick up your order #${order.trackingId}.`,
-          link: "/shop?section=orders"
+          link: `/shop?section=orders&orderId=${order.id}`
         })
       });
 
@@ -362,7 +404,7 @@ export default function DeliveryPage() {
             role: "seller",
             title: "Rider Arrived at Store",
             body: `Rider ${riderData?.name || "Rider"} has arrived at your store to pick up order #${order.trackingId}.`,
-            link: "/seller"
+            link: `/seller?tab=orders&orderId=${order.id}`
           })
         });
       }
@@ -373,9 +415,10 @@ export default function DeliveryPage() {
 
   const handleMarkArrivedAtCustomer = async (order) => {
     try {
+      const now = new Date();
       await updateDoc(doc(db, "orders", order.id), {
         riderArrivedAtCustomer: true,
-        riderArrivedAtCustomerAt: new Date()
+        riderArrivedAtCustomerAt: now
       });
       alert("Status updated: Arrived at customer location!");
 
@@ -388,7 +431,7 @@ export default function DeliveryPage() {
           role: "customer",
           title: "Rider Arrived! 📍",
           body: `Rider ${riderData?.name || "Rider"} has arrived at your location with your order! Please share the OTP.`,
-          link: "/shop?section=orders"
+          link: `/shop?section=orders&orderId=${order.id}`
         })
       });
     } catch (e) {
@@ -398,11 +441,16 @@ export default function DeliveryPage() {
 
   const handleConfirmPickup = async (order) => {
     try {
+      const now = new Date();
       await updateDoc(doc(db, "orders", order.id), {
-        status: "Picked Up",
-        pickedUpAt: new Date()
+        status: "Out For Delivery",
+        statusHistory: arrayUnion(
+          { status: "Picked Up", timestamp: now },
+          { status: "Out For Delivery", timestamp: now }
+        ),
+        pickedUpAt: now
       });
-      alert("Pickup confirmed! Start delivery when ready.");
+      alert("Pickup confirmed! Started transit (Out For Delivery).");
 
       // Notify customer
       fetch("/api/notify", {
@@ -412,8 +460,8 @@ export default function DeliveryPage() {
           userId: order.userId,
           role: "customer",
           title: "Order Picked Up! 📦",
-          body: `Your order #${order.trackingId} has been picked up by the rider and is on the way.`,
-          link: "/shop?section=orders"
+          body: `Your order #${order.trackingId} has been picked up by the rider and is on the way. Track live!`,
+          link: `/shop?section=orders&orderId=${order.id}`
         })
       });
 
@@ -427,7 +475,7 @@ export default function DeliveryPage() {
             role: "seller",
             title: "Order Picked Up",
             body: `Rider ${riderData?.name} has picked up the order #${order.trackingId} from your store.`,
-            link: "/seller"
+            link: `/seller?tab=orders&orderId=${order.id}`
           })
         });
       }
@@ -438,9 +486,11 @@ export default function DeliveryPage() {
 
   const handleStartDelivery = async (order) => {
     try {
+      const now = new Date();
       await updateDoc(doc(db, "orders", order.id), {
         status: "Out For Delivery",
-        outForDeliveryAt: new Date()
+        statusHistory: arrayUnion({ status: "Out For Delivery", timestamp: now }),
+        outForDeliveryAt: now
       });
       alert("Delivery started! Go to the customer's address and verify OTP.");
 
@@ -453,7 +503,7 @@ export default function DeliveryPage() {
           role: "customer",
           title: "Out for Delivery! 🚚",
           body: `Your order #${order.trackingId} is out for delivery with rider ${riderData?.name}.`,
-          link: "/shop?section=orders"
+          link: `/shop?section=orders&orderId=${order.id}`
         })
       });
 
@@ -467,7 +517,7 @@ export default function DeliveryPage() {
             role: "seller",
             title: "Out for Delivery",
             body: `Rider ${riderData?.name} is out for delivery for order #${order.trackingId}.`,
-            link: "/seller"
+            link: `/seller?tab=orders&orderId=${order.id}`
           })
         });
       }
@@ -484,81 +534,109 @@ export default function DeliveryPage() {
     setShowPaymentModal(true);
   };
 
+  const handleCardClick = (orderId, event) => {
+    const targetTag = event.target.tagName.toLowerCase();
+    if (targetTag === "button" || targetTag === "a" || targetTag === "i" || event.target.closest("button") || event.target.closest("a")) {
+      return;
+    }
+    setSelectedOrderId(orderId);
+  };
+
   const calculateDistance = (lat1, lon1, lat2, lon2) => calculateHaversineDistance(lat1, lon1, lat2, lon2);
 
   const completeDelivery = async (methodUsed) => {
     if (!activePaymentOrder || !otpVerified) return;
 
-    // Calculate distance-based earnings
-    const sellerData = sellersData[activePaymentOrder.sellerId];
-    let deliveryEarning = 40; // Default fallback
-    let currentDistance = 0;
-    
-    if (sellerData?.coordinates && activePaymentOrder.userCoordinates) {
-      const [sellLat, sellLon] = sellerData.coordinates.split(",").map(Number);
-      const [custLat, custLon] = activePaymentOrder.userCoordinates.split(",").map(Number);
-      currentDistance = calculateDistance(sellLat, sellLon, custLat, custLon);
-      deliveryEarning = calculateDeliveryEarning(currentDistance);
-    }
+    try {
+      const now = new Date();
+      // Calculate distance-based earnings
+      const sellerData = sellersData[activePaymentOrder.sellerId];
+      let deliveryEarning = 40; // Default fallback
+      let currentDistance = 0;
+      
+      if (sellerData?.coordinates && activePaymentOrder.userCoordinates) {
+        const [sellLat, sellLon] = sellerData.coordinates.split(",").map(Number);
+        const [custLat, custLon] = activePaymentOrder.userCoordinates.split(",").map(Number);
+        currentDistance = calculateDistance(sellLat, sellLon, custLat, custLon);
+        deliveryEarning = calculateDeliveryEarning(currentDistance);
+      }
 
-    const cartTotal = Number(activePaymentOrder.cartTotal) || 0;
-    const total = Number(activePaymentOrder.total) || 0;
-    const deliveryFee = Number(activePaymentOrder.deliveryFee) || 0;
-    const platformCommission = Math.round(cartTotal * 0.10);
-    const deliveryCharges = deliveryFee || deliveryEarning || 40;
-    const gatewayCharges = activePaymentOrder.paymentMethod === "UPI" ? Math.round(total * 0.02) : 20;
-    const sellerPayout = cartTotal - platformCommission - deliveryCharges - gatewayCharges;
+      const cartTotal = Number(activePaymentOrder.cartTotal) || 0;
+      const total = Number(activePaymentOrder.total) || 0;
+      const deliveryFee = Number(activePaymentOrder.deliveryFee) || 0;
+      const platformCommission = Math.round(cartTotal * 0.10);
+      const deliveryCharges = deliveryFee || deliveryEarning || 40;
+      const gatewayCharges = activePaymentOrder.paymentMethod === "UPI" ? Math.round(total * 0.02) : 20;
+      const sellerPayout = cartTotal - platformCommission - deliveryCharges - gatewayCharges;
 
-    await updateDoc(doc(db, "orders", activePaymentOrder.id), { 
-      status: "Delivered",
-      paymentStatus: methodUsed === "COD_CASH" || methodUsed === "COD_UPI" ? "Paid" : activePaymentOrder.paymentStatus,
-      deliveryHandoverMethod: methodUsed,
-      actualDeliveryFee: deliveryEarning,
-      platformCommission,
-      deliveryCharges,
-      gatewayCharges,
-      sellerPayout,
-      deliveredAt: new Date()
-    });
+      await updateDoc(doc(db, "orders", activePaymentOrder.id), { 
+        status: "Delivered",
+        statusHistory: arrayUnion({ status: "Delivered", timestamp: now }),
+        paymentStatus: methodUsed === "COD_CASH" || methodUsed === "COD_UPI" ? "Paid" : activePaymentOrder.paymentStatus,
+        deliveryHandoverMethod: methodUsed,
+        actualDeliveryFee: deliveryEarning,
+        platformCommission,
+        deliveryCharges,
+        gatewayCharges,
+        sellerPayout,
+        deliveredAt: now
+      });
 
-    // Notify Customer about successful delivery
-    fetch("/api/notify", { 
-      method: "POST", headers: { "Content-Type": "application/json" }, 
-      body: JSON.stringify({ userId: activePaymentOrder.userId, role: "customer", title: "Order Delivered! 🎉", body: `Your order #${activePaymentOrder.trackingId} has been successfully delivered.`, link: "/shop?section=orders" }) 
-    });
-
-    // Notify Seller about successful delivery
-    if (activePaymentOrder.sellerId) {
+      // Notify Customer about successful delivery
       fetch("/api/notify", { 
         method: "POST", headers: { "Content-Type": "application/json" }, 
-        body: JSON.stringify({ userId: activePaymentOrder.sellerId, role: "seller", title: "Order Delivered!", body: `Order #${activePaymentOrder.trackingId} was successfully delivered.`, link: "/seller" }) 
+        body: JSON.stringify({ 
+          userId: activePaymentOrder.userId, 
+          role: "customer", 
+          title: "Order Delivered! 🎉", 
+          body: `Your order #${activePaymentOrder.trackingId} has been successfully delivered.`, 
+          link: `/shop?section=orders&orderId=${activePaymentOrder.id}` 
+        }) 
       });
+
+      // Notify Seller about successful delivery
+      if (activePaymentOrder.sellerId) {
+        fetch("/api/notify", { 
+          method: "POST", headers: { "Content-Type": "application/json" }, 
+          body: JSON.stringify({ 
+            userId: activePaymentOrder.sellerId, 
+            role: "seller", 
+            title: "Order Delivered!", 
+            body: `Order #${activePaymentOrder.trackingId} was successfully delivered.`, 
+            link: `/seller?tab=orders&orderId=${activePaymentOrder.id}` 
+          }) 
+        });
+      }
+      
+      await updateDoc(doc(db, "delivery_profile", user.uid), {
+        earnings: increment(deliveryEarning),
+        deliveryCount: increment(1),
+        totalDistance: increment(currentDistance)
+      });
+      
+      setRiderData((prev) => ({
+        ...prev,
+        earnings: (prev.earnings || 0) + deliveryEarning,
+        deliveryCount: (prev.deliveryCount || 0) + 1,
+        totalDistance: (prev.totalDistance || 0) + currentDistance
+      }));
+      
+      setShowPaymentModal(false);
+      alert(`Delivery Success! ₹${deliveryEarning} added to wallet.`);
+      setTab("jobs");
+    } catch (e) {
+      alert("Error completing delivery: " + e.message);
     }
-    
-    await updateDoc(doc(db, "delivery_profile", user.uid), {
-      earnings: increment(deliveryEarning),
-      deliveryCount: increment(1),
-      totalDistance: increment(currentDistance)
-    });
-    
-    setRiderData((prev) => ({
-      ...prev,
-      earnings: (prev.earnings || 0) + deliveryEarning,
-      deliveryCount: (prev.deliveryCount || 0) + 1,
-      totalDistance: (prev.totalDistance || 0) + currentDistance
-    }));
-    
-    setShowPaymentModal(false);
-    alert(`Delivery Success! ₹${deliveryEarning} added to wallet.`);
-    setTab("jobs");
   };
 
   const handleConfirmCustomerPickup = async (order) => {
     try {
+      const now = new Date();
       await updateDoc(doc(db, "orders", order.id), {
         status: "Return Picked Up",
+        statusHistory: arrayUnion({ status: "Return Picked Up", timestamp: now }),
         pickedUpFromCustomer: true,
-        pickedUpFromCustomerAt: new Date()
+        pickedUpFromCustomerAt: now
       });
       alert("Pickup confirmed! You now have the returned item. Please deliver it back to the store.");
       
@@ -571,7 +649,7 @@ export default function DeliveryPage() {
           role: "customer",
           title: "Item Picked Up! 📦",
           body: `Rider ${riderData?.name} has picked up the return item for order #${order.trackingId}.`,
-          link: "/shop?section=orders"
+          link: `/shop?section=orders&orderId=${order.id}`
         })
       });
 
@@ -585,7 +663,7 @@ export default function DeliveryPage() {
             role: "seller",
             title: "Return Item Picked Up",
             body: `Rider ${riderData?.name} has picked up the return item from the customer for order #${order.trackingId}.`,
-            link: "/seller"
+            link: `/seller?tab=orders&orderId=${order.id}`
           })
         });
       }
@@ -596,6 +674,7 @@ export default function DeliveryPage() {
 
   const handleConfirmReturnHandover = async (order) => {
     try {
+      const now = new Date();
       const sellerData = sellersData[order.sellerId];
       let deliveryEarning = 40; // Default fallback
       let currentDistance = 0;
@@ -609,7 +688,8 @@ export default function DeliveryPage() {
 
       await updateDoc(doc(db, "orders", order.id), {
         status: "Return Completed",
-        returnedAt: new Date(),
+        statusHistory: arrayUnion({ status: "Return Completed", timestamp: now }),
+        returnedAt: now,
         actualDeliveryFee: deliveryEarning
       });
 
@@ -638,7 +718,7 @@ export default function DeliveryPage() {
           role: "customer",
           title: "Return Completed! 🎉",
           body: `Your return for order #${order.trackingId} has been successfully received and completed.`,
-          link: "/shop?section=orders"
+          link: `/shop?section=orders&orderId=${order.id}`
         })
       });
 
@@ -652,7 +732,7 @@ export default function DeliveryPage() {
             role: "seller",
             title: "Return Completed",
             body: `Order #${order.trackingId} return item has been delivered back to your store.`,
-            link: "/seller"
+            link: `/seller?tab=orders&orderId=${order.id}`
           })
         });
       }
@@ -665,10 +745,12 @@ export default function DeliveryPage() {
 
   const handleConfirmSellerPickup = async (order) => {
     try {
+      const now = new Date();
       await updateDoc(doc(db, "orders", order.id), {
         status: "Replacement Processing",
+        statusHistory: arrayUnion({ status: "Replacement Processing", timestamp: now }),
         pickedUpFromSeller: true,
-        pickedUpFromSellerAt: new Date()
+        pickedUpFromSellerAt: now
       });
       alert("Pickup from seller confirmed! Please go to the customer to perform the exchange swap.");
       
@@ -681,7 +763,7 @@ export default function DeliveryPage() {
           role: "customer",
           title: "Exchange Item Dispatched! 🚚",
           body: `Rider ${riderData?.name} has picked up your replacement item from the store and is on the way.`,
-          link: "/shop?section=orders"
+          link: `/shop?section=orders&orderId=${order.id}`
         })
       });
     } catch (e) {
@@ -691,6 +773,7 @@ export default function DeliveryPage() {
 
   const handlePerformExchangeSwap = async (order) => {
     try {
+      const now = new Date();
       const sellerData = sellersData[order.sellerId];
       let deliveryEarning = 40; // Default fallback
       let currentDistance = 0;
@@ -704,7 +787,8 @@ export default function DeliveryPage() {
 
       await updateDoc(doc(db, "orders", order.id), {
         status: "Exchange Completed",
-        exchangedAt: new Date(),
+        statusHistory: arrayUnion({ status: "Exchange Completed", timestamp: now }),
+        exchangedAt: now,
         actualDeliveryFee: deliveryEarning
       });
 
@@ -733,7 +817,7 @@ export default function DeliveryPage() {
           role: "customer",
           title: "Exchange Completed! 🎉",
           body: `Your exchange swap for order #${order.trackingId} has been successfully completed.`,
-          link: "/shop?section=orders"
+          link: `/shop?section=orders&orderId=${order.id}`
         })
       });
 
@@ -747,7 +831,7 @@ export default function DeliveryPage() {
             role: "seller",
             title: "Exchange Completed",
             body: `Order #${order.trackingId} exchange swap has been successfully completed.`,
-            link: "/seller"
+            link: `/seller?tab=orders&orderId=${order.id}`
           })
         });
       }
@@ -1115,7 +1199,8 @@ export default function DeliveryPage() {
         .section-title { font-size: 16px; font-weight: 700; margin: 0 20px 16px; color: #0f172a; display: flex; justify-content: space-between; align-items: center; }
         .section-title button { background: none; border: none; font-size: 13px; color: #4f46e5; cursor: pointer; font-weight: 700; }
 
-        .job-card { background: #ffffff; border-radius: 20px; padding: 20px; margin: 0 20px 16px; position: relative; border: 1px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0,0,0,0.03); }
+        .job-card { background: #ffffff; border-radius: 20px; padding: 20px; margin: 0 20px 16px; position: relative; border: 1px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0,0,0,0.03); cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease; }
+        .job-card:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.06); }
         .job-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
         .job-id { font-size: 14px; font-weight: 700; color: #0f172a; }
         .job-badge { background: #e0e7ff; color: #4f46e5; font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 12px; }
@@ -1282,7 +1367,7 @@ export default function DeliveryPage() {
 
                 if (isReverse) {
                   return (
-                    <div key={o.id} className="job-card" style={{ borderLeft: isReturn ? "6px solid #f97316" : "6px solid #8b5cf6" }}>
+                    <div key={o.id} className="job-card" style={{ borderLeft: isReturn ? "6px solid #f97316" : "6px solid #8b5cf6" }} onClick={(e) => handleCardClick(o.id, e)}>
                       <div className="job-header">
                         <span className="job-id">#{o.id.substring(0,8).toUpperCase()}</span>
                         <span className="job-badge" style={{ background: isReturn ? "rgba(249,115,22,0.15)" : "rgba(139,92,246,0.15)", color: isReturn ? "#ea580c" : "#7c3aed" }}>
@@ -1371,7 +1456,7 @@ export default function DeliveryPage() {
                 const isOutForDelivery = o.status === "Out For Delivery";
 
                 return (
-                  <div key={o.id} className="job-card">
+                  <div key={o.id} className="job-card" onClick={(e) => handleCardClick(o.id, e)}>
                     <div className="job-header">
                       <span className="job-id">#{o.id.substring(0,8).toUpperCase()}</span>
                       <span className="job-badge">In Progress</span>
@@ -1491,7 +1576,7 @@ export default function DeliveryPage() {
                 const isReverse = isReturn || isExchange;
 
                 return (
-                  <div key={o.id} className="job-card" style={isReverse ? { borderLeft: isReturn ? "6px solid #f97316" : "6px solid #8b5cf6" } : {}}>
+                  <div key={o.id} className="job-card" style={isReverse ? { borderLeft: isReturn ? "6px solid #f97316" : "6px solid #8b5cf6" } : {}} onClick={(e) => handleCardClick(o.id, e)}>
                     <div className="job-header">
                       <span className="job-id">#{o.id.substring(0,8).toUpperCase()}</span>
                       <span className="job-badge" style={{ 
@@ -1706,7 +1791,7 @@ export default function DeliveryPage() {
                         const isReverse = isReturn || isExchange;
 
                         return (
-                          <div key={o.id} className="job-card" style={isReverse ? { borderLeft: isReturn ? "6px solid #f97316" : "6px solid #8b5cf6" } : {}}>
+                          <div key={o.id} className="job-card" style={isReverse ? { borderLeft: isReturn ? "6px solid #f97316" : "6px solid #8b5cf6" } : {}} onClick={(e) => handleCardClick(o.id, e)}>
                             <div className="job-header">
                               <span className="job-id">#{o.id.substring(0,8).toUpperCase()}</span>
                               <span className="job-badge" style={{ 
@@ -1790,7 +1875,7 @@ export default function DeliveryPage() {
 
                         if (isReverse) {
                           return (
-                            <div key={o.id} className="job-card" style={{ borderLeft: isReturn ? "6px solid #f97316" : "6px solid #8b5cf6" }}>
+                            <div key={o.id} className="job-card" style={{ borderLeft: isReturn ? "6px solid #f97316" : "6px solid #8b5cf6" }} onClick={(e) => handleCardClick(o.id, e)}>
                               <div className="job-header">
                                 <span className="job-id">Order #{o.id.substring(0,8).toUpperCase()}</span>
                                 <span className="job-badge" style={{ background: isReturn ? "rgba(249,115,22,0.15)" : "rgba(139,92,246,0.15)", color: isReturn ? "#ea580c" : "#7c3aed" }}>
@@ -1882,7 +1967,7 @@ export default function DeliveryPage() {
                         const isReady = o.status === "Ready For Pickup";
 
                         return (
-                          <div key={o.id} className="job-card">
+                          <div key={o.id} className="job-card" onClick={(e) => handleCardClick(o.id, e)}>
                             <div className="job-header">
                               <span className="job-id">Order #{o.id.substring(0,8).toUpperCase()}</span>
                             </div>
@@ -1972,7 +2057,7 @@ export default function DeliveryPage() {
 
                         if (isReverse) {
                           return (
-                            <div key={o.id} className="job-card" style={{ borderLeft: isReturn ? "6px solid #f97316" : "6px solid #8b5cf6" }}>
+                            <div key={o.id} className="job-card" style={{ borderLeft: isReturn ? "6px solid #f97316" : "6px solid #8b5cf6" }} onClick={(e) => handleCardClick(o.id, e)}>
                               <div className="job-header">
                                 <span className="job-id">Order #{o.id.substring(0,8).toUpperCase()}</span>
                                 <span className="job-badge" style={{ background: isReturn ? "rgba(249,115,22,0.15)" : "rgba(139,92,246,0.15)", color: isReturn ? "#ea580c" : "#7c3aed" }}>
@@ -2052,7 +2137,7 @@ export default function DeliveryPage() {
                         const isOutForDelivery = o.status === "Out For Delivery";
 
                         return (
-                          <div key={o.id} className="job-card">
+                          <div key={o.id} className="job-card" onClick={(e) => handleCardClick(o.id, e)}>
                             <div className="job-header">
                               <span className="job-id">Order #{o.id.substring(0,8).toUpperCase()}</span>
                             </div>
@@ -2137,7 +2222,7 @@ export default function DeliveryPage() {
                       return list.map((o) => {
                         const seller = sellersData[o.sellerId];
                         return (
-                          <div key={o.id} className="job-card" style={{ borderLeft: "6px solid #22c55e" }}>
+                          <div key={o.id} className="job-card" style={{ borderLeft: "6px solid #22c55e" }} onClick={(e) => handleCardClick(o.id, e)}>
                             <div className="job-header">
                               <span className="job-id">Order #{o.id.substring(0,8).toUpperCase()}</span>
                               <span className="job-badge" style={{ background: "rgba(34,197,94,0.15)", color: "#16a34a" }}>
@@ -2212,6 +2297,270 @@ export default function DeliveryPage() {
             </button>
           </div>
         ) : null}
+
+        {/* ── GORGEOUS OPERATIONAL RIDER DETAILS SCREEN OVERLAY ── */}
+        {(() => {
+          if (!selectedOrderId) return null;
+
+          const handleCloseModal = () => {
+            setSelectedOrderId(null);
+            // Clear URL params
+            if (typeof window !== "undefined") {
+              const newUrl = window.location.pathname + (window.location.hash || "");
+              window.history.replaceState({}, document.title, newUrl);
+            }
+          };
+
+          const o = availableOrders.find(x => x.id === selectedOrderId || x.trackingId === selectedOrderId) ||
+                    activeDeliveries.find(x => x.id === selectedOrderId || x.trackingId === selectedOrderId);
+          if (!o) {
+            if (ordersLoading) {
+              return (
+                <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15,23,42,0.6)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+                  <div style={{ background: "white", borderRadius: 24, padding: "30px 24px", maxWidth: 400, width: "100%", textAlign: "center", boxShadow: "0 20px 50px rgba(0,0,0,0.15)" }}>
+                    <i className="fas fa-circle-notch fa-spin" style={{ fontSize: 28, color: "var(--gold)", marginBottom: 12 }} />
+                    <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--navy)", margin: "0 0 4px" }}>Loading Order Details</h3>
+                    <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>Fetching fresh information from Dresho...</p>
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15,23,42,0.6)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={handleCloseModal}>
+                <div style={{ background: "white", borderRadius: 24, padding: "30px 24px", maxWidth: 400, width: "100%", textAlign: "center", boxShadow: "0 20px 50px rgba(0,0,0,0.15)" }} onClick={(e) => e.stopPropagation()}>
+                  <div style={{ fontSize: 44, marginBottom: 12 }}>⚠️</div>
+                  <h3 style={{ fontSize: 18, fontWeight: 900, color: "var(--navy)", marginBottom: 8 }}>Order Not Found</h3>
+                  <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 20 }}>This order could not be located or is no longer available.</p>
+                  <button className="auth-btn-primary" style={{ width: "100%", height: 48, borderRadius: 14 }} onClick={handleCloseModal}>Close</button>
+                </div>
+              </div>
+            );
+          }
+
+          const seller = sellersData[o.sellerId];
+          let distance = 0;
+          let calculatedEarning = 40;
+          if (seller?.coordinates && o.userCoordinates) {
+            const [sellLat, sellLon] = seller.coordinates.split(",").map(Number);
+            const [custLat, custLon] = o.userCoordinates.split(",").map(Number);
+            distance = calculateDistance(sellLat, sellLon, custLat, custLon);
+            calculatedEarning = calculateDeliveryEarning(distance);
+          }
+
+          const isReturn = o.status === "Return Approved";
+          const isExchange = o.status === "Exchange Approved";
+          const isReverse = isReturn || isExchange;
+
+          const isPreparing = o.status === "Rider Assigned" || o.status === "Rider Accepted" || o.status === "Preparing" || o.status === "Preparing Order";
+          const isReady = o.status === "Packed Ready" || o.status === "Ready For Pickup";
+          const isPickedUp = o.status === "Picked Up";
+          const isOutForDelivery = o.status === "Out For Delivery";
+
+          return (
+            <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15,23,42,0.6)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={handleCloseModal}>
+              <div style={{ background: "white", borderRadius: 24, width: "100%", maxWidth: 500, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 50px rgba(0,0,0,0.15)", position: "relative" }} onClick={(e) => e.stopPropagation()}>
+                
+                {/* Header */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 24px", borderBottom: "1px solid #f1f5f9" }}>
+                  <div>
+                    <h3 style={{ fontSize: 18, fontWeight: 900, color: "var(--navy)", margin: 0 }}>
+                      {isReturn ? "Return Details" : isExchange ? "Exchange Details" : "Delivery Details"}
+                    </h3>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 1 }}>
+                      ID: {o.trackingId || o.id.substring(0,8).toUpperCase()}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <span style={{
+                      background: ["Delivered", "Return Completed", "Exchange Completed"].includes(o.status) ? "#d1fae5" : "#fee2e2",
+                      color: ["Delivered", "Return Completed", "Exchange Completed"].includes(o.status) ? "#065f46" : "#991b1b",
+                      padding: "4px 10px",
+                      borderRadius: 8,
+                      fontWeight: 800,
+                      fontSize: "11px",
+                      textTransform: "uppercase"
+                    }}>
+                      {o.status}
+                    </span>
+                    <button onClick={handleCloseModal} style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: "#94a3b8" }}>&times;</button>
+                  </div>
+                </div>
+
+                {/* Body */}
+                <div style={{ padding: "24px", display: "flex", flexDirection: "column", gap: 20 }}>
+                  
+                  {/* 💵 Earnings / Settlement Card 💵 */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px", background: "linear-gradient(135deg, #1e3b8a, #0f172a)", borderRadius: 16, color: "white" }}>
+                    <div>
+                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", display: "block", textTransform: "uppercase", letterSpacing: 1 }}>Estimated Earnings</span>
+                      <strong style={{ fontSize: 24, fontWeight: 800 }}>₹{o.actualDeliveryFee || calculatedEarning}</strong>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", display: "block", textTransform: "uppercase", letterSpacing: 1 }}>Distance</span>
+                      <strong style={{ fontSize: 16, fontWeight: 700 }}>{distance > 0 ? `${distance.toFixed(1)} km` : "—"}</strong>
+                    </div>
+                  </div>
+
+                  {/* 🏪 Store Pickup Info 🏪 */}
+                  <div style={{ border: "1px solid #e2e8f0", borderRadius: 16, padding: "16px", background: "#f8fafc" }}>
+                    <h4 style={{ fontSize: 12, fontWeight: 800, color: "var(--gold)", letterSpacing: 1, textTransform: "uppercase", margin: "0 0 12px" }}>🏪 Store Pickup Point</h4>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
+                      <div><strong>Store:</strong> {seller?.storeName || seller?.name || "Store"}</div>
+                      <div><strong>Address:</strong> {seller?.shopAddress || seller?.address}</div>
+                      {seller?.coordinates && (
+                        <a
+                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(seller.coordinates)}`}
+                          target="_blank" rel="noopener noreferrer"
+                          style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 4, padding: "8px 12px", borderRadius: 8, background: "#3b82f6", color: "white", fontSize: 11, fontWeight: 700, textDecoration: "none", width: "fit-content" }}
+                        >
+                          <i className="fas fa-location-arrow" /> Navigate to Store
+                        </a>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 📍 Customer Delivery Address Info 📍 */}
+                  <div style={{ border: "1px solid #c7d2fe", borderRadius: 16, padding: "16px", background: "linear-gradient(135deg, #eef2ff, #f5f3ff)" }}>
+                    <h4 style={{ fontSize: 12, fontWeight: 800, color: "#6366f1", letterSpacing: 1, textTransform: "uppercase", margin: "0 0 12px" }}>📍 Deliver To Address</h4>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
+                      <div><strong>Name:</strong> {o.userName || "—"}</div>
+                      <div><strong>Phone:</strong> <a href={`tel:${o.userPhone}`} style={{ color: "#4f46e5", fontWeight: 700, textDecoration: "none" }}>{o.userPhone}</a></div>
+                      <div><strong>Address:</strong> {o.userAddress}</div>
+                      {o.userCoordinates && (
+                        <a
+                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(o.userCoordinates)}`}
+                          target="_blank" rel="noopener noreferrer"
+                          style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 4, padding: "8px 12px", borderRadius: 8, background: "linear-gradient(135deg, #f97316, #ea580c)", color: "white", fontSize: 11, fontWeight: 700, textDecoration: "none", width: "fit-content", boxShadow: "0 2px 8px rgba(249,115,22,0.15)" }}
+                        >
+                          <i className="fas fa-route" /> Navigate to Customer
+                        </a>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 📦 Items Checklist 📦 */}
+                  <div>
+                    <h4 style={{ fontSize: 12, fontWeight: 800, color: "var(--navy)", letterSpacing: 1, textTransform: "uppercase", marginBottom: 12 }}>Package Contents</h4>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                      {o.items?.map((item, idx) => (
+                        <div key={idx} style={{ display: "flex", alignItems: "center", gap: 14, paddingBottom: idx !== o.items.length - 1 ? 12 : 0, borderBottom: idx !== o.items.length - 1 ? "1px solid #f1f5f9" : "none" }}>
+                          <div style={{ width: 44, height: 44, borderRadius: 10, overflow: "hidden", background: "#f1f5f9", flexShrink: 0 }}>
+                            <img src={item.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <h5 style={{ fontSize: 13, fontWeight: 700, color: "var(--navy)", margin: "0 0 2px" }}>{item.name}</h5>
+                            <p style={{ fontSize: 11, color: "var(--text-muted)", margin: 0 }}>Size: {item.size || "N/A"} • Qty: {item.qty}x</p>
+                          </div>
+                          <div style={{ fontSize: 13, fontWeight: 800, color: "var(--navy)" }}>₹{item.price * item.qty}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 💳 Payment & Settlement Info 💳 */}
+                  <div style={{ padding: "12px 16px", background: "#f8fafc", borderRadius: 12, display: "flex", justifyContent: "space-between", fontSize: 13, border: "1px solid #e2e8f0" }}>
+                    <span>Payment: <strong>{o.paymentMethod}</strong> ({o.paymentStatus})</span>
+                    <span>COD Cash to Collect: <strong style={{ color: "#10b981" }}>₹{o.paymentMethod === "COD" && o.paymentStatus !== "Paid" ? o.total : 0}</strong></span>
+                  </div>
+
+                  {/* 🕒 Universal Timeline History 🕒 */}
+                  <div>
+                    <h4 style={{ fontSize: 12, fontWeight: 800, color: "var(--navy)", letterSpacing: 1, textTransform: "uppercase", marginBottom: 12 }}>Fulfillment Timeline</h4>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12, borderLeft: "2px solid #e2e8f0", paddingLeft: 16, marginLeft: 8 }}>
+                      {o.statusHistory?.map((step, sIdx) => (
+                        <div key={sIdx} style={{ position: "relative", fontSize: 12 }}>
+                          <div style={{ position: "absolute", left: -22, top: 2, width: 10, height: 10, borderRadius: "50%", background: "#4f46e5" }} />
+                          <div style={{ fontWeight: 700, color: "var(--navy)" }}>{step.status}</div>
+                          <div style={{ color: "var(--text-muted)", fontSize: 10 }}>
+                            {step.timestamp?.seconds ? new Date(step.timestamp.seconds * 1000).toLocaleString() : step.timestamp?.toDate ? step.timestamp.toDate().toLocaleString() : new Date(step.timestamp).toLocaleString()}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* ⚡ Dynamic Operational Contextual Actions ⚡ */}
+                  <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+                    {/* AVAILABLE JOB */}
+                    {!o.riderId && (
+                      <button className="accept-btn" style={{ flex: 1, height: 50, ... (isReverse ? { background: isReturn ? "#f97316" : "#8b5cf6", boxShadow: isReturn ? "0 4px 12px rgba(249,115,22,0.2)" : "0 4px 12px rgba(139,92,246,0.2)" } : {}) }} onClick={() => { acceptOrder(o.id); handleCloseModal(); }}>
+                        {isReturn ? "Accept Return Pickup" : isExchange ? "Accept Exchange Swap" : "Accept Order Job"} <i className="fas fa-check-double" />
+                      </button>
+                    )}
+
+                    {/* ACCEPTED JOB STAGES */}
+                    {o.riderId && ["Rider Assigned", "Rider Accepted", "Preparing", "Preparing Order", "Packed Ready", "Ready For Pickup"].includes(o.status) && (
+                      <>
+                        {!o.riderArrivedAtStore ? (
+                          <button className="active-btn" style={{ flex: 1, background: "#3b82f6", boxShadow: "0 4px 12px rgba(59,130,246,0.2)" }} onClick={() => handleMarkArrivedAtStore(o)}>
+                            Arrived at Store 🏪
+                          </button>
+                        ) : (
+                          <>
+                            {o.status === "Preparing Order" || o.status === "Preparing" ? (
+                              <button className="active-btn" style={{ flex: 1, background: "#64748b", boxShadow: "none", cursor: "not-allowed" }} disabled>
+                                Store is preparing items... <i className="fas fa-spinner fa-spin" style={{ marginLeft: 8 }} />
+                              </button>
+                            ) : (
+                              <button className="active-btn" style={{ flex: 1, background: "#8b5cf6", boxShadow: "0 4px 12px rgba(139,92,246,0.2)" }} onClick={() => { handleConfirmPickup(o); handleCloseModal(); }}>
+                                Confirm Pickup & Start Delivery 📦
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </>
+                    )}
+
+                    {/* OUT FOR DELIVERY / TRANSIT STAGES */}
+                    {o.riderId && ["Picked Up", "Out For Delivery"].includes(o.status) && (
+                      <>
+                        {!o.riderArrivedAtCustomer ? (
+                          <button className="active-btn" style={{ flex: 1, background: "#f59e0b", boxShadow: "0 4px 12px rgba(245,158,11,0.2)" }} onClick={() => handleMarkArrivedAtCustomer(o)}>
+                            Arrived at Customer Location 📍
+                          </button>
+                        ) : (
+                          <button className="active-btn" style={{ flex: 1 }} onClick={() => { openPaymentModal(o); handleCloseModal(); }}>
+                            Verify OTP & Complete Delivery 🔑
+                          </button>
+                        )}
+                      </>
+                    )}
+
+                    {/* REVERSE PICKUP TRANSITS */}
+                    {o.riderId && isReturn && !o.pickedUpFromCustomer && (
+                      <button className="active-btn" style={{ flex: 1, background: "#f97316", boxShadow: "0 4px 12px rgba(249,115,22,0.2)" }} onClick={() => handleConfirmCustomerPickup(o)}>
+                        Confirm Customer Pickup <i className="fas fa-box" />
+                      </button>
+                    )}
+
+                    {/* REVERSE PICKUP HANDOVER */}
+                    {o.riderId && isReturn && o.pickedUpFromCustomer && (
+                      <button className="active-btn" style={{ flex: 1, background: "#22c55e", boxShadow: "0 4px 12px rgba(34,197,94,0.2)" }} onClick={() => { handleConfirmReturnHandover(o); handleCloseModal(); }}>
+                        Confirm Return Handover to Seller <i className="fas fa-store" />
+                      </button>
+                    )}
+
+                    {/* REVERSE EXCHANGE STAGES */}
+                    {o.riderId && isExchange && !o.pickedUpFromSeller && (
+                      <button className="active-btn" style={{ flex: 1, background: "#8b5cf6", boxShadow: "0 4px 12px rgba(139,92,246,0.2)" }} onClick={() => handleConfirmSellerPickup(o)}>
+                        Confirm Pickup from Seller <i className="fas fa-store" />
+                      </button>
+                    )}
+
+                    {/* REVERSE EXCHANGE SWAP */}
+                    {o.riderId && isExchange && o.pickedUpFromSeller && (
+                      <button className="active-btn" style={{ flex: 1, background: "#22c55e", boxShadow: "0 4px 12px rgba(34,197,94,0.2)" }} onClick={() => { handlePerformExchangeSwap(o); handleCloseModal(); }}>
+                        Perform Exchange Swap <i className="fas fa-sync" />
+                      </button>
+                    )}
+                  </div>
+
+                </div>
+
+              </div>
+            </div>
+          );
+        })()}
 
         {/* BOTTOM NAVIGATION */}
         <nav className="bottom-nav">

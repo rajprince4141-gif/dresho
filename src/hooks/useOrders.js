@@ -40,7 +40,7 @@ export function useOrders(options = {}) {
       // 1. Listen for Available Orders
       const availableQuery = query(
         collection(db, "orders"),
-        where("status", "in", ["Rider Searching", "Return Approved", "Exchange Approved"]),
+        where("status", "in", ["Searching Rider", "Rider Searching", "Return Approved", "Exchange Approved"]),
         where("riderId", "==", null)
       );
 
@@ -57,7 +57,12 @@ export function useOrders(options = {}) {
       const activeQuery = query(
         collection(db, "orders"),
         where("riderId", "==", riderId),
-        where("status", "in", ["Rider Accepted", "Preparing", "Ready For Pickup", "Picked Up", "Out For Delivery", "Pickup Assigned", "Pickup Scheduled", "Return Approved", "Exchange Approved", "Delivered", "Returned", "Exchanged", "Return Completed", "Exchange Completed"])
+        where("status", "in", [
+          "Rider Accepted", "Rider Assigned", "Rider Arrived At Pickup", "Preparing", "Preparing Order",
+          "Packed Ready", "Ready For Pickup", "Picked Up", "Out For Delivery", "Pickup Assigned",
+          "Pickup Scheduled", "Return Approved", "Exchange Approved", "Delivered", "Returned",
+          "Exchanged", "Return Completed", "Exchange Completed"
+        ])
       );
 
       unsub2 = onSnapshot(activeQuery, (snap) => {
@@ -89,7 +94,7 @@ export function useOrders(options = {}) {
           if (order.status?.toUpperCase() === "DELIVERED") {
             sales += order.total;
           }
-          if (order.status === "Pending") {
+          if (order.status === "Pending" || order.status === "Placed") {
             pending++;
           }
         });

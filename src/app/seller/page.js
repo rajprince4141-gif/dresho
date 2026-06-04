@@ -55,8 +55,14 @@ export default function SellerPage() {
 
   const [tab, setTab] = useState("inventory");
   const { products } = useProducts({ sellerId: user?.uid });
-  const { orders, salesTotal, pendingCount } = useOrders({ sellerId: user?.uid });
+  const { orders, salesTotal, pendingCount, loading: ordersLoading } = useOrders({ sellerId: user?.uid });
   const [orderSegment, setOrderSegment] = useState("New order");
+  const [selectedOrderId, setSelectedOrderId] = useState(null);
+  const [checklist, setChecklist] = useState({
+    productsVerified: false,
+    inventoryConfirmed: false,
+    packagingCompleted: false
+  });
 
   // Advertise state
   const [myBannerRequests, setMyBannerRequests] = useState([]);
@@ -95,6 +101,39 @@ export default function SellerPage() {
     }, (err) => { console.error("Seller: Error listening to banner_requests:", err); });
     return () => { unsub3(); };
   }, [user]);
+
+  // Deep Link parser for Seller Dashboard
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const queryTab = params.get("tab");
+    const queryOrderId = params.get("orderId");
+    
+    if (queryTab) {
+      setTab(queryTab);
+      if (queryOrderId) {
+        setSelectedOrderId(queryOrderId);
+      }
+    }
+  }, []);
+
+  // Map order segment based on selected order status
+  useEffect(() => {
+    if (selectedOrderId && orders.length > 0) {
+      const order = orders.find(o => o.id === selectedOrderId || o.trackingId === selectedOrderId);
+      if (order) {
+        if (order.status === "Placed" || order.status === "Pending") {
+          setOrderSegment("New order");
+        } else if (order.status === "Preparing Order" || order.status === "Approved") {
+          setOrderSegment("processing");
+        } else if (["Searching Rider", "Rider Assigned", "Rider Arrived At Pickup", "Picked Up", "Out For Delivery", "Ready For Pickup"].includes(order.status)) {
+          setOrderSegment("ready");
+        } else {
+          setOrderSegment("completed");
+        }
+      }
+    }
+  }, [selectedOrderId, orders]);
 
   const handleApproveReturn = async (o) => {
     try {
@@ -455,8 +494,19 @@ export default function SellerPage() {
 
   const categories = ["Men's Wear", "Women's Wear", "Kids Wear", "Ethnic", "Casual", "Formal", "Accessories", "Footwear"];
 
-  // AUTH SCREEN
-  if (!user && !isPending) {
+  // AUTH LOADING STATE GUARD
+  if (authLoadingState) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#0f172a", color: "white" }}>
+        <i className="fas fa-circle-notch fa-spin" style={{ fontSize: 40, color: "var(--gold)", marginBottom: 16 }} />
+        <h2 style={{ fontFamily: "var(--font-d)", fontSize: 24, letterSpacing: 2 }}>Dresho</h2>
+        <p style={{ fontSize: 14, color: "rgba(255,255,255,0.6)", marginTop: 8 }}>Loading your workspace...</p>
+      </div>
+    );
+  }
+
+  // AUTH SCREEN & REGISTRATION VERIFICATION
+  if (!user || !sellerData) {
     return (
       <>
         <div className=""><div className="" /></div>
@@ -1053,15 +1103,421 @@ export default function SellerPage() {
           )}
 
           {/* ORDERS */}
-          {tab === "orders" && (
-            <div className="animate-fade-in">
-              <h3 style={{ fontSize: 18, fontWeight: 900, marginBottom: 4, color: "var(--navy)" }}>Active Orders</h3>
-              <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 20, lineHeight: 1.6 }}>
-                Manage your new and processing orders. First accept them, then pack them!
-              </p>
+          {tab === "orders" && (() => {
+            const newOrders = orders.filter(o => o.status === "Placed" || o.status === "Pending");
+            const processingOrders = orders.filter(o => o.status === "Preparing Order" || o.status === "Approved");
+            const readyOrders = orders.filter(o => ["Searching Rider", "Rider Assigned", "Rider Arrived At Pickup", "Picked Up", "Out For Delivery", "Ready For Pickup"].includes(o.status));
+            const completedOrders = orders.filter(o => ["Delivered", "Cancelled", "Rejected"].includes(o.status));
 
-            </div>
-          )}
+            const activeSegmentOrders = (() => {
+              let list = [];
+              if (orderSegment === "New order") list = newOrders;
+              else if (orderSegment === "processing") list = processingOrders;
+              else if (orderSegment === "ready") list = readyOrders;
+              else if (orderSegment === "completed") list = completedOrders;
+              
+              // Sort chronologically: newest first
+              return [...list].sort((a, b) => {
+                const aTime = a.createdAt?.seconds || a.createdAt?.toMillis?.() || 0;
+                const bTime = b.createdAt?.seconds || b.createdAt?.toMillis?.() || 0;
+                return bTime - aTime;
+              });
+            })();
+
+            const selectedOrder = orders.find(o => o.id === selectedOrderId || o.trackingId === selectedOrderId);
+
+            const handleCloseModal = () => {
+              setSelectedOrderId(null);
+              setChecklist({
+                productsVerified: false,
+                inventoryConfirmed: false,
+                packagingCompleted: false
+              });
+              // Clear search params
+              if (typeof window !== "undefined") {
+                const newUrl = window.location.pathname + (window.location.hash || "");
+                window.history.replaceState({}, document.title, newUrl);
+              }
+            };
+
+            return (
+              <div className="animate-fade-in">
+                <h3 style={{ fontSize: 18, fontWeight: 900, marginBottom: 4, color: "var(--navy)" }}>Active Orders</h3>
+                <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 20, lineHeight: 1.6 }}>
+                  Manage your new and processing orders. First accept them, then pack them!
+                </p>
+
+                {/* Segmented Controls with Badge Counts */}
+                <div style={{
+                  display: "flex",
+                  background: "#f1f5f9",
+                  borderRadius: "14px",
+                  padding: "4px",
+                  marginBottom: "20px",
+                  gap: "4px",
+                  overflowX: "auto"
+                }} className="no-scrollbar">
+                  {[
+                    { id: "New order", label: "New", count: newOrders.length, color: "#3b82f6" },
+                    { id: "processing", label: "Processing", count: processingOrders.length, color: "#f59e0b" },
+                    { id: "ready", label: "Dispatched", count: readyOrders.length, color: "#10b981" },
+                    { id: "completed", label: "History", count: completedOrders.length, color: "#64748b" }
+                  ].map((seg) => (
+                    <button
+                      key={seg.id}
+                      onClick={() => setOrderSegment(seg.id)}
+                      style={{
+                        flex: "1 0 auto",
+                        minWidth: "80px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: "6px",
+                        padding: "10px 14px",
+                        borderRadius: "10px",
+                        fontSize: "12px",
+                        fontWeight: "800",
+                        border: "none",
+                        cursor: "pointer",
+                        background: orderSegment === seg.id ? "white" : "transparent",
+                        color: orderSegment === seg.id ? "var(--navy)" : "var(--text-muted)",
+                        boxShadow: orderSegment === seg.id ? "0 4px 12px rgba(0,0,0,0.05)" : "none",
+                        transition: "all 0.2s"
+                      }}
+                    >
+                      <span>{seg.label}</span>
+                      {seg.count > 0 && (
+                        <span style={{
+                          background: seg.color,
+                          color: "white",
+                          borderRadius: "8px",
+                          padding: "2px 6px",
+                          fontSize: "10px",
+                          fontWeight: "800"
+                        }}>{seg.count}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+
+                {activeSegmentOrders.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "40px 20px", background: "white", borderRadius: 24, border: "1px solid rgba(0,0,0,0.05)" }}>
+                    <i className="fas fa-box-open" style={{ fontSize: 40, marginBottom: 12, color: "#cbd5e1" }} />
+                    <p style={{ fontWeight: 700, color: "var(--text-muted)", fontSize: 14 }}>No orders in this segment.</p>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                    {activeSegmentOrders.map((o) => {
+                      return (
+                        <div
+                          key={o.id}
+                          className="premium-card"
+                          onClick={() => {
+                            setSelectedOrderId(o.id);
+                            // Set search params
+                            if (typeof window !== "undefined") {
+                              const newUrl = window.location.pathname + `?tab=orders&orderId=${o.id}` + (window.location.hash || "");
+                              window.history.replaceState({}, document.title, newUrl);
+                            }
+                          }}
+                          style={{
+                            padding: "20px",
+                            borderRadius: 20,
+                            background: "white",
+                            border: "1px solid #e2e8f0",
+                            boxShadow: "0 4px 12px rgba(0,0,0,0.03)",
+                            cursor: "pointer",
+                            transition: "all 0.2s"
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", paddingBottom: 14, borderBottom: "1px solid #f1f5f9", marginBottom: 12 }}>
+                            <span style={{ fontSize: 12, fontWeight: 800, color: "var(--text-muted)", letterSpacing: 1 }}>
+                              ORDER #{o.trackingId}
+                              <span style={{
+                                background: o.status === "Placed" || o.status === "Pending" ? "#dbeafe" : o.status === "Cancelled" || o.status === "Rejected" ? "#fee2e2" : o.status === "Delivered" ? "#d1fae5" : "#fef3c7",
+                                color: o.status === "Placed" || o.status === "Pending" ? "#1e40af" : o.status === "Cancelled" || o.status === "Rejected" ? "#991b1b" : o.status === "Delivered" ? "#065f46" : "#d97706",
+                                padding: "2px 8px",
+                                borderRadius: 6,
+                                marginLeft: 8,
+                                fontWeight: 800
+                              }}>
+                                {o.status}
+                              </span>
+                            </span>
+                            <span style={{ fontWeight: 900, color: "var(--navy)", fontSize: 15 }}>₹{o.total}</span>
+                          </div>
+
+                          <div style={{ fontSize: 13, color: "var(--navy)", marginBottom: 14 }}>
+                            <p style={{ margin: "0 0 4px" }}><strong>Customer:</strong> {o.userName || "Dresho Buyer"}</p>
+                            <p style={{ margin: 0 }}><strong>Phone:</strong> {o.userPhone || "N/A"}</p>
+                          </div>
+
+                          {/* Items Summary */}
+                          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                            {o.items?.map((item, i) => (
+                              <div key={i} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                                <div style={{ width: 44, height: 44, borderRadius: 10, overflow: "hidden", background: "#f1f5f9", flexShrink: 0 }}>
+                                  <img src={item.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
+                                </div>
+                                <div style={{ flex: 1 }}>
+                                  <h5 style={{ fontSize: 13, fontWeight: 700, color: "var(--navy)", margin: "0 0 2px" }}>{item.name}</h5>
+                                  <p style={{ fontSize: 11, color: "var(--text-muted)", margin: 0 }}>Size: {item.size || item.selectedSize || "N/A"}</p>
+                                </div>
+                                <div style={{ fontSize: 13, fontWeight: 800, color: "var(--navy)" }}>{item.qty}x</div>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end", fontSize: 11, fontWeight: 800, color: "var(--gold)", letterSpacing: 1 }}>
+                            TAP TO VIEW DETAILS & ACTIONS →
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* ── HIGH-FIDELITY ORDER DETAILS REVIEW SCREEN OVERLAY MODAL ── */}
+                {selectedOrderId && (() => {
+                  if (ordersLoading) {
+                    return (
+                      <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15,23,42,0.6)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+                        <div style={{ background: "white", borderRadius: 24, padding: "30px 24px", maxWidth: 400, width: "100%", textAlign: "center", boxShadow: "0 20px 50px rgba(0,0,0,0.15)" }}>
+                          <i className="fas fa-circle-notch fa-spin" style={{ fontSize: 28, color: "var(--gold)", marginBottom: 12 }} />
+                          <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--navy)", margin: "0 0 4px" }}>Loading Order Details</h3>
+                          <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>Fetching fresh information from Dresho...</p>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  if (!selectedOrder) {
+                    return (
+                      <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15,23,42,0.6)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={handleCloseModal}>
+                        <div style={{ background: "white", borderRadius: 24, padding: "30px 24px", maxWidth: 400, width: "100%", textAlign: "center", boxShadow: "0 20px 50px rgba(0,0,0,0.15)" }} onClick={(e) => e.stopPropagation()}>
+                          <div style={{ fontSize: 44, marginBottom: 12 }}>⚠️</div>
+                          <h3 style={{ fontSize: 18, fontWeight: 900, color: "var(--navy)", marginBottom: 8 }}>Order Not Found</h3>
+                          <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 20 }}>This order could not be located in your dashboard.</p>
+                          <button className="auth-btn-primary" style={{ height: 44, borderRadius: 12, background: "var(--navy)", border: "none", width: "100%" }} onClick={handleCloseModal}>
+                            CLOSE WINDOW
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15,23,42,0.6)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={handleCloseModal}>
+                      <div style={{ background: "white", borderRadius: 24, width: "100%", maxWidth: 500, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 50px rgba(0,0,0,0.15)", position: "relative" }} onClick={(e) => e.stopPropagation()}>
+                        
+                        {/* Modal Header */}
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 24px", borderBottom: "1px solid #f1f5f9" }}>
+                          <div>
+                            <h3 style={{ fontSize: 18, fontWeight: 900, color: "var(--navy)", margin: 0 }}>
+                              Order Details
+                            </h3>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 1 }}>
+                              ID: {selectedOrder.trackingId}
+                            </span>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                            <span style={{
+                              background: selectedOrder.status === "Placed" || selectedOrder.status === "Pending" ? "#dbeafe" : selectedOrder.status === "Cancelled" || selectedOrder.status === "Rejected" ? "#fee2e2" : selectedOrder.status === "Delivered" ? "#d1fae5" : "#fef3c7",
+                              color: selectedOrder.status === "Placed" || selectedOrder.status === "Pending" ? "#1e40af" : selectedOrder.status === "Cancelled" || selectedOrder.status === "Rejected" ? "#991b1b" : selectedOrder.status === "Delivered" ? "#065f46" : "#d97706",
+                              padding: "4px 10px",
+                              borderRadius: 8,
+                              fontWeight: 800,
+                              fontSize: 11,
+                              textTransform: "uppercase"
+                            }}>{selectedOrder.status}</span>
+                            <button onClick={handleCloseModal} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "var(--text-muted)" }}>
+                              <i className="fas fa-times" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Modal Content */}
+                        <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 20 }}>
+                          
+                          {/* Customer Details */}
+                          <div>
+                            <h4 style={{ fontSize: 11, fontWeight: 800, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Customer Details</h4>
+                            <div style={{ background: "#f8fafc", padding: 16, borderRadius: 16, border: "1px solid #e2e8f0", fontSize: 13, color: "var(--navy)", lineHeight: 1.5 }}>
+                              <p style={{ margin: "0 0 6px" }}><strong>Name:</strong> {selectedOrder.userName || "Dresho Buyer"}</p>
+                              <p style={{ margin: "0 0 6px" }}><strong>Phone:</strong> {selectedOrder.userPhone || "N/A"}</p>
+                              <p style={{ margin: 0 }}><strong>Address:</strong> {selectedOrder.userAddress || "N/A"}</p>
+                            </div>
+                          </div>
+
+                          {/* Items List */}
+                          <div>
+                            <h4 style={{ fontSize: 11, fontWeight: 800, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Items to Prepare</h4>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                              {selectedOrder.items?.map((item, i) => (
+                                <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, borderBottom: i === selectedOrder.items.length - 1 ? "none" : "1px solid #f1f5f9", paddingBottom: i === selectedOrder.items.length - 1 ? 0 : 12 }}>
+                                  <div style={{ width: 56, height: 56, borderRadius: 12, overflow: "hidden", background: "#f1f5f9", flexShrink: 0 }}>
+                                    <img src={item.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
+                                  </div>
+                                  <div style={{ flex: 1 }}>
+                                    <h5 style={{ fontSize: 14, fontWeight: 700, color: "var(--navy)", margin: "0 0 4px" }}>{item.name}</h5>
+                                    <p style={{ fontSize: 11, color: "var(--text-muted)", margin: 0 }}>Size: {item.size || item.selectedSize || "N/A"} • Qty: {item.qty}x</p>
+                                  </div>
+                                  <div style={{ fontSize: 14, fontWeight: 900, color: "var(--navy)" }}>₹{item.price * item.qty}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Payment / E-bill info */}
+                          <div style={{ background: "#f8fafc", padding: 16, borderRadius: 16, border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", fontSize: 13, color: "var(--navy)" }}>
+                            <span>Payment: <strong>{selectedOrder.paymentMethod}</strong> ({selectedOrder.paymentStatus || "Pending"})</span>
+                            <span style={{ fontWeight: 800 }}>Total: ₹{selectedOrder.total}</span>
+                          </div>
+
+                          {/* Timeline */}
+                          <div>
+                            <h4 style={{ fontSize: 11, fontWeight: 800, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>Fulfillment Timeline</h4>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 12, borderLeft: "2px solid #e2e8f0", paddingLeft: 16, marginLeft: 8 }}>
+                              {selectedOrder.statusHistory?.map((step, sIdx) => (
+                                <div key={sIdx} style={{ position: "relative", fontSize: 12 }}>
+                                  <div style={{ position: "absolute", left: -22, top: 4, width: 8, height: 8, borderRadius: "50%", background: "var(--gold)" }} />
+                                  <div style={{ fontWeight: 700, color: "var(--navy)" }}>{step.status}</div>
+                                  <div style={{ color: "var(--text-muted)", fontSize: 10 }}>
+                                    {step.timestamp?.seconds ? new Date(step.timestamp.seconds * 1000).toLocaleString() : step.timestamp?.toDate ? step.timestamp.toDate().toLocaleString() : new Date(step.timestamp).toLocaleString()}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* ── Preparing Order Checklist ── */}
+                          {selectedOrder.status === "Preparing Order" && (
+                            <div style={{ background: "rgba(245, 158, 11, 0.04)", border: "1px solid rgba(245, 158, 11, 0.2)", borderRadius: 16, padding: 16 }}>
+                              <h4 style={{ fontSize: 12, fontWeight: 800, color: "#b45309", textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>Preparation Checklist</h4>
+                              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                                <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, cursor: "pointer", color: "var(--navy)" }}>
+                                  <input type="checkbox" checked={checklist.productsVerified} onChange={(e) => setChecklist(prev => ({ ...prev, productsVerified: e.target.checked }))} style={{ accentColor: "var(--navy)", width: 16, height: 16 }} />
+                                  <span>Verify all items match description</span>
+                                </label>
+                                <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, cursor: "pointer", color: "var(--navy)" }}>
+                                  <input type="checkbox" checked={checklist.inventoryConfirmed} onChange={(e) => setChecklist(prev => ({ ...prev, inventoryConfirmed: e.target.checked }))} style={{ accentColor: "var(--navy)", width: 16, height: 16 }} />
+                                  <span>Confirm item inventory in stock</span>
+                                </label>
+                                <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, cursor: "pointer", color: "var(--navy)" }}>
+                                  <input type="checkbox" checked={checklist.packagingCompleted} onChange={(e) => setChecklist(prev => ({ ...prev, packagingCompleted: e.target.checked }))} style={{ accentColor: "var(--navy)", width: 16, height: 16 }} />
+                                  <span>Complete high-quality packaging</span>
+                                </label>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Rider Info / Status Banners */}
+                          {selectedOrder.riderId && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                              {selectedOrder.status === "Rider Assigned" && (
+                                <div style={{ width: "100%", background: "rgba(79, 70, 229, 0.08)", border: "1px solid rgba(79, 70, 229, 0.2)", borderRadius: 14, padding: "12px", fontSize: 13, color: "#312e81" }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center", fontWeight: 700 }}>
+                                    <i className="fas fa-truck" />
+                                    <span>Rider <strong>{selectedOrder.riderName}</strong> ({selectedOrder.riderPhone || "N/A"}) Assigned.</span>
+                                  </div>
+                                  <div style={{ fontSize: 11, textAlign: "center", opacity: 0.8, marginTop: 4 }}>Heading to store for pickup.</div>
+                                </div>
+                              )}
+
+                              {selectedOrder.status === "Rider Arrived At Pickup" && (
+                                <div style={{ width: "100%", background: "rgba(16, 185, 129, 0.08)", border: "1px solid rgba(16, 185, 129, 0.2)", borderRadius: 14, padding: "12px", fontSize: 13, color: "#065f46", display: "flex", alignItems: "center", gap: 8, justifyContent: "center", fontWeight: 700 }}>
+                                  <i className="fas fa-location-dot" />
+                                  <span>Rider <strong>{selectedOrder.riderName}</strong> has arrived at store!</span>
+                                </div>
+                              )}
+
+                              {["Picked Up", "Out For Delivery"].includes(selectedOrder.status) && (
+                                <div style={{ width: "100%", background: "rgba(6, 182, 212, 0.08)", border: "1px solid rgba(6, 182, 212, 0.2)", borderRadius: 14, padding: "12px", fontSize: 13, color: "#083344", display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}>
+                                  <i className="fas fa-motorcycle animate-bounce" />
+                                  <span>Out for delivery with rider <strong>{selectedOrder.riderName}</strong>!</span>
+                                </div>
+                              )}
+
+                              {selectedOrder.status === "Delivered" && (
+                                <div style={{ width: "100%", background: "rgba(16, 185, 129, 0.08)", border: "1px solid rgba(16, 185, 129, 0.2)", borderRadius: 14, padding: "12px", fontSize: 13, color: "#065f46", display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}>
+                                  <i className="fas fa-check-circle" />
+                                  <span>Order Delivered successfully!</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Action Buttons */}
+                          <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+                            {(selectedOrder.status === "Placed" || selectedOrder.status === "Pending") && (
+                              <>
+                                <button
+                                  className="auth-btn-primary"
+                                  style={{ flex: 1, borderRadius: 14, fontSize: 14, background: "#10b981", height: 48, border: "none", boxShadow: "none" }}
+                                  onClick={async () => {
+                                    await handleAcceptOrder(selectedOrder.id);
+                                    handleCloseModal();
+                                    setOrderSegment("processing");
+                                  }}
+                                >
+                                  APPROVE ORDER
+                                </button>
+                                <button
+                                  className="auth-btn-primary"
+                                  style={{ flex: 1, borderRadius: 14, fontSize: 14, background: "#ef4444", height: 48, border: "none", boxShadow: "none" }}
+                                  onClick={async () => {
+                                    await handleRejectOrder(selectedOrder.id);
+                                    handleCloseModal();
+                                    setOrderSegment("completed");
+                                  }}
+                                >
+                                  REJECT ORDER
+                                </button>
+                              </>
+                            )}
+
+                            {selectedOrder.status === "Preparing Order" && (
+                              <button
+                                className="auth-btn-primary"
+                                disabled={!(checklist.productsVerified && checklist.inventoryConfirmed && checklist.packagingCompleted)}
+                                style={{
+                                  width: "100%",
+                                  borderRadius: 14,
+                                  fontSize: 14,
+                                  background: (checklist.productsVerified && checklist.inventoryConfirmed && checklist.packagingCompleted) ? "var(--navy)" : "#cbd5e1",
+                                  cursor: (checklist.productsVerified && checklist.inventoryConfirmed && checklist.packagingCompleted) ? "pointer" : "not-allowed",
+                                  height: 48,
+                                  border: "none",
+                                  boxShadow: "none"
+                                }}
+                                onClick={async () => {
+                                  await handleMarkReady(selectedOrder.id);
+                                  handleCloseModal();
+                                  setOrderSegment("ready");
+                                }}
+                              >
+                                PACKED & READY FOR PICKUP
+                              </button>
+                            )}
+
+                            {selectedOrder.status === "Searching Rider" && (
+                              <div style={{ width: "100%", background: "#f1f5f9", borderRadius: 14, padding: "12px 16px", fontSize: 13, color: "var(--navy)", display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}>
+                                <i className="fas fa-spinner fa-spin" style={{ color: "var(--gold)" }} />
+                                <span>Finding nearby riders...</span>
+                              </div>
+                            )}
+                          </div>
+
+                        </div>
+
+                      </div>
+                    </div>
+                  );
+                })()}
+
+              </div>
+            );
+          })()}
 
           {/* RETURNS TAB */}
           {tab === "returns" && (

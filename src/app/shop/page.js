@@ -164,6 +164,7 @@ export default function ShopPage() {
 
   // ── App State ──
   const [currentSection, setCurrentSection] = useState("home");
+  const [highlightedOrderId, setHighlightedOrderId] = useState(null);
   const { products } = useProducts();
   const [currentCategory, setCurrentCategory] = useState("All");
   const { cart, setCart, addToCart, changeQty, clearCart, cartTotal, cartCount } = useCart(user, setShowAuth);
@@ -201,6 +202,8 @@ export default function ShopPage() {
   const [paymentMethod, setPaymentMethod] = useState("COD"); // COD | UPI
   const [placing, setPlacing] = useState(false);
   const [isTrackingLocation, setIsTrackingLocation] = useState(false);
+  const [noRiderInArea, setNoRiderInArea] = useState(false);
+  const [checkingRiders, setCheckingRiders] = useState(false);
 
   // Address Management
   const [showAddressModal, setShowAddressModal] = useState(false);
@@ -481,6 +484,27 @@ export default function ShopPage() {
     }
   }, []);
 
+  // Deep Link handler for Customer Shop
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const sec = params.get("section");
+    const oId = params.get("orderId");
+    if (sec === "orders") {
+      setCurrentSection("orders");
+      if (oId) {
+        setHighlightedOrderId(oId);
+        const timer = setTimeout(() => {
+          const element = document.getElementById(`order-card-${oId}`);
+          if (element) {
+            element.scrollIntoView({ behavior: "smooth", block: "center" });
+          }
+        }, 800);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [orders]);
+
   // ── Intersection Observer for Animations ──
   useEffect(() => {
     if (currentSection !== "home") return;
@@ -627,10 +651,44 @@ export default function ShopPage() {
     }
   };
 
+  const closeCheckout = () => {
+    setShowCheckout(false);
+    setNoRiderInArea(false);
+    setCheckoutCoordinates("");
+  };
+
 
 
   // ── Place Order ──
   const getDistanceFromLatLonInKm = (lat1, lon1, lat2, lon2) => getRoadDistance(lat1, lon1, lat2, lon2);
+
+  const checkRidersAvailability = async (custLat, custLon) => {
+    setCheckingRiders(true);
+    setNoRiderInArea(false);
+    try {
+      const q = query(
+        collection(db, "delivery_profile"),
+        where("online", "==", true),
+        where("approved", "==", true)
+      );
+      const snap = await getDocs(q);
+      let foundRider = false;
+      snap.forEach((docSnap) => {
+        const data = docSnap.data();
+        if (data.liveLocation?.lat && data.liveLocation?.lng) {
+          const dist = calculateDistance(custLat, custLon, data.liveLocation.lat, data.liveLocation.lng);
+          if (dist <= 10) {
+            foundRider = true;
+          }
+        }
+      });
+      setNoRiderInArea(!foundRider);
+    } catch (e) {
+      console.error("Error checking riders availability:", e);
+    } finally {
+      setCheckingRiders(false);
+    }
+  };
 
   const fetchCustomerLocation = () => {
     if (!navigator.geolocation) return alert("Geolocation not supported by your browser.");
@@ -639,6 +697,9 @@ export default function ShopPage() {
         const custLat = pos.coords.latitude;
         const custLon = pos.coords.longitude;
         setCheckoutCoordinates(`${custLat}, ${custLon}`);
+        
+        // Check if any rider is in range
+        checkRidersAvailability(custLat, custLon);
         
         // Dynamic Delivery Fee Calculation
         const sellerId = cart[0]?.sellerId;
@@ -661,7 +722,8 @@ export default function ShopPage() {
           } catch(e) { console.error(e); setDeliveryFee(40); }
         }
       },
-      () => alert("Unable to retrieve location. Please allow location access.")
+      () => alert("Unable to retrieve location. Please allow location access."),
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
     );
   };
 
@@ -673,6 +735,9 @@ export default function ShopPage() {
         const custLat = pos.coords.latitude;
         const custLon = pos.coords.longitude;
         setCheckoutCoordinates(`${custLat}, ${custLon}`);
+        
+        // Check if any rider is in range
+        checkRidersAvailability(custLat, custLon);
         
         // Dynamic Delivery Fee Calculation
         const sellerId = cart[0]?.sellerId;
@@ -713,7 +778,31 @@ export default function ShopPage() {
             
             const neighbourhood = address.neighbourhood || address.suburb || address.village || "";
             const city = address.city || address.town || address.village || address.county || "";
-            const pincode = address.postcode || "";
+            let pincode = address.postcode || "";
+
+            // 1. Try to extract from display_name if missing in address.postcode
+            if (!pincode && data.display_name) {
+              const match = data.display_name.match(/\b\d{6}\b/);
+              if (match) {
+                pincode = match[0];
+              }
+            }
+
+            // 2. Query BigDataCloud API as a high-accuracy fallback/validation for Indian Pincodes
+            try {
+              const bdcRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${custLat}&longitude=${custLon}&localityLanguage=en`);
+              if (bdcRes.ok) {
+                const bdcData = await bdcRes.json();
+                if (bdcData.postcode) {
+                  const bdcPincode = bdcData.postcode.replace(/\s/g, '').slice(0, 6);
+                  if (/^\d{6}$/.test(bdcPincode)) {
+                    pincode = bdcPincode;
+                  }
+                }
+              }
+            } catch (bdcErr) {
+              console.warn("BigDataCloud geocoding fallback failed:", bdcErr);
+            }
 
             if (streetAddress) {
               setCheckoutAddress(streetAddress);
@@ -744,11 +833,13 @@ export default function ShopPage() {
       () => {
         alert("Unable to retrieve location. Please allow location access.");
         setIsTrackingLocation(false);
-      }
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
     );
   };
 
   const placeOrder = async () => {
+    if (noRiderInArea) return alert("❌ Product cannot be delivered because there is no delivery rider present in your area (8-10 km range).");
     if (!checkoutAddress || !checkoutPhone) return alert("Fill all delivery details.");
     if (!isValidPhone(checkoutPhone)) return alert("Please enter a valid 10-digit mobile number.");
     if (!checkoutCoordinates) return alert("Please Pin Your Delivery Location first!");
@@ -792,7 +883,7 @@ export default function ShopPage() {
             theme: { color: "#6366f1" },
             handler: async (response) => {
               try {
-                await addDoc(collection(db, "orders"), {
+                const docRef = await addDoc(collection(db, "orders"), {
                   userId: user.uid,
                   userName: userData.name,
                   userAddress: formatAddress({ line: checkoutAddress, landmark: checkoutLandmark, city: checkoutCity, pincode: checkoutPincode }),
@@ -808,7 +899,10 @@ export default function ShopPage() {
                   total: grandTotal,
                   adminCommission,
                   sellerEarnings,
-                  status: "Pending",
+                  status: "Placed",
+                  statusHistory: [
+                    { status: "Placed", timestamp: new Date() }
+                  ],
                   paymentMethod: "UPI",
                   paymentStatus: "Paid",
                   paymentId: response.razorpay_payment_id,
@@ -824,7 +918,7 @@ export default function ShopPage() {
                   role: "customer",
                   title: "Order Placed Successfully",
                   body: `Your order #${trackingId} has been placed successfully.`,
-                  link: "/shop?section=orders",
+                  link: `/shop?section=orders&orderId=${docRef.id}`,
                   read: false,
                   createdAt: new Date().toISOString(),
                 });
@@ -835,8 +929,8 @@ export default function ShopPage() {
                     userId: sellerId,
                     role: "seller",
                     title: "New Order Received!",
-                    body: `You have a new order from ${userData?.name}. Open your dashboard now!`,
-                    link: "/seller",
+                    body: `New Order Received. Review Order #${trackingId}.`,
+                    link: `/seller?tab=orders&orderId=${docRef.id}`,
                     read: false,
                     createdAt: new Date().toISOString(),
                   });
@@ -851,7 +945,7 @@ export default function ShopPage() {
                     role: "customer",
                     title: "Order Placed Successfully", 
                     body: `Your order #${trackingId} has been placed successfully.`,
-                    link: "/shop?section=orders"
+                    link: `/shop?section=orders&orderId=${docRef.id}`
                   }) 
                 });
 
@@ -864,8 +958,8 @@ export default function ShopPage() {
                       userId: sellerId, 
                       role: "seller",
                       title: "New Order Received!", 
-                      body: `You have a new order from ${userData?.name}. Open your dashboard now!`,
-                      link: "/seller"
+                      body: `New Order Received. Review Order #${trackingId}.`,
+                      link: `/seller?tab=orders&orderId=${docRef.id}`
                     }) 
                   });
                 }
@@ -873,7 +967,7 @@ export default function ShopPage() {
                 await setDoc(doc(db, "users", user.uid), { address: { line: checkoutAddress, landmark: checkoutLandmark, city: checkoutCity, pincode: checkoutPincode }, phone: checkoutPhone }, { merge: true });
                 setUserData((prev) => ({ ...prev, address: { line: checkoutAddress, landmark: checkoutLandmark, city: checkoutCity, pincode: checkoutPincode }, phone: checkoutPhone }));
                 setCart([]);
-                setShowCheckout(false);
+                closeCheckout();
                 setCurrentSection("orders");
                 alert(`✅ Payment successful!\nOrder placed. Payment ID: ${response.razorpay_payment_id}`);
                 resolve();
@@ -890,7 +984,7 @@ export default function ShopPage() {
         return;
       }
 
-      await addDoc(collection(db, "orders"), {
+      const docRef = await addDoc(collection(db, "orders"), {
         userId: user.uid,
         userName: userData.name,
         userAddress: formatAddress({ line: checkoutAddress, landmark: checkoutLandmark, city: checkoutCity, pincode: checkoutPincode }),
@@ -906,7 +1000,10 @@ export default function ShopPage() {
         total: grandTotal,
         adminCommission,
         sellerEarnings,
-        status: "Pending",
+        status: "Placed",
+        statusHistory: [
+          { status: "Placed", timestamp: new Date() }
+        ],
         paymentMethod: "COD",
         paymentStatus: "Pending",
         trackingId,
@@ -921,7 +1018,7 @@ export default function ShopPage() {
         role: "customer",
         title: "Order Placed Successfully",
         body: `Your COD order #${trackingId} has been placed successfully.`,
-        link: "/shop?section=orders",
+        link: `/shop?section=orders&orderId=${docRef.id}`,
         read: false,
         createdAt: new Date().toISOString(),
       });
@@ -931,9 +1028,9 @@ export default function ShopPage() {
         await addDoc(collection(db, "notifications"), {
           userId: sellerId,
           role: "seller",
-          title: "New COD Order Received!",
-          body: `You have a new COD order from ${userData?.name}. Open your dashboard now!`,
-          link: "/seller",
+          title: "New Order Received!",
+          body: `New Order Received. Review Order #${trackingId}.`,
+          link: `/seller?tab=orders&orderId=${docRef.id}`,
           read: false,
           createdAt: new Date().toISOString(),
         });
@@ -948,7 +1045,7 @@ export default function ShopPage() {
           role: "customer",
           title: "Order Placed Successfully", 
           body: `Your COD order #${trackingId} has been placed successfully.`,
-          link: "/shop?section=orders"
+          link: `/shop?section=orders&orderId=${docRef.id}`
         }) 
       });
 
@@ -960,9 +1057,9 @@ export default function ShopPage() {
           body: JSON.stringify({ 
             userId: sellerId, 
             role: "seller",
-            title: "New COD Order Received!", 
-            body: `You have a new COD order from ${userData?.name}. Open your dashboard now!`,
-            link: "/seller"
+            title: "New Order Received!", 
+            body: `New Order Received. Review Order #${trackingId}.`,
+            link: `/seller?tab=orders&orderId=${docRef.id}`
           }) 
         });
       }
@@ -970,7 +1067,7 @@ export default function ShopPage() {
       await setDoc(doc(db, "users", user.uid), { address: { line: checkoutAddress, landmark: checkoutLandmark, city: checkoutCity, pincode: checkoutPincode }, phone: checkoutPhone }, { merge: true });
       setUserData((prev) => ({ ...prev, address: { line: checkoutAddress, landmark: checkoutLandmark, city: checkoutCity, pincode: checkoutPincode }, phone: checkoutPhone }));
       setCart([]);
-      setShowCheckout(false);
+      closeCheckout();
       setCurrentSection("orders");
       alert(`✅ Order placed! Your OTP: ${otp}\nPayment: Cash on Delivery`);
     } catch (e) { alert("Order failed: " + e.message); }
@@ -1408,7 +1505,7 @@ export default function ShopPage() {
                         <img src={p.image} alt={p.name} style={{ opacity: (p.outOfStock || p.stock === 0 || isProductOutOfOrder(p)) ? 0.4 : 1 }} onError={(e) => { e.target.style.display = "none"; }} />
                         {isProductOutOfOrder(p) ? (
                           <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "rgba(239,68,68,0.85)", color: "white", padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 900, zIndex: 10, letterSpacing: 1, whiteSpace: "nowrap", backdropFilter: "blur(2px)" }}>
-                            OUT OF ORDER
+                            STORE CLOSED
                           </div>
                         ) : (p.outOfStock || p.stock === 0) ? (
                           <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "rgba(0,0,0,0.6)", color: "white", padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 900, zIndex: 10, letterSpacing: 1, whiteSpace: "nowrap", backdropFilter: "blur(2px)" }}>
@@ -1752,7 +1849,7 @@ export default function ShopPage() {
                       <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
                         <h4 style={{ fontSize: 14, fontWeight: 600, color: "var(--navy)" }}>{item.name}</h4>
                         {outOfOrder && (
-                          <span style={{ background: "#ef4444", color: "white", padding: "2px 6px", borderRadius: 4, fontSize: 9, fontWeight: 900, textTransform: "uppercase", alignSelf: "flex-start", marginTop: 4 }}>OUT OF ORDER</span>
+                          <span style={{ background: "#ef4444", color: "white", padding: "2px 6px", borderRadius: 4, fontSize: 9, fontWeight: 900, textTransform: "uppercase", alignSelf: "flex-start", marginTop: 4 }}>STORE CLOSED</span>
                         )}
                         <p style={{ fontSize: 12, color: "var(--sub)", marginTop: 4 }}>
                           Size: {item.selectedSize} · ₹{item.price} × {item.qty}
@@ -1792,7 +1889,7 @@ export default function ShopPage() {
                     <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 12, padding: 12, marginTop: 16, display: "flex", gap: 10, alignItems: "center" }}>
                       <span style={{ fontSize: 18 }}>⚠️</span>
                       <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: "#991b1b" }}>
-                        Seller Offline - Some items are Out of Order. Please remove them to proceed.
+                        Store Closed - Some items are from a closed store. Please remove them to proceed.
                       </p>
                     </div>
                   )}
@@ -1827,7 +1924,7 @@ export default function ShopPage() {
                       setShowCheckout(true);
                     }}
                   >
-                    {hasOutOfOrderItems ? "Seller Offline - Out of Order" : "Proceed to Checkout"}
+                    {hasOutOfOrderItems ? "Store Closed" : "Proceed to Checkout"}
                   </button>
                 </div>
               </div>
@@ -1865,7 +1962,14 @@ export default function ShopPage() {
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {orders.map((o) => (
-                  <div key={o.id} className="animate-fade-in-up" style={{ background: "white", padding: "16px 20px" }}>
+                  <div key={o.id} id={`order-card-${o.id}`} className="animate-fade-in-up" style={{
+                    background: "white",
+                    padding: "16px 20px",
+                    border: highlightedOrderId === o.id ? "2px solid #16a34a" : "none",
+                    borderRadius: highlightedOrderId === o.id ? "12px" : "0px",
+                    boxShadow: highlightedOrderId === o.id ? "0 4px 16px rgba(22,163,74,0.12)" : "none",
+                    transition: "all 0.3s ease"
+                  }}>
                     {o.items?.map((item, i) => (
                       <div key={i} style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: i !== o.items.length - 1 ? 16 : 0 }}>
                         <div style={{ width: 64, height: 64, borderRadius: 8, background: "#f8fafc", flexShrink: 0, overflow: "hidden", border: "1px solid #e2e8f0", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
@@ -1967,14 +2071,16 @@ export default function ShopPage() {
                               if (o.status === "Exchanged") currentIdx = 5;
                             }
                           } else {
-                            steps = ["Order placed", "Seller accepted", "Rider assigned", "Rider accepted", "Picked up", "Delivered"];
+                            steps = ["Order Placed", "Order Approved", "Searching Rider", "Rider Assigned", "Out For Delivery", "Delivered"];
                             const statusMapping = {
+                              "Placed": 0,
                               "Pending": 0,
-                              "Seller Accepted": 1,
-                              "Rider Searching": 2,
-                              "Rider Accepted": 3,
-                              "Preparing": 3,
-                              "Ready For Pickup": 3,
+                              "Approved": 1,
+                              "Preparing Order": 1,
+                              "Packed Ready": 2,
+                              "Searching Rider": 2,
+                              "Rider Assigned": 3,
+                              "Rider Arrived At Pickup": 3,
                               "Picked Up": 4,
                               "Out For Delivery": 4,
                               "Delivered": 5
@@ -2991,7 +3097,7 @@ export default function ShopPage() {
                     disabled
                     style={{ width: "100%", height: 50, borderRadius: 16, background: "#cbd5e1", color: "#94a3b8", border: "none", fontSize: 13, fontWeight: 800, textTransform: "uppercase", letterSpacing: 1, cursor: "not-allowed" }}
                   >
-                    Seller Offline - Out of Order
+                    Store Closed
                   </button>
                 </div>
               ) : (viewProduct.outOfStock || viewProduct.stock === 0) ? (
@@ -3336,7 +3442,7 @@ export default function ShopPage() {
 
         {/* ── CHECKOUT MODAL ── */}
         {showCheckout && (
-          <div style={{ position: "fixed", inset: 0, zIndex: 600, background: "rgba(20,33,61,0.6)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setShowCheckout(false)}>
+          <div style={{ position: "fixed", inset: 0, zIndex: 600, background: "rgba(20,33,61,0.6)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={closeCheckout}>
             <div className="animate-scale-in hide-scrollbar" onClick={(e) => e.stopPropagation()} style={{ background: "var(--white)", width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto", padding: 32, boxShadow: "var(--shadow-lg)" }}>
               <h3 style={{ fontFamily: "var(--font-d)", fontSize: 26, color: "var(--navy)", marginBottom: 24 }}>Checkout</h3>
               
@@ -3439,10 +3545,46 @@ export default function ShopPage() {
                 </div>
               </div>
 
+              {noRiderInArea && (
+                <div style={{
+                  background: "#fef2f2",
+                  border: "1.5px solid #fca5a5",
+                  padding: "16px 20px",
+                  borderRadius: "12px",
+                  marginTop: "24px",
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: "12px",
+                  animation: "animate-scale-in 0.3s ease"
+                }}>
+                  <div style={{ fontSize: "20px", marginTop: "-2px" }}>🚫</div>
+                  <div>
+                    <h5 style={{ fontSize: "14px", fontWeight: 800, color: "#991b1b", margin: "0 0 4px" }}>Delivery Unavailable</h5>
+                    <p style={{ fontSize: "12px", color: "#b91c1c", lineHeight: "1.5", margin: 0 }}>
+                      Product cannot be delivered because there is no rider present in your area (8-10 km range).
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <div style={{ display: "flex", gap: 12, marginTop: 24 }}>
-                <button style={{ flex: 1, background: "transparent", color: "var(--navy)", border: "1px solid var(--border2)", padding: 16, fontSize: 11, letterSpacing: 2, textTransform: "uppercase", cursor: "pointer" }} onClick={() => setShowCheckout(false)}>Cancel</button>
-                <button style={{ flex: 1, background: "var(--navy)", color: "white", border: "none", padding: 16, fontSize: 11, letterSpacing: 2, textTransform: "uppercase", cursor: "pointer" }} onClick={placeOrder} disabled={placing}>
-                  {placing ? "Placing..." : paymentMethod === "COD" ? "Place Order" : "Pay via UPI"}
+                <button style={{ flex: 1, background: "transparent", color: "var(--navy)", border: "1px solid var(--border2)", padding: 16, fontSize: 11, letterSpacing: 2, textTransform: "uppercase", cursor: "pointer" }} onClick={closeCheckout}>Cancel</button>
+                <button 
+                  style={{ 
+                    flex: 1, 
+                    background: noRiderInArea ? "#cbd5e1" : "var(--navy)", 
+                    color: noRiderInArea ? "#94a3b8" : "white", 
+                    border: "none", 
+                    padding: 16, 
+                    fontSize: 11, 
+                    letterSpacing: 2, 
+                    textTransform: "uppercase", 
+                    cursor: noRiderInArea ? "not-allowed" : "pointer" 
+                  }} 
+                  onClick={placeOrder} 
+                  disabled={placing || noRiderInArea}
+                >
+                  {placing ? "Placing..." : noRiderInArea ? "No Rider Available" : paymentMethod === "COD" ? "Place Order" : "Pay via UPI"}
                 </button>
               </div>
             </div>
